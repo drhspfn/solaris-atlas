@@ -12,6 +12,9 @@
   const previewList = root.querySelector(".sa-cutscene-previews");
   const publicList = root.querySelector(".sa-cutscene-public");
   const systemList = root.querySelector(".sa-cutscene-system");
+  const analysisBadge = document.getElementById("sa-cutscene-analysis-badge");
+  const clearAnalysisBtn = document.getElementById("sa-cutscene-clear-analysis");
+  const analysisMsg = document.getElementById("sa-cutscene-analysis-msg");
   const timelineInput = root.querySelector("[name=timeline]");
   const decisions = root.querySelector(".sa-cutscene-decisions");
   const subtitles = form.elements.language;
@@ -21,7 +24,33 @@
     source,
     tracks = [],
     request,
+    currentAnalysis = null,
     selectedRover = null;
+
+  const apiPrefix = () =>
+    location.hostname.startsWith("api.") || location.port === "8000"
+      ? ""
+      : "/api";
+
+  function showAnalysisMessage(text, tone = "info") {
+    if (!analysisMsg) return;
+    if (!text) {
+      analysisMsg.className = "alert d-none py-2 px-3 small";
+      analysisMsg.textContent = "";
+      return;
+    }
+    analysisMsg.className = `alert alert-${tone} py-2 px-3 small`;
+    analysisMsg.textContent = text;
+  }
+
+  async function fetchCsrfToken() {
+    const res = await fetch(`${apiPrefix()}/auth/csrf`, {
+      credentials: "include",
+    });
+    if (!res.ok) throw new Error(`CSRF HTTP ${res.status}`);
+    const payload = await res.json();
+    return payload.csrf_token || "";
+  }
   let selections = {},
     durations = {},
     timeline = { clips: [], decisions: [], total: 0, complete: false };
@@ -34,6 +63,35 @@
     container.append(p);
   }
   function renderSceneDetails(data) {
+    currentAnalysis = data.analysis || null;
+    if (analysisBadge) {
+      const a = currentAnalysis;
+      if (!a) {
+        analysisBadge.className = "badge text-bg-secondary";
+        analysisBadge.textContent = "Analysis status unavailable";
+      } else if (a.reports_count > 0) {
+        analysisBadge.className = "badge text-bg-success";
+        analysisBadge.textContent = `Visual analysis: Analyzed (${a.reports_count} report${a.reports_count === 1 ? "" : "s"}, ${a.previews_count} previews)`;
+      } else if (a.runs_count > 0) {
+        analysisBadge.className = "badge text-bg-warning";
+        analysisBadge.textContent = `Visual analysis: ${a.latest_run_status || "in progress"} (${a.runs_count} run${a.runs_count === 1 ? "" : "s"})`;
+      } else if (a.previews_count > 0 || a.atlases_count > 0) {
+        analysisBadge.className = "badge text-bg-warning";
+        analysisBadge.textContent = `No AI visual analysis (${a.previews_count} preview frame${a.previews_count === 1 ? "" : "s"} only)`;
+      } else {
+        analysisBadge.className = "badge text-bg-secondary";
+        analysisBadge.textContent = "Visual analysis: Not run";
+      }
+    }
+    if (clearAnalysisBtn) {
+      const canClear = Boolean(
+        currentAnalysis?.has_artifacts &&
+          currentAnalysis?.asset_node_ids?.length,
+      );
+      clearAnalysisBtn.hidden = !canClear;
+      clearAnalysisBtn.disabled = false;
+    }
+
     previewList.replaceChildren();
     const seen = new Set();
     for (const preview of data.previews || []) {
@@ -362,10 +420,58 @@
         status.textContent = "Fullscreen is unavailable.";
       });
     });
-  async function load() {
+  clearAnalysisBtn?.addEventListener("click", async () => {
+    const assetIds = currentAnalysis?.asset_node_ids || [];
+    const version = currentAnalysis?.asset_version || "";
+    if (!assetIds.length) return;
+    const label = version ? `${assetIds.length} asset(s) (${version})` : `${assetIds.length} asset(s)`;
+    if (
+      !window.confirm(
+        `Delete visual analysis, previews, atlases, and R2 files for ${label}?`,
+      )
+    ) {
+      return;
+    }
+    clearAnalysisBtn.disabled = true;
+    try {
+      const csrfToken = await fetchCsrfToken();
+      let runs = 0;
+      let refs = 0;
+      let objs = 0;
+      for (const assetId of assetIds) {
+        const qs = version ? `?game_version=${encodeURIComponent(version)}` : "";
+        const res = await fetch(
+          `${apiPrefix()}/admin/story-agent/cutscenes/assets/${assetId}/analysis${qs}`,
+          {
+            method: "DELETE",
+            credentials: "include",
+            headers: { "X-CSRF-Token": csrfToken },
+          },
+        );
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(body.detail || `HTTP ${res.status}`);
+        }
+        runs += Number(body.deleted_runs || 0);
+        refs += Number(body.deleted_references || 0);
+        objs += Number(body.deleted_s3_objects || 0);
+      }
+      showAnalysisMessage(
+        `Deleted visual analysis: ${runs} runs, ${refs} refs, ${objs} R2 objects.`,
+        "success",
+      );
+      await load({ keepMessage: true });
+    } catch (error) {
+      showAnalysisMessage(error.message || "Delete failed", "danger");
+      clearAnalysisBtn.disabled = false;
+    }
+  });
+
+  async function load({ keepMessage = false } = {}) {
     request?.abort();
     request = new AbortController();
     const controller = request;
+    if (!keepMessage) showAnalysisMessage("");
     video.pause();
     stopTracks();
     stage.hidden = controls.hidden = true;

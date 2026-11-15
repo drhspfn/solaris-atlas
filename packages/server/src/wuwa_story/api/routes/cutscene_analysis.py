@@ -4,8 +4,9 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from wuwa_story.agents.contracts import StrictModel
 from wuwa_story.agents.cutscene_vision import (
@@ -78,10 +79,96 @@ def public_job(run: ProcessingRun) -> dict[str, Any]:
     }
 
 
+_ANALYSIS_REF_TYPES = (
+    "cutscene_visual_description",
+    "cutscene_visual_title",
+    "cutscene_preview",
+    "video_frame_atlas",
+)
+
+
+async def _asset_analysis_summaries(
+    session: AsyncSession,
+    rows: list[tuple[FileReference, str]],
+) -> dict[tuple[int, str], dict[str, Any]]:
+    if not rows:
+        return {}
+    summaries: dict[tuple[int, str], dict[str, Any]] = {}
+    video_file_to_version: dict[tuple[int, int], str] = {}
+    asset_ids: set[int] = set()
+    for ref, _ in rows:
+        ver = str((ref.metadata_json or {}).get("asset_version") or "")
+        asset_ids.add(ref.owner_node_id)
+        video_file_to_version[(ref.owner_node_id, ref.file_id)] = ver
+        summaries[(ref.owner_node_id, ver)] = {
+            "reports_count": 0,
+            "previews_count": 0,
+            "atlases_count": 0,
+            "runs_count": 0,
+            "latest_run_status": None,
+            "has_analysis": False,
+            "has_artifacts": False,
+        }
+
+    ref_rows = await session.scalars(
+        select(FileReference).where(
+            FileReference.owner_node_id.in_(asset_ids),
+            FileReference.reference_type.in_(_ANALYSIS_REF_TYPES),
+        )
+    )
+    for item in ref_rows:
+        meta = item.metadata_json or {}
+        ver = meta.get("asset_version")
+        if not ver and meta.get("source_file_id") is not None:
+            try:
+                ver = video_file_to_version.get((item.owner_node_id, int(meta["source_file_id"])))
+            except (TypeError, ValueError):
+                ver = None
+        summary = summaries.get((item.owner_node_id, str(ver or "")))
+        if summary is None:
+            continue
+        if item.reference_type in ("cutscene_visual_description", "cutscene_visual_title"):
+            summary["reports_count"] += 1
+        elif item.reference_type == "cutscene_preview":
+            summary["previews_count"] += 1
+        elif item.reference_type == "video_frame_atlas":
+            summary["atlases_count"] += 1
+
+    run_rows = await session.scalars(
+        select(ProcessingRun)
+        .join(Processor, Processor.id == ProcessingRun.processor_id)
+        .where(
+            Processor.key == "cutscene_vision",
+            ProcessingRun.target_node_id.in_(asset_ids),
+        )
+        .order_by(ProcessingRun.id.desc())
+    )
+    for run in run_rows:
+        ver = str((run.metadata_json or {}).get("asset_version") or "")
+        summary = summaries.get((run.target_node_id, ver))
+        if summary is None:
+            continue
+        summary["runs_count"] += 1
+        if summary["latest_run_status"] is None:
+            summary["latest_run_status"] = run.status
+
+    for summary in summaries.values():
+        summary["has_analysis"] = bool(
+            summary["reports_count"] > 0
+            or summary["runs_count"] > 0
+            or summary["atlases_count"] > 0
+        )
+        summary["has_artifacts"] = bool(
+            summary["has_analysis"] or summary["previews_count"] > 0
+        )
+    return summaries
+
+
 @router.get("/assets")
 async def assets(
     q: str = Query("", max_length=128),
     before: int | None = None,
+    analyzed_only: bool = Query(False),
     limit: int = Query(30, ge=1, le=100),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -113,7 +200,33 @@ async def assets(
     if q:
         statement = statement.where(
             Node.canonical_key.icontains(q, autoescape=True))
+    if analyzed_only:
+        analysis_ref = aliased(FileReference)
+        has_ref = (
+            select(analysis_ref.id)
+            .where(
+                analysis_ref.owner_node_id == FileReference.owner_node_id,
+                analysis_ref.reference_type.in_(_ANALYSIS_REF_TYPES),
+                or_(
+                    analysis_ref.metadata_json["asset_version"].astext == version,
+                    analysis_ref.metadata_json["source_file_id"].as_integer() == FileReference.file_id,
+                ),
+            )
+            .exists()
+        )
+        has_run = (
+            select(ProcessingRun.id)
+            .join(Processor, Processor.id == ProcessingRun.processor_id)
+            .where(
+                Processor.key == "cutscene_vision",
+                ProcessingRun.target_node_id == FileReference.owner_node_id,
+                ProcessingRun.metadata_json["asset_version"].astext == version,
+            )
+            .exists()
+        )
+        statement = statement.where(or_(has_ref, has_run))
     rows = (await session.execute(statement)).all()
+    summaries = await _asset_analysis_summaries(session, rows)
     return {
         "enabled": get_agent_settings().vision_enabled,
         "assets": [
@@ -121,6 +234,18 @@ async def assets(
                 "id": ref.owner_node_id,
                 "reference": key,
                 "game_version": ref.metadata_json["asset_version"],
+                **summaries.get(
+                    (ref.owner_node_id, str(ref.metadata_json["asset_version"] or "")),
+                    {
+                        "reports_count": 0,
+                        "previews_count": 0,
+                        "atlases_count": 0,
+                        "runs_count": 0,
+                        "latest_run_status": None,
+                        "has_analysis": False,
+                        "has_artifacts": False,
+                    },
+                ),
             }
             for ref, key in rows
         ],

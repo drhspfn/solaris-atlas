@@ -119,6 +119,19 @@
     return "sa-badge--neutral";
   }
 
+  function renderAssetStatus(a) {
+    if ((a.reports_count || 0) > 0) {
+      return '<span class="sa-badge sa-badge--ok">Analyzed</span>';
+    }
+    if (a.latest_run_status) {
+      return `<span class="sa-badge ${badgeClass(a.latest_run_status)}">${esc(a.latest_run_status)}</span>`;
+    }
+    if ((a.previews_count || 0) > 0 || (a.atlases_count || 0) > 0) {
+      return '<span class="sa-badge sa-badge--warn">Artifacts only</span>';
+    }
+    return '<span class="sa-badge sa-badge--neutral">Not analyzed</span>';
+  }
+
   function renderAssets() {
     document.getElementById("ca-kpi-enabled").textContent = visionEnabled
       ? "Enabled"
@@ -138,11 +151,19 @@
  <div class="fw-semibold">${esc(a.reference)}</div>
  <div class="text-secondary small">Node #${a.id}</div>
  </td>
- <td><span class="sa-badge sa-badge--neutral">${esc(a.game_version)}</span></td>
- <td class="text-end text-nowrap">
+ <td>
+ <div class="d-flex flex-wrap gap-1 mb-1">
+ <span class="sa-badge sa-badge--neutral">${esc(a.game_version)}</span>
+ ${renderAssetStatus(a)}
+ </div>
+ <div class="text-secondary small">${a.reports_count || 0} reports · ${a.runs_count || 0} runs · ${a.previews_count || 0} previews</div>
+ </td>
+ <td class="text-end">
+ <div class="d-flex flex-wrap justify-content-end gap-1">
  <button type="button" class="btn btn-outline-secondary ca-preview-btn" data-asset-id="${a.id}" data-version="${esc(a.game_version)}" data-ref="${esc(a.reference)}">Preview</button>
- <button type="button" class="btn btn-primary ca-analyze-btn ms-1" data-asset-id="${a.id}" data-version="${esc(a.game_version)}" ${visionEnabled ? "" : "disabled"}>Analyze</button>
- <button type="button" class="btn btn-outline-danger ca-clear-btn ms-1" data-asset-id="${a.id}" data-version="${esc(a.game_version)}" data-ref="${esc(a.reference)}">Clear</button>
+ <button type="button" class="btn btn-primary ca-analyze-btn" data-asset-id="${a.id}" data-version="${esc(a.game_version)}" ${visionEnabled ? "" : "disabled"}>Analyze</button>
+ ${a.has_artifacts ? `<button type="button" class="btn btn-outline-danger ca-clear-btn" data-asset-id="${a.id}" data-version="${esc(a.game_version)}" data-ref="${esc(a.reference)}">Clear</button>` : ""}
+ </div>
  </td>
  </tr>`,
           )
@@ -198,9 +219,13 @@
     }
   }
 
-  async function refreshAll() {
+  async function refreshAll({ keepBanner = false } = {}) {
     try {
+      const analyzedOnly = Boolean(
+        document.getElementById("ca-analyzed-only")?.checked,
+      );
       const qsAssets = new URLSearchParams({ q: query, limit: "30" });
+      if (analyzedOnly) qsAssets.set("analyzed_only", "true");
       const qsJobs = new URLSearchParams({ limit: "30" });
       if (selectedRunId) qsJobs.set("run_id", String(selectedRunId));
       const [assetsRes, jobsRes] = await Promise.all([
@@ -216,7 +241,7 @@
       renderJobs();
       document.getElementById("ca-updated-at").textContent =
         `Updated ${new Date().toLocaleTimeString()}`;
-      showBanner("");
+      if (!keepBanner) showBanner("");
     } catch (err) {
       showBanner(err.message, "danger");
     }
@@ -235,7 +260,7 @@
       pollLabel.textContent = `Auto: ${interval / 1000}s`;
       pollTimer = setInterval(() => {
         if (!busy && document.visibilityState === "visible") {
-          void refreshAll();
+          void refreshAll({ keepBanner: true });
         }
       }, interval);
     } else {
@@ -243,6 +268,10 @@
       pollLabel.textContent = "Auto: Off";
     }
   }
+
+  document
+    .getElementById("ca-analyzed-only")
+    ?.addEventListener("change", () => void refreshAll());
 
   document.getElementById("ca-search-form")?.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -324,7 +353,7 @@
             : "Queued vision job",
           "success",
         );
-        await refreshAll();
+        await refreshAll({ keepBanner: true });
       } catch (err) {
         showBanner(err.message, "danger");
       } finally {
@@ -355,7 +384,7 @@
           `Cleared ${ref} (${version}): ${res.deleted_runs} runs, ${res.deleted_references} refs, ${res.deleted_s3_objects} R2 objects.`,
           "success",
         );
-        await refreshAll();
+        await refreshAll({ keepBanner: true });
       } catch (err) {
         showBanner(err.message, "danger");
       } finally {
@@ -378,7 +407,7 @@
           },
         );
         showBanner(`Resumed vision job #${res.id}: ${res.status}`, "success");
-        await refreshAll();
+        await refreshAll({ keepBanner: true });
       } catch (err) {
         showBanner(err.message, "danger");
       } finally {
@@ -395,6 +424,9 @@
         limit: "30",
         before: String(assetsNextBefore),
       });
+      if (document.getElementById("ca-analyzed-only")?.checked) {
+        qs.set("analyzed_only", "true");
+      }
       const res = await apiFetch(`/admin/story-agent/cutscenes/assets?${qs}`);
       assetsList = assetsList.concat(res.assets || []);
       assetsNextBefore = res.next_before || null;

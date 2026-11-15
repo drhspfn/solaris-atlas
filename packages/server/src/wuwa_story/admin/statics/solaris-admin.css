@@ -230,14 +230,14 @@ html[data-bs-theme="dark"] .navbar-vertical .brand-link { padding-inline: .125re
 }
 .sa-table--assets { table-layout: fixed; width: 100%; }
 .sa-table--assets th:nth-child(1), .sa-table--assets td:nth-child(1) { width: auto; min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
-.sa-table--assets th:nth-child(2), .sa-table--assets td:nth-child(2) { width: 92px; white-space: nowrap; }
-.sa-table--assets th:nth-child(3), .sa-table--assets td:nth-child(3) { width: 230px; white-space: nowrap; }
+.sa-table--assets th:nth-child(2), .sa-table--assets td:nth-child(2) { width: 150px; white-space: normal; }
+.sa-table--assets th:nth-child(3), .sa-table--assets td:nth-child(3) { width: 175px; white-space: normal; }
 .sa-table--jobs td:first-child { min-width: 220px; overflow-wrap: anywhere; word-break: break-word; }
 @media (max-width: 767.98px) {
   .sa-table--jobs { min-width: 640px; }
 }
 @media (max-width: 639.98px) {
-  .sa-table--assets { table-layout: auto; min-width: 520px; }
+  .sa-table--assets { table-layout: auto; min-width: 480px; }
 }
 .sa-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .82rem; }
 .sa-badge { display: inline-flex; align-items: center; gap: .3rem; min-height: 26px; padding: .22rem .68rem; border-radius: 999px; font-size: .76rem; font-weight: 600; text-transform: capitalize; border: 1px solid #354645; background: #162021; color: #c5cfcb; white-space: nowrap; }

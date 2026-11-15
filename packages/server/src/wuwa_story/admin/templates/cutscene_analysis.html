@@ -89,9 +89,32 @@
 
   <div class="sa-split sa-split--even">
     <div class="sa-panel">
-      <div class="sa-panel-head">
-        <h2 class="sa-panel-title">Cutscene Assets</h2>
-        <form id="ca-search-form" class="d-flex gap-2">
+      <div class="sa-panel-head flex-wrap gap-2">
+        <div>
+          <h2 class="sa-panel-title">Cutscene Video Assets</h2>
+          <div class="text-secondary small">
+            Imported cutscene videos. Filter to "Analyzed only" to view assets
+            with AI reports, runs, or previews.
+          </div>
+        </div>
+        <form
+          id="ca-search-form"
+          class="d-flex flex-wrap align-items-center gap-2"
+        >
+          <label class="form-check form-check-inline mb-0 small text-secondary">
+            <input
+              type="checkbox"
+              class="form-check-input"
+              id="ca-analyzed-only"
+              {%
+              if
+              analyzed_only
+              %}checked{%
+              endif
+              %}
+            />
+            <span class="form-check-label">Analyzed only</span>
+          </label>
           <input
             type="search"
             class="form-control"
@@ -110,7 +133,7 @@
           <thead>
             <tr>
               <th>Asset</th>
-              <th>Version</th>
+              <th>Version &amp; Analysis</th>
               <th class="text-end">Actions</th>
             </tr>
           </thead>
@@ -122,35 +145,65 @@
                 <div class="text-secondary small">Node #{{ asset.id }}</div>
               </td>
               <td>
-                <span class="sa-badge sa-badge--neutral"
-                  >{{ asset.game_version }}</span
-                >
+                <div class="d-flex flex-wrap gap-1 mb-1">
+                  <span class="sa-badge sa-badge--neutral"
+                    >{{ asset.game_version }}</span
+                  >
+                  {% if asset.reports_count %}
+                  <span class="sa-badge sa-badge--ok">Analyzed</span>
+                  {% elif asset.latest_run_status %}
+                  <span class="sa-badge sa-badge--{{ asset.latest_run_status }}"
+                    >{{ asset.latest_run_status }}</span
+                  >
+                  {% elif asset.previews_count or asset.atlases_count %}
+                  <span class="sa-badge sa-badge--warn">Artifacts only</span>
+                  {% else %}
+                  <span class="sa-badge sa-badge--neutral">Not analyzed</span>
+                  {% endif %}
+                </div>
+                <div class="text-secondary small">
+                  {{ asset.reports_count or 0 }} reports · {{ asset.runs_count
+                  or 0 }} runs · {{ asset.previews_count or 0 }} previews
+                </div>
               </td>
-              <td class="text-end text-nowrap">
-                <button
-                  type="button"
-                  class="btn btn-outline-secondary ca-preview-btn"
-                  data-asset-id="{{ asset.id }}"
-                  data-version="{{ asset.game_version }}"
-                  data-ref="{{ asset.reference }}"
-                >
-                  Preview
-                </button>
-                <button
-                  type="button"
-                  class="btn btn-primary ca-analyze-btn ms-1"
-                  data-asset-id="{{ asset.id }}"
-                  data-version="{{ asset.game_version }}"
-                  {%
-                  if
-                  not
-                  assets_data.enabled
-                  %}disabled{%
-                  endif
-                  %}
-                >
-                  Analyze
-                </button>
+              <td class="text-end">
+                <div class="d-flex flex-wrap justify-content-end gap-1">
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary ca-preview-btn"
+                    data-asset-id="{{ asset.id }}"
+                    data-version="{{ asset.game_version }}"
+                    data-ref="{{ asset.reference }}"
+                  >
+                    Preview
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-primary ca-analyze-btn"
+                    data-asset-id="{{ asset.id }}"
+                    data-version="{{ asset.game_version }}"
+                    {%
+                    if
+                    not
+                    assets_data.enabled
+                    %}disabled{%
+                    endif
+                    %}
+                  >
+                    Analyze
+                  </button>
+                  {% if asset.has_artifacts %}
+                  <button
+                    type="button"
+                    class="btn btn-outline-danger ca-clear-btn"
+                    data-asset-id="{{ asset.id }}"
+                    data-version="{{ asset.game_version }}"
+                    data-ref="{{ asset.reference }}"
+                  >
+                    Clear
+                  </button>
+                  {% endif %}
+                </div>
               </td>
             </tr>
             {% else %}
