@@ -11,10 +11,6 @@ from sqlalchemy import case, func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from wuwa_story.ingestion.import_progress import import_debug_enabled
-
-logger = logging.getLogger(__name__)
-
 from wuwa_story.db.models import (
     NPC,
     AudioEvent,
@@ -46,7 +42,10 @@ from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.seeds import NODE_TYPES
 from wuwa_story.ingestion.canonical import CanonicalRecordAdapter
+from wuwa_story.ingestion.import_progress import import_debug_enabled
 from wuwa_story.ingestion.releases import release_order
+
+logger = logging.getLogger(__name__)
 
 EDGE_BASIS = {
     "explicit_reference",

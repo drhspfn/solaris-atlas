@@ -1,6 +1,7 @@
 """Visual Memory console page."""
 
 from starlette_admin import CustomView
+
 from wuwa_story.visual_memory.kinds import KIND_LABELS, VisualKind
 
 

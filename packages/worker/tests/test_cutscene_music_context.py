@@ -1,8 +1,7 @@
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 import pytest
-from wuwa_story_worker import cutscene_import
 from wuwa_story.ingestion.cutscenes import VideoInput
+
+from wuwa_story_worker import cutscene_import
 
 
 def test_music_context_is_explicit_and_does_not_change_legacy_recipe_identity():
@@ -75,6 +74,7 @@ def test_initial_stop_only_clears_preexisting_music_not_the_new_event(tmp_path):
 @pytest.mark.parametrize('start,reconstructed_source,expected', [(0,False,1),(15,False,2),(0,True,1)])
 def test_movie_song_supersedes_only_approximate_background(start,reconstructed_source,expected):
     from pathlib import Path
+
     from wuwa_story_worker.cutscene_music_context import select_music_stems
     song = {'role':'music','start_seconds':start,'sources':[Path('song.wem')],
             'source':{'reconstruction':'dialogue'} if reconstructed_source else {}}

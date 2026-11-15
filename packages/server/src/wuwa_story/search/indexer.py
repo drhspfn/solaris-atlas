@@ -10,10 +10,6 @@ from sqlalchemy import and_, delete, exists, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from wuwa_story.ingestion.import_progress import import_debug_enabled
-
-logger = logging.getLogger(__name__)
-
 from wuwa_story.db.models import (
     Character,
     DialogueLine,
@@ -29,7 +25,10 @@ from wuwa_story.db.models.graph import NodeRevision
 from wuwa_story.db.models.i18n import LocalizationContent, LocalizationKey, LocalizationValue
 from wuwa_story.db.models.ops import GameRelease, ImportRun
 from wuwa_story.db.models.search import SearchDocument
+from wuwa_story.ingestion.import_progress import import_debug_enabled
 from wuwa_story.ingestion.releases import release_order
+
+logger = logging.getLogger(__name__)
 
 TEXT_SOURCES = (
     (DialogueLine, "localization_key_id", "dialogue"),

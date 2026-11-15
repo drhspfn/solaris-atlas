@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
@@ -18,6 +17,7 @@ from sqlalchemy.dialects.postgresql import BYTEA, JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
 from wuwa_story.db.base import Base
+
 
 class LoreChunk(Base):
     __tablename__ = "lore_chunk"

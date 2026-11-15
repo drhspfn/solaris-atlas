@@ -147,7 +147,7 @@ async def backfill(session, release_id, *, state_keys=(), apply=False, max_links
             batch = records[start:start + WRITE_BATCH_SIZE]
             if start:
                 await invalidate_repaired_quests(session, release, batch)
-            await import_canonical_edges(SimpleNamespace(iter_edges=lambda: iter(batch)), session,
+            await import_canonical_edges(SimpleNamespace(iter_edges=lambda b=batch: iter(b)), session,
                                          release_id, batch_size=WRITE_BATCH_SIZE)
     await session.commit()
     report['written'] = len(records)

@@ -23,7 +23,7 @@ def material_shader_resources(cooked, converted, source, metadata, names):
             params = cached.get('Parameters') or {}
             entries = (params.get('RuntimeEntries[2]') or {}).get('ParameterInfos') or []
             values = params.get('TextureValues') or []
-            for entry, value in zip(entries, values):
+            for entry, value in zip(entries, values, strict=False):
                 name = entry.get('Name')
                 if name in names and name not in references and isinstance(value, dict) and value.get('ObjectPath'):
                     references[name] = value['ObjectPath']

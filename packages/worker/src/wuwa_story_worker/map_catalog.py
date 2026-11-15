@@ -8,7 +8,6 @@ from flatbuffers.table import Table
 
 from wuwa_story_worker.map_sources import flag, integer, open_db, read_markers, table, text
 
-
 # 3.7 ExploratoryTypeConfig keys, checked against templates and localized items.
 # MapIcon alone is not an identity: quest props reuse the same icons.
 COLLECTION_TYPES = {

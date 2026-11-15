@@ -17,7 +17,11 @@ from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
 from wuwa_story_worker.sequence_composition import (
-    MAX_ARCHIVE_ENTRIES, MAX_ARCHIVE_ENTRY_SIZE, MAX_ARCHIVE_TOTAL_SIZE, entry_size_limit, ArchiveValidationError)
+    MAX_ARCHIVE_ENTRIES,
+    MAX_ARCHIVE_TOTAL_SIZE,
+    ArchiveValidationError,
+    entry_size_limit,
+)
 
 # Total of the entries kept in memory at once (manifest, controls, presentation, spine rig, evidence).
 MAX_MEMORY_BYTES = 512 * 1024 * 1024

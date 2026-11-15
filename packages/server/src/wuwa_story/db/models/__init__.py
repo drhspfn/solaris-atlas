@@ -192,8 +192,14 @@ __all__ = [
 
 # Durable browse projections are registered independently of refresh bookkeeping.
 from wuwa_story.db.models.visual_memory import (  # noqa: E402
-    VisualAppearance, VisualEmbedding, VisualIdentity, VisualIdentityNode,
-    VisualLoreIdentity, VisualReference, VisualReferenceLink, VisualReview,
+    VisualAppearance,
+    VisualEmbedding,
+    VisualIdentity,
+    VisualIdentityNode,
+    VisualLoreIdentity,
+    VisualReference,
+    VisualReferenceLink,
+    VisualReview,
     VisualVideoFrame,
 )
 

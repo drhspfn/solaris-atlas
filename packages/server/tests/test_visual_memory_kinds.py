@@ -3,11 +3,11 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import ValidationError
 
+from test_visual_memory_service import memory  # noqa: F401
 from wuwa_story.api.routes.visual_memory import IdentityInput, IdentityUpdate
 from wuwa_story.visual_memory.kinds import KIND_LABELS, VisualKind
 from wuwa_story.visual_memory.service import VisualMemoryService
 from wuwa_story.visual_memory.tools import IdentityCreateInput, SearchInput
-from test_visual_memory_service import memory  # noqa: F401
 
 
 @pytest.mark.parametrize("kind", ["npm", "npb", "custom_kind", "", "NPC"])
@@ -42,7 +42,7 @@ async def test_direct_service_cannot_create_typo_kind():
 
 
 @pytest.mark.asyncio
-async def test_service_update_keeps_identity_on_invalid_kind(memory):
+async def test_service_update_keeps_identity_on_invalid_kind(memory):  # noqa: F811
     service, _, _ = memory
     identity = await service.create_identity("Mysterious Woman", VisualKind.NPC)
     with pytest.raises(ValueError):

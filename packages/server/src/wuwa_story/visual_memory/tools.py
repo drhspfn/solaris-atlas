@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from mcp.types import Tool, ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
 from wuwa_story.visual_memory.kinds import VisualKind
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
@@ -335,7 +336,9 @@ async def _reference_contents(name: str, arguments: dict, result: dict, session:
                     if evidence.get("reference_id") not in ids:
                         ids.append(evidence.get("reference_id"))
     import io
+
     from mcp.types import ImageContent, TextContent
+
     from wuwa_story.visual_memory.images import load_image
 
     service = service_for(session)
@@ -347,8 +350,8 @@ async def _reference_contents(name: str, arguments: dict, result: dict, session:
         try:
             data = await service.get_image_bytes(reference_id, max_bytes=MAX_IMAGE_BYTES)
 
-            def thumbnail():
-                image = load_image(data, max_bytes=MAX_IMAGE_BYTES)
+            def thumbnail(raw_data: bytes = data):
+                image = load_image(raw_data, max_bytes=MAX_IMAGE_BYTES)
                 image.thumbnail((512, 512))
                 output = io.BytesIO()
                 image.save(output, format="JPEG", quality=85)

@@ -3,7 +3,6 @@
 import hashlib
 import json
 import zipfile
-from pathlib import PurePosixPath
 
 from sqlalchemy import select
 from wuwa_story.db.models.storage import FileLocation, FileReference

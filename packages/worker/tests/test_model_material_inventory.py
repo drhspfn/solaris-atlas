@@ -2,7 +2,10 @@ import json
 import sys
 from types import SimpleNamespace
 
-from wuwa_story_worker.model_material_inventory import material_input_inventory, pack_material_inventory
+from wuwa_story_worker.model_material_inventory import (
+    material_input_inventory,
+    pack_material_inventory,
+)
 
 
 def test_preserves_authored_inputs_and_distinguishes_missing_images(tmp_path):

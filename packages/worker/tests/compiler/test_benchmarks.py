@@ -3,7 +3,6 @@ import unittest
 from collections import Counter
 from pathlib import Path
 
-
 WORKER_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures"
 

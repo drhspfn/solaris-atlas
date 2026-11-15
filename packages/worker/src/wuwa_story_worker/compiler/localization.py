@@ -7,16 +7,16 @@ supplementary table and does not override ordinary primary values.
 
 from __future__ import annotations
 
+import heapq
 import json
 import os
-import heapq
 from collections import Counter
-from tempfile import TemporaryDirectory
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from tempfile import TemporaryDirectory
+from typing import Any
 
 from .core import is_ignored_fs_entry
-
 
 Emit = Callable[[str, dict[str, Any]], None]
 Diagnostic = Callable[[str, str, str, str, dict[str, Any]], None]

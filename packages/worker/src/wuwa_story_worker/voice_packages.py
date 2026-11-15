@@ -14,8 +14,8 @@ from urllib.request import Request, urlopen
 
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-
 from wuwa_story.version import is_supported_version
+
 from wuwa_story_worker.client_assets import plan_id, read_url, safe_path, save_json, workspace_lock
 
 LANGUAGES = ("en", "ja", "ko", "zh")

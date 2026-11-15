@@ -13,10 +13,10 @@ from wuwa_story.db.models.game_events import GameEvent
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
 from wuwa_story.ingestion.release_media import enqueue_event_images
 
-from wuwa_story_worker.decoded_json import load_exports
 from wuwa_story_worker.archive_index import ensure_archive_index, indexed_package_paths
 from wuwa_story_worker.asset_export import _sha256, export_assets
 from wuwa_story_worker.client_assets import workspace_lock
+from wuwa_story_worker.decoded_json import load_exports
 from wuwa_story_worker.event_catalog import texture_path
 from wuwa_story_worker.tooling import tool_path
 

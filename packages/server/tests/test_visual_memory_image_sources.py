@@ -9,9 +9,9 @@ import pytest
 from PIL import Image
 from pydantic import ValidationError
 
+from test_visual_memory_service import memory  # noqa: F401
 from wuwa_story.visual_memory import image_source, tools
 from wuwa_story.visual_memory.images import encode_png
-from test_visual_memory_service import memory  # noqa: F401
 
 
 @pytest.fixture
@@ -184,8 +184,9 @@ async def test_thumbnail_decode_obeys_shared_concurrency_bound(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_registered_asset_only_reads_published_images(memory, png):
+async def test_registered_asset_only_reads_published_images(memory, png):  # noqa: F811
     from sqlalchemy import select
+
     from wuwa_story.db.models import FileLocation, FileReference, Node, NodeType
 
     service, session, _ = memory

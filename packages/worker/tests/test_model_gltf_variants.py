@@ -1,5 +1,3 @@
-import json
-import struct
 from pathlib import Path
 
 from wuwa_story_worker.model_gltf_variants import (

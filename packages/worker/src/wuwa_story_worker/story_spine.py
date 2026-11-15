@@ -7,8 +7,8 @@ import zipfile
 from contextlib import closing
 from pathlib import Path, PurePosixPath
 
-from wuwa_story_worker.decoded_json import load_exports
 from wuwa_story_worker.asset_export import export_assets
+from wuwa_story_worker.decoded_json import load_exports
 from wuwa_story_worker.event_resources import prefab_images, ui_references
 from wuwa_story_worker.map_icons import build_icons
 from wuwa_story_worker.map_sources import integer, open_db, table, text

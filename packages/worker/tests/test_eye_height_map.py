@@ -4,7 +4,6 @@ import pytest
 
 from wuwa_story_worker.eye_height_map import height_map_transform
 
-
 SCALARS = {'ScaleTransition_Speed': 5, 'EyeLight_TransitionScale': .5,
            'UseEyeScaleTransition': 0, 'LightDifferentScale': 1,
            'LightShakeSpeed': 10, 'LightShakeScale': .01, 'LightShakPositionX': 0,

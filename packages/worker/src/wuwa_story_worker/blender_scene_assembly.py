@@ -8,7 +8,6 @@ import math
 import sys
 from pathlib import Path
 
-
 # Only datablocks created by the temporary import are candidates for cleanup.
 TEMPORARY_DATA = ('collections', 'meshes', 'curves', 'armatures', 'cameras',
                   'lights', 'materials', 'node_groups', 'textures', 'images')

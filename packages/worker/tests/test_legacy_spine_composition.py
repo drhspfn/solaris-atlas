@@ -3,8 +3,8 @@ import json
 import zipfile
 
 import pytest
-
 from wuwa_story.ingestion.spine_presentation import flow_presentation
+
 from wuwa_story_worker import legacy_spine_composition as legacy
 
 
@@ -20,7 +20,8 @@ def fixture(tmp_path, monkeypatch, *, requested='gesture', resource_id=7, bundle
                 'files': {'presentation.json': {'size_bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}}}
     path = tmp_path / 'source.zip'
     with zipfile.ZipFile(path, 'w') as z:
-        z.writestr('manifest.json', json.dumps(manifest)); z.writestr('presentation.json', data)
+        z.writestr('manifest.json', json.dumps(manifest))
+        z.writestr('presentation.json', data)
     actor = {'components': [{'PreviewAnimation': 'idle'}], 'props': {}}
     layout = {'actors': {1: actor}, 'assets': [], 'size': [2560, 1440]}
     monkeypatch.setattr(legacy, '_exports', lambda *_: [{'Type': 'PrefabAsset', 'Properties': {'ReferenceFNames': []}}])
@@ -72,7 +73,8 @@ def test_changed_presentation_hash_is_rejected(tmp_path, monkeypatch):
     manifest = json.loads(entries['manifest.json'])
     manifest['presentation']['sha256'] = 'bad'
     with zipfile.ZipFile(path, 'w') as z:
-        z.writestr('manifest.json', json.dumps(manifest)); z.writestr('presentation.json', entries['presentation.json'])
+        z.writestr('manifest.json', json.dumps(manifest))
+        z.writestr('presentation.json', entries['presentation.json'])
     with pytest.raises(ValueError, match='authored background'):
         legacy.legacy_plan(path)
 

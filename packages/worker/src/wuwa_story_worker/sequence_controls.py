@@ -1,6 +1,5 @@
 """Source-backed MovieScene events and dialogue; no clip-name chronology guesses."""
 
-import json
 
 from wuwa_story_worker.decoded_json import load_exports
 from wuwa_story_worker.sequence_bytecode import resolve_event_calls

@@ -111,8 +111,9 @@ def test_authored_four_star_roster_can_disambiguate_repeat_banners():
 
 def test_current_poster_can_identify_subject_without_assigning_ambiguous_schedule():
     from datetime import UTC, datetime
-    from wuwa_story.ingestion.notices import notice_candidates
+
     from wuwa_story.api.routes.game_events import _choose_preview, _notice_overlaps
+    from wuwa_story.ingestion.notices import notice_candidates
 
     content = {"title": "[Moongazer's Sigil] Featured Weapon Convene",
                "text": "5-Star Weapon: Moongazer's Sigil, 4-Star Weapons: A, B, and C receive boosted drop rates!"}

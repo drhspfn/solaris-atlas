@@ -192,7 +192,7 @@ def _plans(archive, manifest):
         raise UnsupportedComposition('Unsupported UI open/close lifecycle')
     times = [e.get('time_seconds') for e, _ in calls]
     if any(type(t) not in (int, float) or not math.isfinite(t) or t < 0 for t in times) or any(
-        a >= b for a, b in zip(times, times[1:])
+        a >= b for a, b in zip(times, times[1:], strict=False)
     ):
         raise UnsupportedComposition('Ambiguous UI control timing')
     if controls.get('unresolved'):

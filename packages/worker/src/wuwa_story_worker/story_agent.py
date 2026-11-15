@@ -5,7 +5,6 @@ import logging
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from wuwa_story.agents.revisits import REVISIT_POLL_SECONDS, dispatch_revisits
 from wuwa_story.agents.runner import execute_job
 from wuwa_story.agents.settings import get_agent_settings

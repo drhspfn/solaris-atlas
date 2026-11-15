@@ -25,10 +25,11 @@ from wuwa_story_worker.sequence_audio_prepare import _banks, _voice_root
 from wuwa_story_worker.tooling import tool_path
 from wuwa_story_worker.wwise_banks import (
     event_id,
-    initial_parameters as _initial_parameters,
     event_timeline,
     rover_parameters,
-    validate_event_timeline,
+)
+from wuwa_story_worker.wwise_banks import (
+    initial_parameters as _initial_parameters,
 )
 
 
