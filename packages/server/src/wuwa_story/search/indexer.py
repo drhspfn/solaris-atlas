@@ -277,10 +277,15 @@ async def build_lexical_index(
     return indexed
 
 
+# Each SearchDocument row binds 9 parameters (including 2 for func.to_tsvector);
+# asyncpg rejects queries with >32767 bind arguments, so keep chunks <= 3000 rows.
+MAX_UPSERT_CHUNK_ROWS = 3000
+
+
 async def _upsert_batch(session: AsyncSession, batch: list[dict[str, Any]], newer_release_ids=None) -> int:
     total_written = 0
-    for offset in range(0, len(batch), 4000):
-        chunk = batch[offset : offset + 4000]
+    for offset in range(0, len(batch), MAX_UPSERT_CHUNK_ROWS):
+        chunk = batch[offset : offset + MAX_UPSERT_CHUNK_ROWS]
         statement = insert(SearchDocument).values(chunk)
         protected = set(await session.scalars(select(NodeRevision.node_id).where(
             NodeRevision.node_id.in_([value["target_node_id"] for value in chunk]),
