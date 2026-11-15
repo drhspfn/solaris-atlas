@@ -302,7 +302,7 @@ async def process_cutscene_vision(payload: dict) -> None:
                         "paused_budget",
                         "Shared daily budget cannot cover visual batch",
                     )
-                except Exception:
+                except Exception as exc:
                     # No provider body, prompt, image or credential goes into operational logs.
                     await db.rollback()
                     await db.refresh(run)
@@ -317,7 +317,12 @@ async def process_cutscene_vision(payload: dict) -> None:
                         if uncertain
                         else "Source download or frame extraction failed; repair input before resuming"
                     )
-                    logger.warning("cutscene.visual_paused run_id=%s", run.id)
+                    logger.warning(
+                        "cutscene.visual_paused run_id=%s status=%s error_type=%s",
+                        run.id,
+                        run.status,
+                        type(exc).__name__,
+                    )
                 await db.commit()
         finally:
             await connection.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": -run_id})

@@ -342,9 +342,8 @@ async def _execute_video_tool(
         rows = await lexical_search(
             db,
             query,
-            en_id or 1,
-            [str(category)] if category else None,
-            latest_release,
+            locale_id=en_id or 1,
+            categories=[str(category)] if category else None,
             limit=limit,
         )
         return {"results": rows}, []
