@@ -18,8 +18,14 @@ def test_dense_atlas_keeps_order_timestamps_labels_and_letterboxes(tmp_path):
     layout = write_atlas([jpeg() for _ in times], times, path)
     assert (layout["width"], layout["height"]) == (1536, 732)
     assert [t["time"] for t in layout["tiles"]] == times
-    assert layout["tiles"][4] == {"time": 12.5, "row": 1, "column": 0,
-                                  "rect": [0, 244, 384, 216]}
+    assert layout["tiles"][4] == {
+        "time": 12.5,
+        "row": 1,
+        "column": 0,
+        "rect": [0, 244, 384, 216],
+        "atlas_index": 1,
+        "global_frame_index": 5,
+    }
     with Image.open(path) as sheet:
         assert sheet.getpixel((192, 100))[0] > 240
         # Timestamp is drawn in the label strip below the actual video.
@@ -27,7 +33,8 @@ def test_dense_atlas_keeps_order_timestamps_labels_and_letterboxes(tmp_path):
     portrait = tmp_path / "portrait.jpg"
     write_atlas([jpeg("blue", (100, 400))], [0], portrait)
     with Image.open(portrait) as sheet:
-        assert max(sheet.getpixel((10, 100))) < 30  # pillarbox, never crop a portrait
+        # pillarbox, never crop a portrait
+        assert max(sheet.getpixel((10, 100))) < 30
         assert sheet.getpixel((192, 100))[2] > 240
 
 

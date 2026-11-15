@@ -1,0 +1,847 @@
+"""Tool-driven video/cutscene analysis agent with global atlas numbering and local workspace."""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import hashlib
+import json
+import logging
+import shutil
+import tempfile
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import httpx
+from sqlalchemy import delete, func, select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
+from wuwa_story.agents.budget import reserve, settle
+from wuwa_story.agents.capabilities import analysis_prompt, video_analysis_definitions
+from wuwa_story.agents.cutscene_vision import (
+    VISION_VERSION,
+    VideoAnalysisResult,
+    dynamic_sampling_plan,
+    sample_times,
+    validate_resample_request,
+)
+from wuwa_story.agents.providers import (
+    Provider,
+    ProviderFailure,
+    ProviderRejected,
+    ToolCall,
+    token_usage,
+)
+from wuwa_story.agents.settings import AgentSettings
+from wuwa_story.db.models.core import DialogueLine, Speaker
+from wuwa_story.db.models.graph import Edge, Node, NodeRevision, NodeType
+from wuwa_story.db.models.i18n import Locale, LocalizationValue
+from wuwa_story.db.models.lore import LoreChunk
+from wuwa_story.db.models.ontology import RelationType
+from wuwa_story.db.models.ops import GameRelease, ProcessingRun
+from wuwa_story.db.models.storage import FileReference
+from wuwa_story.db.repositories.search import lexical_search
+from wuwa_story.search.lore import LoreSearchService
+from wuwa_story.storage.service import FileRegistrationService
+
+from wuwa_story_worker.cutscene_import import run_tool, video_duration
+from wuwa_story_worker.video_atlas import write_atlas
+
+logger = logging.getLogger(__name__)
+
+MAX_AGENT_TURNS = 14
+
+
+@dataclass
+class AtlasEntry:
+    atlas_index: int
+    path: Path
+    image_bytes: bytes
+    layout: dict[str, Any]
+    sample_times: list[float]
+    frame_number_start: int
+    frame_number_end: int
+    reason: str = "overview"
+
+
+@dataclass
+class VideoWorkspace:
+    """Holds source video, extracted frames, and globally numbered atlases for one run."""
+
+    root: Path
+    ffmpeg: Path
+    movie: Path
+    duration: float
+    settings: AgentSettings
+    limits: dict[str, float | int]
+    atlases: list[AtlasEntry] = field(default_factory=list)
+    frame_paths: dict[int, Path] = field(default_factory=dict)
+    frame_times: dict[int, float] = field(default_factory=dict)
+    next_atlas_index: int = 1
+    next_frame_index: int = 1
+
+    async def extract_frame(self, timestamp: float, global_index: int) -> bytes:
+        out = self.root / f"frame_{global_index:04d}.jpg"
+        out.unlink(missing_ok=True)
+        await run_tool(
+            [
+                str(self.ffmpeg),
+                "-v",
+                "error",
+                "-y",
+                "-ss",
+                str(timestamp),
+                "-i",
+                str(self.movie),
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=640:-2,format=yuvj420p",
+                "-threads",
+                "1",
+                "-q:v",
+                "4",
+                str(out),
+            ],
+            60,
+        )
+        data = out.read_bytes()
+        if len(data) > 1_000_000:
+            raise ValueError("Frame exceeds bounded JPEG size")
+        self.frame_paths[global_index] = out
+        self.frame_times[global_index] = timestamp
+        return data
+
+    async def build_atlases(self, times: list[float], *, reason: str = "overview") -> list[AtlasEntry]:
+        created: list[AtlasEntry] = []
+        per_atlas = max(1, min(24, self.settings.vision_atlas_frames))
+        for offset in range(0, len(times), per_atlas):
+            selected = times[offset : offset + per_atlas]
+            start_frame = self.next_frame_index
+            frames: list[bytes] = []
+            for t in selected:
+                frames.append(await self.extract_frame(t, self.next_frame_index))
+                self.next_frame_index += 1
+            atlas_idx = self.next_atlas_index
+            self.next_atlas_index += 1
+            atlas_path = self.root / f"atlas_{atlas_idx:03d}.jpg"
+            layout = await asyncio.to_thread(
+                write_atlas,
+                frames,
+                selected,
+                atlas_path,
+                tile_width=self.settings.vision_atlas_tile_width,
+                quality=self.settings.vision_atlas_quality,
+                atlas_index=atlas_idx,
+                frame_number_start=start_frame,
+            )
+            entry = AtlasEntry(
+                atlas_index=atlas_idx,
+                path=atlas_path,
+                image_bytes=atlas_path.read_bytes(),
+                layout=layout,
+                sample_times=list(selected),
+                frame_number_start=start_frame,
+                frame_number_end=start_frame + len(selected) - 1,
+                reason=reason,
+            )
+            self.atlases.append(entry)
+            created.append(entry)
+        return created
+
+    def manifest(self, entries: list[AtlasEntry] | None = None) -> list[dict[str, Any]]:
+        target = self.atlases if entries is None else entries
+        return [
+            {
+                "atlas_index": entry.atlas_index,
+                "reason": entry.reason,
+                "frame_number_start": entry.frame_number_start,
+                "frame_number_end": entry.frame_number_end,
+                "tiles": [
+                    {
+                        "global_frame": tile["global_frame_index"],
+                        "label": f"A{entry.atlas_index:02d} #{tile['global_frame_index']:03d}",
+                        "time": tile["time"],
+                    }
+                    for tile in entry.layout["tiles"]
+                ],
+            }
+            for entry in target
+        ]
+
+
+def _multimodal_user_message(provider: Provider, text: str, images: list[bytes]) -> dict[str, Any]:
+    encoded = [base64.b64encode(img).decode("ascii") for img in images]
+    if provider.settings.provider == "gemini":
+        return {
+            "role": "user",
+            "parts": [
+                {"text": text},
+                *[{"inlineData": {"mimeType": "image/jpeg", "data": val}} for val in encoded],
+            ],
+        }
+    if provider.settings.provider == "chat":
+        return {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": text},
+                *[
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{val}", "detail": "high"}}
+                    for val in encoded
+                ],
+            ],
+        }
+    return {
+        "role": "user",
+        "content": [
+            {"type": "input_text", "text": text},
+            *[
+                {"type": "input_image", "image_url": f"data:image/jpeg;base64,{val}", "detail": "high"}
+                for val in encoded
+            ],
+        ],
+    }
+
+
+async def _identify_atlas_characters(
+    db: AsyncSession | None,
+    workspace: VideoWorkspace,
+    atlas_indices: list[int] | None = None,
+    global_frame_indices: list[int] | None = None,
+) -> dict[str, Any]:
+    """Run visual memory character matching on selected local workspace frames."""
+    selected_frames: list[int] = []
+    if global_frame_indices:
+        selected_frames.extend(
+            idx for idx in global_frame_indices if idx in workspace.frame_paths
+        )
+    if atlas_indices:
+        wanted = set(atlas_indices)
+        for entry in workspace.atlases:
+            if entry.atlas_index in wanted:
+                selected_frames.extend(
+                    range(entry.frame_number_start, entry.frame_number_end + 1)
+                )
+    if not selected_frames:
+        selected_frames = sorted(workspace.frame_paths)[:8]
+    selected_frames = list(dict.fromkeys(selected_frames))[:16]
+    if db is None:
+        return {
+            "available": False,
+            "reason": "database_unavailable_in_local_simulation",
+            "inspected_frames": selected_frames,
+            "matches": [],
+        }
+    try:
+        from wuwa_story.visual_memory.inference import VisualDetector
+        from wuwa_story.visual_memory.service import VisualMemoryService
+    except Exception as exc:
+        return {
+            "available": False,
+            "reason": f"visual_memory_unavailable: {exc}",
+            "inspected_frames": selected_frames,
+            "matches": [],
+        }
+    detector = VisualDetector()
+    if not detector.available():
+        return {
+            "available": False,
+            "reason": "visual_memory_onnx_models_not_configured",
+            "inspected_frames": selected_frames,
+            "matches": [],
+        }
+    service = VisualMemoryService(db)
+    matches: list[dict[str, Any]] = []
+    for frame_idx in selected_frames:
+        path = workspace.frame_paths.get(frame_idx)
+        if not path or not path.is_file():
+            continue
+        image_bytes = path.read_bytes()
+        detections = await asyncio.to_thread(detector.detect_and_embed, image_bytes)
+        frame_matches = []
+        for det in detections:
+            candidates = await service.search_embedding(det["embedding"], limit=3)
+            frame_matches.append(
+                {
+                    "bbox": det.get("bbox"),
+                    "score": det.get("score"),
+                    "candidates": candidates,
+                }
+            )
+        if frame_matches:
+            matches.append(
+                {
+                    "global_frame": frame_idx,
+                    "time": workspace.frame_times.get(frame_idx),
+                    "detections": frame_matches,
+                }
+            )
+    return {"available": True, "inspected_frames": selected_frames, "matches": matches}
+
+
+async def _execute_video_tool(
+    db: AsyncSession | None,
+    workspace: VideoWorkspace,
+    call: ToolCall,
+) -> tuple[dict[str, Any], list[AtlasEntry]]:
+    args = call.arguments
+    if call.name == "resample_video_window":
+        check = validate_resample_request(
+            workspace.duration,
+            float(args["start_seconds"]),
+            float(args["end_seconds"]),
+            float(args["interval_seconds"]),
+            soft_max_frames=int(workspace.limits["soft_zoom_frames"]),
+            hard_max_frames=int(workspace.limits["hard_zoom_frames"]),
+            bypass_limit=bool(args.get("bypass_limit", False)),
+            bypass_justification=args.get("bypass_justification"),
+        )
+        if not check["ok"]:
+            return check, []
+        created = await workspace.build_atlases(
+            list(check["times"]),  # type: ignore[arg-type]
+            reason=str(args.get("reason") or "zoom_window"),
+        )
+        return (
+            {
+                "ok": True,
+                "bypassed": check["bypassed"],
+                "reason": args.get("reason"),
+                "new_atlases": workspace.manifest(created),
+            },
+            created,
+        )
+
+    if call.name == "identify_atlas_characters":
+        result = await _identify_atlas_characters(
+            db,
+            workspace,
+            atlas_indices=args.get("atlas_indices"),
+            global_frame_indices=args.get("global_frame_indices"),
+        )
+        return result, []
+
+    if db is None:
+        return {"error": "Archive database is not connected in local simulation mode"}, []
+
+    latest_release = await db.scalar(
+        select(GameRelease.id)
+        .where(select(NodeRevision.id).where(NodeRevision.release_id == GameRelease.id).exists())
+        .order_by(GameRelease.sequence.desc())
+        .limit(1)
+    )
+    if call.name == "search_entities":
+        query = str(args.get("query") or "").strip()
+        category = args.get("category")
+        limit = max(1, min(int(args.get("limit") or 10), 25))
+        if not query or latest_release is None:
+            return {"results": []}, []
+        en_id = await db.scalar(select(Locale.id).where(Locale.code == "en"))
+        rows = await lexical_search(
+            db,
+            query,
+            en_id or 1,
+            [str(category)] if category else None,
+            latest_release,
+            limit=limit,
+        )
+        return {"results": rows}, []
+
+    if call.name == "search_dialogue":
+        query = str(args.get("query") or "").strip()
+        limit = max(1, min(int(args.get("limit") or 10), 25))
+        if not query or latest_release is None:
+            return {"results": []}, []
+        en_id = await db.scalar(select(Locale.id).where(Locale.code == "en"))
+        line_val = aliased(LocalizationValue, name="line_val")
+        speaker_val = aliased(LocalizationValue, name="speaker_val")
+        stmt = (
+            select(
+                DialogueLine.node_id,
+                speaker_val.content.label("speaker"),
+                line_val.content.label("text"),
+            )
+            .outerjoin(Speaker, Speaker.node_id == DialogueLine.speaker_node_id)
+            .outerjoin(
+                speaker_val,
+                (speaker_val.key_id == Speaker.name_key_id)
+                & (speaker_val.locale_id == (en_id or 1))
+                & (speaker_val.release_id == latest_release)
+                & (speaker_val.status == "resolved_nonempty"),
+            )
+            .join(
+                line_val,
+                (line_val.key_id == DialogueLine.localization_key_id)
+                & (line_val.locale_id == (en_id or 1))
+                & (line_val.release_id == latest_release)
+                & (line_val.status == "resolved_nonempty"),
+            )
+            .where(line_val.content.icontains(query, autoescape=True))
+            .limit(limit)
+        )
+        rows = [dict(r) for r in (await db.execute(stmt)).mappings()]
+        return {"results": rows}, []
+
+    if call.name == "search_lore":
+        query = str(args.get("query") or "").strip()
+        limit = max(1, min(int(args.get("limit") or 8), 20))
+        if not query:
+            return {"results": []}, []
+        service = LoreSearchService(db)
+        results = await service.hybrid_search(query, None, limit=limit)
+        return {
+            "results": [
+                {
+                    "source_type": r.source_type,
+                    "source_id": r.source_id,
+                    "quest_id": r.quest_id,
+                    "chunk_type": r.chunk_type,
+                    "content": r.content,
+                }
+                for r in results
+            ]
+        }, []
+
+    if call.name == "read_node":
+        node_id = int(args["node_id"])
+        node = await db.get(Node, node_id)
+        if node is None:
+            return {"error": f"Node {node_id} not found"}, []
+        nt = await db.get(NodeType, node.type_id)
+        return {
+            "id": node.id,
+            "canonical_key": node.canonical_key,
+            "slug": node.slug,
+            "type": nt.key if nt else None,
+        }, []
+
+    if call.name == "graph_neighbors":
+        node_id = int(args["node_id"])
+        limit = max(1, min(int(args.get("limit") or 20), 50))
+        rows = (
+            await db.execute(
+                select(Edge.from_node_id, Edge.to_node_id, RelationType.key, Edge.layer)
+                .join(RelationType, RelationType.id == Edge.relation_type_id)
+                .where((Edge.from_node_id == node_id) | (Edge.to_node_id == node_id))
+                .limit(limit)
+            )
+        ).all()
+        return {
+            "edges": [
+                {"from_node_id": f, "to_node_id": t, "relation": r, "layer": layer}
+                for f, t, r, layer in rows
+            ]
+        }, []
+
+    return {"error": f"Unknown tool: {call.name}"}, []
+
+
+async def _publish_cutscene_knowledge(
+    db: AsyncSession,
+    run: ProcessingRun,
+    result: VideoAnalysisResult,
+) -> None:
+    """Persist cutscene lore chunks and agent-layer edges so quest analysis finds them."""
+    if run.target_node_id is None:
+        return
+    asset_node_id = run.target_node_id
+    asset_version = run.metadata_json.get("asset_version")
+
+    await db.execute(
+        delete(LoreChunk).where(
+            LoreChunk.source_type == "cutscene_vision",
+            LoreChunk.source_id == str(asset_node_id),
+        )
+    )
+    participants = sorted(
+        {
+            *(link.target_name for link in result.entity_links if link.kind == "character"),
+            *(actor for ev in result.events for actor in ev.actors),
+            *(actor for sev in result.story_events for actor in sev.participants),
+        }
+    )
+    lines = [
+        f"Cutscene: {result.title or f'Asset {asset_node_id}'}",
+        f"Summary: {result.summary}",
+    ]
+    if result.lore_topics:
+        lines.append("Lore topics: " + ", ".join(result.lore_topics))
+    if result.story_events:
+        lines.append(
+            "Events: "
+            + " | ".join(
+                f"[{sev.time_start:.1f}s-{sev.time_end:.1f}s] {sev.title}: {sev.summary}"
+                for sev in result.story_events
+            )
+        )
+    if result.entity_links:
+        lines.append(
+            "Linked entities: "
+            + ", ".join(f"{link.target_name} ({link.kind}, {link.relation})" for link in result.entity_links)
+        )
+    content = "\n".join(lines)
+    db.add(
+        LoreChunk(
+            source_type="cutscene_vision",
+            source_id=str(asset_node_id),
+            quest_id=None,
+            game_version=str(asset_version)[:20] if asset_version else None,
+            characters=participants,
+            chunk_type="cutscene_lore",
+            language="en",
+            content=content,
+            search_vector=func.to_tsvector("simple", content),
+        )
+    )
+
+    relation_map = {
+        "appears_in": "INVOLVES",
+        "uses_item": "USES_ITEM",
+        "located_at": "LOCATED_AT",
+        "related_to_event": "RELATED_TO",
+        "mentions": "MENTIONS",
+    }
+    for link in result.entity_links:
+        if not link.target_node_id or link.target_node_id == asset_node_id:
+            continue
+        rel_key = relation_map.get(link.relation, "MENTIONS")
+        rel_id = await db.scalar(select(RelationType.id).where(RelationType.key == rel_key))
+        if rel_id is None:
+            await db.execute(
+                insert(RelationType)
+                .values(key=rel_key, description=f"Generated video-analysis relation {rel_key}")
+                .on_conflict_do_nothing(index_elements=[RelationType.key])
+            )
+            rel_id = await db.scalar(select(RelationType.id).where(RelationType.key == rel_key))
+        if rel_id is None:
+            continue
+        existing_edge = await db.scalar(
+            select(Edge.id).where(
+                Edge.from_node_id == asset_node_id,
+                Edge.to_node_id == link.target_node_id,
+                Edge.relation_type_id == rel_id,
+                Edge.layer == "agent",
+            )
+        )
+        if existing_edge is None:
+            db.add(
+                Edge(
+                    from_node_id=asset_node_id,
+                    to_node_id=link.target_node_id,
+                    relation_type_id=rel_id,
+                    layer="agent",
+                    confidence=0.85 if link.confidence == "observed" else 0.7,
+                    metadata_json={
+                        "run_id": run.id,
+                        "kind": link.kind,
+                        "evidence": link.evidence,
+                    },
+                )
+            )
+
+
+async def run_video_analysis_agent(
+    db: AsyncSession,
+    run: ProcessingRun,
+    settings: AgentSettings,
+    workspace: VideoWorkspace,
+    storage: Any,
+    context: dict[str, Any] | None,
+) -> VideoAnalysisResult:
+    """Execute the multi-turn video analysis agent and persist outputs."""
+    overview_times = sample_times(
+        workspace.duration,
+        float(workspace.limits["overview_interval"]),
+        int(workspace.limits["max_overview_frames"]),
+    )
+    overview_atlases = await workspace.build_atlases(overview_times, reason="overview")
+
+    tools = video_analysis_definitions()
+    system_prompt = analysis_prompt("video_analysis")
+    intro = {
+        "duration_seconds": workspace.duration,
+        "limits": workspace.limits,
+        "atlases": workspace.manifest(overview_atlases),
+        "source_text_context": context or {},
+    }
+    history: list[dict[str, Any]] = [
+        {"role": "system", "content": system_prompt},
+    ]
+
+    async with httpx.AsyncClient(timeout=settings.http_timeout_seconds) as client:
+        provider = Provider(settings, client)
+        history.append(
+            _multimodal_user_message(
+                provider,
+                "Analyze this video using the globally numbered atlases and tools.\n"
+                + json.dumps(intro, ensure_ascii=False),
+                [entry.image_bytes for entry in overview_atlases],
+            )
+        )
+
+        final_result: VideoAnalysisResult | None = None
+        for step in range(MAX_AGENT_TURNS):
+            route, payload = provider.request(history, tools)
+            input_bound = max(4096, len(json.dumps(payload, default=str)) // 4)
+            call = await reserve(
+                db,
+                settings,
+                run_id=run.id,
+                step=step,
+                input_bound=input_bound,
+                output_bound=settings.max_output_tokens,
+                kind="cutscene_visual",
+            )
+            await db.commit()
+
+            try:
+                raw = await provider.post(route, payload)
+            except ProviderRejected as error:
+                await settle(db, call.id, settings, 0, 0, {"_rejected": error.diagnostic()})
+                await db.commit()
+                raise
+            except ProviderFailure:
+                await db.commit()
+                raise
+            source_tokens, output_tokens = token_usage(raw, settings.provider)
+            await settle(db, call.id, settings, source_tokens, output_tokens, raw)
+            run.tokens_input = (run.tokens_input or 0) + source_tokens
+            run.tokens_output = (run.tokens_output or 0) + output_tokens
+            await db.commit()
+
+            turn = provider.parse(raw)
+            history.extend(turn.items)
+            if not turn.calls:
+                if turn.text:
+                    final_result = VideoAnalysisResult.model_validate_json(turn.text)
+                    break
+                raise ProviderFailure("video_agent_stopped_without_result")
+
+            new_images: list[tuple[AtlasEntry, dict[str, Any]]] = []
+            for tc in turn.calls:
+                if tc.name == "finish_video_analysis":
+                    final_result = VideoAnalysisResult.model_validate(tc.arguments)
+                    history.append(provider.tool_result(tc, {"status": "accepted"}))
+                    break
+                tool_out, created = await _execute_video_tool(db, workspace, tc)
+                history.append(provider.tool_result(tc, tool_out))
+                for entry in created:
+                    new_images.append((entry, tool_out))
+            if final_result is not None:
+                break
+            if new_images:
+                history.append(
+                    _multimodal_user_message(
+                        provider,
+                        "Newly extracted atlas images from resample_video_window:\n"
+                        + json.dumps(workspace.manifest([e for e, _ in new_images]), ensure_ascii=False),
+                        [e.image_bytes for e, _ in new_images],
+                    )
+                )
+
+    if final_result is None:
+        raise ProviderFailure("video_agent_exceeded_max_turns")
+
+    service = FileRegistrationService(storage)
+    atlas_refs = []
+    for entry in workspace.atlases:
+        manifest = {
+            "protocol": VISION_VERSION,
+            "source_file_id": run.metadata_json["file_id"],
+            "source_sha256": run.metadata_json["source_sha256"],
+            **entry.layout,
+        }
+        identity = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
+        source_path = f"video:{run.metadata_json['file_id']}:atlas:{identity}"
+        file = await service.register_file(db, entry.path, "image", mime_type="image/jpeg")
+        await service.register_variant(db, run.metadata_json["file_id"], file.id, "video_frame_atlas", run.id)
+        reference = await db.scalar(
+            select(FileReference).where(
+                FileReference.reference_type == "video_frame_atlas",
+                FileReference.source_path == source_path,
+                FileReference.file_id == file.id,
+            )
+        )
+        if reference is None:
+            reference = await service.register_reference(
+                db,
+                file_id=file.id,
+                reference_type="video_frame_atlas",
+                owner_node_id=run.target_node_id,
+                source_path=source_path,
+            )
+            reference.metadata_json = manifest
+        atlas_refs.append({"reference_id": reference.id, "file_id": file.id, "atlas_index": entry.atlas_index})
+
+    preview_ids = []
+    preview_path = workspace.root / "preview.jpg"
+    for candidate in sorted(final_result.preview_candidates, key=lambda c: c.score, reverse=True)[:5]:
+        preview_path.unlink(missing_ok=True)
+        await run_tool(
+            [
+                str(workspace.ffmpeg),
+                "-v",
+                "error",
+                "-y",
+                "-ss",
+                str(candidate.time),
+                "-i",
+                str(workspace.movie),
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale='min(1280,iw)':-2,format=yuvj420p",
+                "-threads",
+                "1",
+                "-q:v",
+                "2",
+                str(preview_path),
+            ],
+            60,
+        )
+        file = await service.register_file(db, preview_path, "image", mime_type="image/jpeg")
+        await service.register_variant(db, run.metadata_json["file_id"], file.id, "cutscene_preview", run.id)
+        source_path = f"video:{run.metadata_json['file_id']}:preview:run:{run.id}:time:{candidate.time}"
+        ref = await db.scalar(
+            select(FileReference).where(
+                FileReference.reference_type == "cutscene_preview",
+                FileReference.source_path == source_path,
+                FileReference.owner_node_id == run.target_node_id,
+                FileReference.file_id == file.id,
+            )
+        )
+        if ref is None:
+            ref = await service.register_reference(
+                db,
+                file_id=file.id,
+                reference_type="cutscene_preview",
+                owner_node_id=run.target_node_id,
+                source_path=source_path,
+            )
+            ref.metadata_json = {
+                "source_file_id": run.metadata_json["file_id"],
+                "source_sha256": run.metadata_json["source_sha256"],
+                "asset_version": run.metadata_json["asset_version"],
+                "timestamp": candidate.time,
+                "score": candidate.score,
+                "run_id": run.id,
+            }
+        preview_ids.append(file.id)
+
+    report = {
+        "evidence_type": "ai_visual_observation",
+        "protocol": VISION_VERSION,
+        "complete": True,
+        "source_file_id": run.metadata_json["file_id"],
+        "source_sha256": run.metadata_json["source_sha256"],
+        "asset_version": run.metadata_json["asset_version"],
+        "duration": workspace.duration,
+        "title": final_result.title,
+        "summary": final_result.summary,
+        "events": [ev.model_dump() for ev in final_result.events],
+        "story_events": [sev.model_dump() for sev in final_result.story_events],
+        "entity_links": [link.model_dump() for link in final_result.entity_links],
+        "lore_topics": final_result.lore_topics,
+        "atlases": workspace.manifest(),
+        "atlas_references": atlas_refs,
+        "preview_file_ids": preview_ids,
+    }
+    report_path = workspace.root / "visual-report.json"
+    report_path.write_text(json.dumps(report, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    report_file = await service.register_file(db, report_path, "json", mime_type="application/json")
+    source_path = f"video:{run.metadata_json['file_id']}:visual:{run.input_hash.hex()}"
+    report_ref = await db.scalar(
+        select(FileReference).where(
+            FileReference.reference_type == "cutscene_visual_description",
+            FileReference.source_path == source_path,
+            FileReference.owner_node_id == run.target_node_id,
+        )
+    )
+    if report_ref is None:
+        report_ref = await service.register_reference(
+            db,
+            file_id=report_file.id,
+            reference_type="cutscene_visual_description",
+            owner_node_id=run.target_node_id,
+            source_path=source_path,
+        )
+    report_ref.metadata_json = report
+
+    await _publish_cutscene_knowledge(db, run, final_result)
+    run.raw_output = {"report_reference_id": report_ref.id, "atlases": len(atlas_refs)}
+    run.status = "completed"
+    return final_result
+
+
+async def simulate_video_analysis(
+    video_path: Path,
+    output_dir: Path,
+    *,
+    interval: float | None = None,
+    window_start: float | None = None,
+    window_end: float | None = None,
+    window_interval: float = 0.5,
+) -> dict[str, Any]:
+    """Local CLI simulation: builds globally numbered atlases, tests zoom resampling, and writes outputs."""
+    ffmpeg_name = shutil.which("ffmpeg")
+    if not ffmpeg_name:
+        raise RuntimeError("ffmpeg not found on PATH")
+    ffmpeg = Path(ffmpeg_name).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    duration, _ = await asyncio.to_thread(video_duration, ffmpeg, video_path)
+    settings = AgentSettings(_env_file=None)
+    if interval is not None:
+        settings.vision_frame_interval = max(1, min(30, int(round(interval))))
+    limits = dynamic_sampling_plan(duration, settings)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        workspace = VideoWorkspace(
+            root=Path(tmp),
+            ffmpeg=ffmpeg,
+            movie=video_path.resolve(),
+            duration=duration,
+            settings=settings,
+            limits=limits,
+        )
+        overview_times = sample_times(
+            duration,
+            float(limits["overview_interval"]),
+            int(limits["max_overview_frames"]),
+        )
+        await workspace.build_atlases(overview_times, reason="overview")
+
+        resample_result: dict[str, Any] | None = None
+        if window_start is not None and window_end is not None:
+            check = validate_resample_request(
+                duration,
+                window_start,
+                window_end,
+                window_interval,
+                soft_max_frames=int(limits["soft_zoom_frames"]),
+                hard_max_frames=int(limits["hard_zoom_frames"]),
+            )
+            if check["ok"]:
+                created = await workspace.build_atlases(
+                    list(check["times"]),  # type: ignore[arg-type]
+                    reason="cli_zoom_window",
+                )
+                resample_result = {"ok": True, "new_atlases": workspace.manifest(created)}
+            else:
+                resample_result = check
+
+        for entry in workspace.atlases:
+            shutil.copy2(entry.path, output_dir / entry.path.name)
+        summary = {
+            "video": str(video_path),
+            "duration_seconds": duration,
+            "limits": limits,
+            "atlases": workspace.manifest(),
+            "resample_result": resample_result,
+        }
+        (output_dir / "simulation_manifest.json").write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return summary

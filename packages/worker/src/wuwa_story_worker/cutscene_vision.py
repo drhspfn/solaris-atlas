@@ -20,6 +20,7 @@ from wuwa_story.agents.budget import BudgetExceeded, reserve, settle
 from wuwa_story.agents.cutscene_vision import (
     MIN_VISUAL_SECONDS,
     VISION_VERSION,
+    dynamic_sampling_plan,
     sample_times,
     validate_batch,
 )
@@ -36,6 +37,7 @@ from wuwa_story.storage.service import FileRegistrationService
 from wuwa_story_worker.broker import publish_job
 from wuwa_story_worker.cutscene_import import run_tool, video_duration
 from wuwa_story_worker.cutscene_title import analyze_title_only
+from wuwa_story_worker.video_analysis_agent import VideoWorkspace, run_video_analysis_agent
 from wuwa_story_worker.video_atlas import write_atlas
 
 logger = logging.getLogger(__name__)
@@ -346,7 +348,7 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
     ffmpeg = Path(ffmpeg_name).resolve()
     checkpoint = dict(run.raw_output or {"batches": [], "step": 0})
     protocol = getattr(run, "prompt_version", None) or VISION_VERSION
-    use_atlases = protocol in ("cutscene-visual-v2", "cutscene-visual-v3", VISION_VERSION)
+    use_atlases = protocol in ("cutscene-visual-v2", "cutscene-visual-v3", "cutscene-visual-v4", VISION_VERSION)
     context = run.metadata_json.get("text_context") if use_atlases else None
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -359,9 +361,24 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
         if digest.hexdigest() != run.metadata_json["source_sha256"]:
             raise ValueError("Source content changed")
         duration, _ = await asyncio.to_thread(video_duration, ffmpeg, movie)
-        if protocol in ("cutscene-visual-v3", VISION_VERSION) and duration < MIN_VISUAL_SECONDS:
+        if protocol in ("cutscene-visual-v3", "cutscene-visual-v4", VISION_VERSION) and duration < MIN_VISUAL_SECONDS:
             run.status, run.error, run.finished_at = "skipped", "Video is shorter than 5 seconds", datetime.now(UTC)
             run.raw_output = {**checkpoint, "skip_reason": "short_video", "duration": duration}
+            await db.commit()
+            return
+        if protocol == VISION_VERSION:
+            run.status = "running"
+            await db.commit()
+            workspace = VideoWorkspace(
+                root=root,
+                ffmpeg=ffmpeg,
+                movie=movie,
+                duration=duration,
+                settings=settings,
+                limits=dynamic_sampling_plan(duration, settings),
+            )
+            await run_video_analysis_agent(db, run, settings, workspace, storage, context)
+            run.finished_at = datetime.now(UTC)
             await db.commit()
             return
         times = sample_times(duration, settings.vision_frame_interval, settings.vision_max_frames)
@@ -401,8 +418,8 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
                         manifests = None
                     route, request = vision_request(provider, batch_times, images,
                                                     atlases=manifests, context=context,
-                                                    choose_preview=protocol in ("cutscene-visual-v3", VISION_VERSION),
-                                                    choose_title=protocol == VISION_VERSION)
+                                                    choose_preview=protocol in ("cutscene-visual-v3", "cutscene-visual-v4", VISION_VERSION),
+                                                    choose_title=protocol in ("cutscene-visual-v4", VISION_VERSION))
                     # A deliberately conservative image bound, independent of base64 byte size.
                     image_bound = (sum(max(8192, math.ceil(m["width"] / 16)
                                            * math.ceil(m["height"] / 16) * 2) for m in manifests)

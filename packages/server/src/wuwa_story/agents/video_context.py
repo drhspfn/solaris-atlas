@@ -5,8 +5,10 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 from sqlalchemy.sql import Select, Subquery
 
+from wuwa_story.db.models.core import DialogueLine, QuestAction, Speaker
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision, NodeType
 from wuwa_story.db.models.i18n import Locale, LocalizationKey, LocalizationValue
 from wuwa_story.db.models.ontology import RelationType
@@ -15,13 +17,16 @@ from wuwa_story.db.models.raw import SourceRecord
 from wuwa_story.db.models.storage import FileReference
 from wuwa_story.story.cutscene_publications import publication_types
 
+CAPTION_FPS = 30
 MAX_CONTEXT_CHARACTERS = 12_000
 MAX_CONTEXT_ROWS = 100
+MAX_DIALOGUE_ROWS = 40
 
 
 def _source_links(relation: str, release_id: int) -> Subquery:
     return (
-        select(Edge.from_node_id.label("parent"), Edge.to_node_id.label("child"))
+        select(Edge.from_node_id.label("parent"),
+               Edge.to_node_id.label("child"))
         .join(RelationType, RelationType.id == Edge.relation_type_id)
         .where(
             RelationType.key == relation,
@@ -37,11 +42,12 @@ def _source_links(relation: str, release_id: int) -> Subquery:
 
 def _caption_query(
     owner_node_id: int, release_id: int
-) -> Select[int, str, int, int, int | None, str, str | None]:
+) -> Select[int, str, int, int, int | None, str, Any, str | None]:
     assets = _source_links("references_asset", release_id)
     variants = _source_links("has_variant", release_id)
     captions = _source_links("uses_caption", release_id)
-    observed = select(NodeRevision.node_id).where(NodeRevision.release_id == release_id)
+    observed = select(NodeRevision.node_id).where(
+        NodeRevision.release_id == release_id)
     return (
         select(
             Node.id.label("node_id"),
@@ -50,6 +56,7 @@ def _caption_query(
             SourceRecord.id.label("source_record_id"),
             SourceRecord.row_index.label("source_index"),
             LocalizationKey.key.label("key"),
+            SourceRecord.data.label("raw_data"),
             LocalizationValue.content.label("text"),
         )
         .select_from(assets)
@@ -80,16 +87,109 @@ def _caption_query(
     )
 
 
+def _caption_timing(raw_data: Any) -> dict[str, float]:
+    if not isinstance(raw_data, dict):
+        return {}
+    start = raw_data.get("ShowMomentEn")
+    duration = raw_data.get("DurationEn")
+    if not isinstance(duration, (int, float)) or duration <= 0:
+        start = raw_data.get("ShowMoment")
+        duration = raw_data.get("Duration")
+    if (
+        isinstance(start, (int, float))
+        and isinstance(duration, (int, float))
+        and start >= 0
+        and duration > 0
+    ):
+        return {
+            "start_seconds": round(float(start) / CAPTION_FPS, 3),
+            "end_seconds": round(float(start + duration) / CAPTION_FPS, 3),
+        }
+    return {}
+
+
+async def _dialogue_rows(
+    session: AsyncSession, owner_node_id: int, release_id: int
+) -> list[dict[str, Any]]:
+    assets = _source_links("references_asset", release_id)
+    variants = _source_links("has_variant", release_id)
+    plays = _source_links("plays_cutscene", release_id)
+    observed = select(NodeRevision.node_id).where(
+        NodeRevision.release_id == release_id)
+    state_ids = (
+        select(QuestAction.quest_state_node_id)
+        .join(plays, plays.c.parent == QuestAction.node_id)
+        .join(variants, variants.c.parent == plays.c.child)
+        .join(assets, assets.c.parent == variants.c.child)
+        .where(
+            assets.c.child == owner_node_id,
+            QuestAction.quest_state_node_id.is_not(None),
+            QuestAction.node_id.in_(observed),
+        )
+        .distinct()
+    )
+    line_val = aliased(LocalizationValue, name="line_val")
+    speaker_val = aliased(LocalizationValue, name="speaker_val")
+    stmt = (
+        select(
+            DialogueLine.node_id.label("node_id"),
+            QuestAction.quest_state_node_id.label("state_id"),
+            DialogueLine.source_index.label("order_index"),
+            speaker_val.content.label("speaker"),
+            line_val.content.label("text"),
+        )
+        .join(QuestAction, QuestAction.node_id == DialogueLine.action_node_id)
+        .join(
+            line_val,
+            (line_val.key_id == DialogueLine.localization_key_id)
+            & (line_val.release_id == release_id)
+            & (line_val.status == "resolved_nonempty"),
+        )
+        .join(Locale, (Locale.id == line_val.locale_id) & (Locale.code == "en"))
+        .outerjoin(Speaker, Speaker.node_id == DialogueLine.speaker_node_id)
+        .outerjoin(
+            speaker_val,
+            (speaker_val.key_id == Speaker.name_key_id)
+            & (speaker_val.locale_id == Locale.id)
+            & (speaker_val.release_id == release_id)
+            & (speaker_val.status == "resolved_nonempty"),
+        )
+        .where(
+            QuestAction.quest_state_node_id.in_(state_ids),
+            DialogueLine.node_id.in_(observed),
+            line_val.content.is_not(None),
+            line_val.content != "",
+        )
+        .order_by(QuestAction.quest_state_node_id, DialogueLine.source_index, DialogueLine.node_id)
+        .limit(MAX_DIALOGUE_ROWS)
+    )
+    rows = (await session.execute(stmt)).mappings()
+    return [
+        {
+            "node_id": row["node_id"],
+            "state_id": row["state_id"],
+            "order_index": row["order_index"],
+            "speaker": row["speaker"],
+            "text": row["text"],
+        }
+        for row in rows
+    ]
+
+
 def _bounded(snapshot: dict[str, Any]) -> dict[str, Any]:
     # Count the entire JSON snapshot, including provenance and escaping, not just text.
     while len(json.dumps(snapshot, ensure_ascii=False, sort_keys=True)) > MAX_CONTEXT_CHARACTERS:
         snapshot["truncated"] = True
-        if snapshot["rows"]:
+        if snapshot.get("dialogue_lines"):
+            snapshot["dialogue_lines"].pop()
+        elif snapshot["rows"]:
             snapshot["rows"].pop()
         elif snapshot.get("context"):
-            snapshot["context"] = snapshot["context"][: max(0, len(snapshot["context"]) // 2)]
+            snapshot["context"] = snapshot["context"][: max(
+                0, len(snapshot["context"]) // 2)]
         else:
-            raise ValueError("Video context provenance exceeds the snapshot limit")
+            raise ValueError(
+                "Video context provenance exceeds the snapshot limit")
     return snapshot
 
 
@@ -152,7 +252,12 @@ async def video_context_snapshot(
         "upstream_commit": release.upstream_commit,
     }
     result = await session.execute(_caption_query(owner, release.id))
-    rows = [dict(row) for row in result.mappings()]
+    rows = []
+    for row in result.mappings():
+        entry = {k: v for k, v in dict(row).items() if k != "raw_data"}
+        entry.update(_caption_timing(row.get("raw_data")))
+        rows.append(entry)
     snapshot["rows"] = rows[:MAX_CONTEXT_ROWS]
+    snapshot["dialogue_lines"] = await _dialogue_rows(session, owner, release.id)
     snapshot["truncated"] = len(rows) > MAX_CONTEXT_ROWS
     return _bounded(snapshot)

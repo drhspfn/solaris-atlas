@@ -195,6 +195,14 @@ def _parser() -> argparse.ArgumentParser:
     metadata.add_argument("run_id", type=int)
     metadata.add_argument("--apply", action="store_true",
                           help="Enqueue through normal target resolution; default is a read-only plan")
+    sim_video = commands.add_parser(
+        "simulate-video", help="Locally simulate video atlas numbering and window resampling on an MP4")
+    sim_video.add_argument("video", type=Path)
+    sim_video.add_argument("--output-dir", type=Path, default=Path("video-sim-out"))
+    sim_video.add_argument("--interval", type=float, default=None)
+    sim_video.add_argument("--window-start", type=float, default=None)
+    sim_video.add_argument("--window-end", type=float, default=None)
+    sim_video.add_argument("--window-interval", type=float, default=0.5)
     return parser
 
 
@@ -538,6 +546,17 @@ def main() -> None:
     elif args.command == "extract-maps":
         print(asyncio.run(build_maps(args.root.resolve(),
               args.fmodel, args.converter, args.publish)))
+    elif args.command == "simulate-video":
+        from wuwa_story_worker.video_analysis_agent import simulate_video_analysis
+
+        print(json.dumps(asyncio.run(simulate_video_analysis(
+            args.video.resolve(),
+            args.output_dir.resolve(),
+            interval=args.interval,
+            window_start=args.window_start,
+            window_end=args.window_end,
+            window_interval=args.window_interval,
+        )), indent=2))
     elif args.command == "refresh-map-sources":
         print(json.dumps(asyncio.run(refresh_map_sources(args.root.resolve()))))
     elif args.command == "enqueue-maps":

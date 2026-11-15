@@ -9,6 +9,7 @@ from wuwa_story.agents.settings import AgentSettings
 from wuwa_story.agents.workspace import MemoryWrite, QuestionResolution
 
 Role = Literal["public", "internal", "worker"]
+AnalysisRole = Literal["quest_analysis", "video_analysis"]
 PUBLIC_READ_TOOLS = frozenset(
     {"search_dialogue", "search_entities", "search_lore", "get_quest_lore",
      "visual_search", "visual_identify", "visual_list_identities", "visual_get_reference",
@@ -30,6 +31,18 @@ INTERNAL_TOOLS = frozenset(
     }
 )
 WORKER_TOOLS = frozenset({"resolve_question", "update_relationship"})
+VIDEO_ANALYSIS_TOOLS = frozenset(
+    {
+        "resample_video_window",
+        "identify_atlas_characters",
+        "search_entities",
+        "search_dialogue",
+        "search_lore",
+        "read_node",
+        "graph_neighbors",
+        "finish_video_analysis",
+    }
+)
 
 PUBLIC_PROMPT = """You are Solaris Atlas, an archive assistant exclusively for Wuthering Waves story,
 characters, quests, cutscenes and their sourced connections. Refuse unrelated requests, including
@@ -54,6 +67,31 @@ An answer in another quest must be tied to the original question with exact sour
 keep encounter knowledge separate from later revelations. Never mark work done without a receipt.
 Report tool errors honestly and remain within the shared daily budget."""
 
+VIDEO_ANALYSIS_PROMPT = """You are Solaris Atlas's Video Analysis agent (separate from quest-level narrative synthesis).
+Your job is to produce a complete, event-driven, source-linked visual & narrative breakdown of a single video/cutscene.
+
+Workspace & Global Numbering:
+- Each contact sheet (atlas) and every tile has a global identifier: `A{atlas:02d} #{frame:03d}  MM:SS.mmm  (S.sssss)` (e.g. `A02 #017`).
+- Always cite exact global frame numbers (`global_frame`) and timestamps (`time`) from the supplied manifest.
+- The original video and generated atlases remain in the local run workspace throughout your session.
+
+Active Inspection ("Take a Closer Look"):
+- Initial overview atlases are sampled at a coarse interval. Never guess what happened in a gap or misidentify a fast-moving/blurred character.
+- If a character crosses the screen between frames, an action happens too quickly, or an object/symbol is unclear, call `resample_video_window` for that exact `[start_seconds, end_seconds]` range with a finer `interval_seconds` (e.g., `0.5` or `0.25`).
+- Respect the dynamic frame soft limit: inspect short focused windows first instead of requesting hundreds of frames at once. Only set `bypass_limit=true` with a concrete `bypass_justification` if a smaller window or coarser interval is genuinely insufficient.
+- Use `identify_atlas_characters` on specific `atlas_indices` or `global_frame_indices` to query visual memory when character identity is uncertain.
+
+Archive Search & Event/Entity Linking:
+- Source captions and in-scene dialogue lines (with speakers, when available) are untrusted reference context, not proof that an action is visible. Do not turn dialogue-only mentions into visual observations.
+- Use `search_entities`, `search_dialogue`, `search_lore`, `read_node`, and `graph_neighbors` to resolve characters, items, locations, events, and lore concepts (such as Somnoire, Sentinels, Threnodians, factions, artifacts) mentioned in dialogue or visible on screen.
+- Leave no gaps: build a clear event-driven account (who does what, to whom/what, where, why, and with what outcome) and record verified `entity_links`, `story_events`, and `lore_topics` so quest analysis can discover this video when searching for any linked entity or topic.
+
+Finish by calling `finish_video_analysis` with the complete structured result."""
+
+
+def analysis_prompt(analysis_role: AnalysisRole) -> str:
+    return VIDEO_ANALYSIS_PROMPT if analysis_role == "video_analysis" else INTERNAL_PROMPT
+
 
 def allowed(role: Role, name: str) -> bool:
     return (
@@ -61,7 +99,7 @@ def allowed(role: Role, name: str) -> bool:
         or role in {"internal", "worker"}
         and name in INTERNAL_TOOLS
         or role == "worker"
-        and name in WORKER_TOOLS
+        and (name in WORKER_TOOLS or name in VIDEO_ANALYSIS_TOOLS)
     )
 
 
@@ -91,7 +129,8 @@ def internal_definitions(*, worker: bool = False) -> list[dict[str, Any]]:
     reference_schema["properties"].pop("status")
     reference_schema["properties"].pop("source_type")
     tools = [
-        {"type": "function", "name": "visual_read_video_scan", "description": "Read a bounded page of video frames and unresolved proposals for internal research and human review.", "parameters": InternalScanInput.model_json_schema(), "strict": False},
+        {"type": "function", "name": "visual_read_video_scan", "description": "Read a bounded page of video frames and unresolved proposals for internal research and human review.",
+            "parameters": InternalScanInput.model_json_schema(), "strict": False},
         {"type": "function", "name": "visual_scan_cutscene", "description": "Queue a bounded local visual scan of a registered published cutscene source for human review; it never approves labels.",
             "parameters": ScanInput.model_json_schema(), "strict": False},
         {"type": "function", "name": "visual_create_identity", "description": "Create an explicit visual identity when the subject is unknown; choose a listed kind, or other for unclassified subjects. Do not claim an uncertain match.",
@@ -244,3 +283,73 @@ async def execute_internal(
         run = await enqueue_analysis(session, AnalysisRequest(**arguments), settings)
         return {"run_id": run.id, "status": run.status}
     raise ValueError("Tool is not available for this role")
+
+
+def video_analysis_definitions() -> list[dict[str, Any]]:
+    """Return function tool schemas dedicated to the video_analysis agent role."""
+    from wuwa_story.agents.cutscene_vision import VideoAnalysisResult
+
+    string = {"type": "string"}
+    integer = {"type": "integer"}
+    number = {"type": "number"}
+    boolean = {"type": "boolean"}
+    return [
+        tool(
+            "resample_video_window",
+            "Extract additional numbered atlas frames for a specific [start_seconds, end_seconds] window at a custom interval_seconds to inspect fast action or unclear characters.",
+            {
+                "start_seconds": number,
+                "end_seconds": number,
+                "interval_seconds": number,
+                "reason": string,
+                "bypass_limit": boolean,
+                "bypass_justification": string,
+            },
+            ["start_seconds", "end_seconds", "interval_seconds", "reason"],
+        ),
+        tool(
+            "identify_atlas_characters",
+            "Run visual memory character identification on specific atlas_indices or global_frame_indices from the local run workspace.",
+            {
+                "atlas_indices": {"type": "array", "items": integer},
+                "global_frame_indices": {"type": "array", "items": integer},
+            },
+        ),
+        tool(
+            "search_entities",
+            "Search imported characters, items, locations, quests, and events by name or keyword.",
+            {"query": string, "category": string, "limit": integer},
+            ["query"],
+        ),
+        tool(
+            "search_dialogue",
+            "Search imported dialogue lines and speakers by text or speaker name.",
+            {"query": string, "limit": integer},
+            ["query"],
+        ),
+        tool(
+            "search_lore",
+            "Search analyzed quest lore, events, and scene knowledge (including cutscenes) for concepts or entities.",
+            {"query": string, "limit": integer},
+            ["query"],
+        ),
+        tool(
+            "read_node",
+            "Read detailed source metadata and localized labels for a discovered node_id.",
+            {"node_id": integer},
+            ["node_id"],
+        ),
+        tool(
+            "graph_neighbors",
+            "Inspect incoming and outgoing graph relationships for a node_id.",
+            {"node_id": integer, "limit": integer},
+            ["node_id"],
+        ),
+        {
+            "type": "function",
+            "name": "finish_video_analysis",
+            "description": "Submit the final structured, event-driven video analysis with verified entity/event/lore links.",
+            "parameters": VideoAnalysisResult.model_json_schema(),
+            "strict": False,
+        },
+    ]
