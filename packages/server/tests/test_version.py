@@ -1,7 +1,5 @@
-import pytest
 
 from wuwa_story.version import (
-    MIN_SUPPORTED_CLIENT_VERSION,
     is_caption_supported,
     is_supported_cutscene_version,
     is_supported_map_version,

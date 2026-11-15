@@ -15,7 +15,8 @@ from wuwa_story.db.models.graph import NodeRevision
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.repositories import cutscenes
 from wuwa_story.story.domain import authored_order
-from wuwa_story.story.review_order import SOURCE as REVIEW, review_positions
+from wuwa_story.story.review_order import SOURCE as REVIEW
+from wuwa_story.story.review_order import review_positions
 
 QUESTS = "BinData/QuestData/questdata.json"
 TREE = "BinData/QuestTree/questtreenode.json"

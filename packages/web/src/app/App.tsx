@@ -20,6 +20,7 @@ import {
 import { Catalog } from '../pages/CatalogPage';
 import { Profile } from '../pages/EntityProfilePage';
 import { Home } from '../pages/HomePage';
+import { McpDocsPage } from '../pages/McpDocsPage';
 import { NodeExplorerPage } from '../pages/NodeExplorerPage';
 import { NotFound } from '../pages/NotFoundPage';
 import { QuestPage } from '../pages/QuestTranscriptPage';
@@ -28,7 +29,6 @@ import { SettingsPage } from '../pages/SettingsPage';
 import { StoryConnectionPage } from '../pages/StoryConnectionPage';
 import { StoryEventPage } from '../pages/StoryEventPage';
 import { StoryMapPage } from '../pages/StoryMapPage';
-import { McpDocsPage } from '../pages/McpDocsPage';
 
 const WorldMapPage = lazy(() =>
   import('../pages/WorldMapPage').then((module) => ({ default: module.WorldMapPage })),

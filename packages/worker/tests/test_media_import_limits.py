@@ -1,12 +1,12 @@
 ﻿import hashlib
 import json
 import zipfile
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from wuwa_story_worker import decoded_json, sequence_composition as compositor
+from wuwa_story_worker import decoded_json
+from wuwa_story_worker import sequence_composition as compositor
 from wuwa_story_worker.story_spine import _stream_digest, _write_zip_entry
 
 REAL_DECODED_SIZE = 497735180  # M2_9_19_1Z_seq.json from client 3.8.0, run #25443

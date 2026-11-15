@@ -83,6 +83,7 @@ async def test_completed_job_is_rechecked_and_workspace_membership_is_durable(mo
 @pytest.mark.parametrize('status', ['queued', 'waiting_dependency', 'running'])
 async def test_explicit_recovery_redelivers_same_job_without_resetting_state(monkeypatch, status):
     from types import SimpleNamespace
+
     from wuwa_story.ingestion import media_jobs
 
     payload = {'run_id': 100, 'pinned': True}
@@ -106,6 +107,7 @@ async def test_explicit_recovery_redelivers_same_job_without_resetting_state(mon
 @pytest.mark.asyncio
 async def test_illustrated_rebuild_has_isolated_durable_routing_and_identity(monkeypatch):
     from unittest.mock import Mock
+
     from wuwa_story.ingestion import media_jobs
     value = request().model_copy(update={"kinds": ["image"]})
     monkeypatch.setattr(media_jobs, "entity_media_targets", AsyncMock(return_value=[{"kind": "spine"}]))

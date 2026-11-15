@@ -11,7 +11,11 @@ from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path
 
-from wuwa_story_worker.cutscene_frame_events import discover_movie_audio, discover_launcher_frame_audio, movie_frame_bindings
+from wuwa_story_worker.cutscene_frame_events import (
+    discover_launcher_frame_audio,
+    discover_movie_audio,
+    movie_frame_bindings,
+)
 from wuwa_story_worker.map_sources import integer, open_db, table, text
 
 # Same native readers used by map_sources/quest_interactions. Quest/LevelPlay

@@ -17,6 +17,7 @@ from sqlalchemy import select
 from wuwa_story.db.models.core import Quest
 from wuwa_story.db.models.graph import NodeRevision
 from wuwa_story.db.models.ops import GameRelease, ImportRun
+from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.session import SessionFactory, engine
 from wuwa_story.ingestion.cutscene_order import rebuild
 from wuwa_story.ingestion.dungeon_backfill import backfill
@@ -24,7 +25,6 @@ from wuwa_story.ingestion.show_talk_sequence_backfill import backfill as backfil
 from wuwa_story.read_models.refresh import mark_dirty
 from wuwa_story.story.review_order import SOURCE, review_positions
 from wuwa_story.story.service import _release_id
-from wuwa_story.db.models.raw import SourceFile, SourceRecord
 
 
 async def refresh_release(session, release, *, apply=False, repair_links=False, current_release_id=None):

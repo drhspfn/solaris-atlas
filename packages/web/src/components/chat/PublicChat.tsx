@@ -1,5 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, User, Bot, AlertCircle } from 'lucide-react';
+import { AlertCircle,Bot, Send, Sparkles, User } from 'lucide-react';
+import { useEffect,useRef, useState } from 'react';
+
 import { api } from '../../api/client';
 
 type Message = {

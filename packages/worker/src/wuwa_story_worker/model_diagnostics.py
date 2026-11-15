@@ -353,7 +353,7 @@ async def diagnose_scene_bundles(
             form_results = [first_result, *rest_results]
 
             child_task_groups: list[list[asyncio.Task]] = []
-            for form, (entry, linked) in zip(forms, form_results, strict=True):
+            for form, (_entry, linked) in zip(forms, form_results, strict=True):
                 prepared_components = character_models.prepare_linked_components(
                     form, linked) if linked else []
                 group = []

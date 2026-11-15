@@ -15,7 +15,6 @@ from wuwa_story.api.routes.story.captions import caption_texts, caption_tracks
 from wuwa_story.api.routes.story.cutscene_audio import audio_bundles
 from wuwa_story.api.routes.story.shared import _release_id
 from wuwa_story.config.settings import get_settings
-from wuwa_story.version import is_caption_supported
 from wuwa_story.db.models.content import Document, DocumentHead
 from wuwa_story.db.models.core import QuestAction, QuestState
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision
@@ -37,6 +36,7 @@ from wuwa_story.story.cutscene_publications import publication_order, publicatio
 from wuwa_story.story.scene_continuations import scene_continuations
 from wuwa_story.story.service import _quest_page_state_ids
 from wuwa_story.story.tree_order import authored_order
+from wuwa_story.version import is_caption_supported
 
 router = APIRouter(tags=["story browsing"])
 

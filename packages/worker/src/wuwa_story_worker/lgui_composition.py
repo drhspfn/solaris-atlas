@@ -156,7 +156,7 @@ def sequence_tracks(exports, bindings):
                           for t, v in zip(times, values, strict=True)]
                 if (any(not math.isfinite(t) or type(v) not in (int, float, bool)
                         or not math.isfinite(v) for t, v in points)
-                        or any(a[0] >= b[0] for a, b in zip(points, points[1:]))):
+                        or any(a[0] >= b[0] for a, b in zip(points, points[1:], strict=False))):
                     raise ValueError('Invalid UI channel value')
                 result.append({'actor': actor(binding['ObjectGuid']), 'field': field, 'points': points})
     return end, result

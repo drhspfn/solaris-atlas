@@ -1,5 +1,5 @@
-import { Link } from 'react-router-dom';
 import { Copy } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 export function McpDocsPage() {
   const sseUrl = `${window.location.origin}/api/mcp/sse`;

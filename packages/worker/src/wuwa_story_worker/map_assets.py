@@ -19,12 +19,12 @@ from wuwa_story.db.models.maps import MapMarker, MapTile, TileMap
 from wuwa_story.db.models.storage import FileReference
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
+from wuwa_story.version import MIN_SUPPORTED_CLIENT_VERSION, is_supported_map_version
 
 from wuwa_story_worker.asset_export import _sha256, export_assets
 from wuwa_story_worker.client_assets import save_json, workspace_lock
 from wuwa_story_worker.map_catalog import read_catalog
 from wuwa_story_worker.map_icons import build_icons
-from wuwa_story.version import MIN_SUPPORTED_CLIENT_VERSION, is_supported_map_version
 from wuwa_story_worker.map_sources import WORLD_TILE_SIZE, read_tiles
 
 logger = logging.getLogger(__name__)

@@ -2,7 +2,6 @@
 
 import math
 
-
 _NAMES = ('ScaleTransition_Speed', 'EyeLight_TransitionScale', 'UseEyeScaleTransition',
           'LightDifferentScale', 'LightShakeSpeed', 'LightShakeScale', 'LightShakPositionX',
           'LightShakPositionY', 'LightNormlScale', 'LightPositionX', 'LightPositionY',
@@ -51,7 +50,7 @@ def add_height_map_sample(material, image, uv_socket, green_socket, scalars, tim
     def op(kind, a, b):
         node = nodes.new('ShaderNodeMath')
         node.operation = kind
-        for socket, value in zip(node.inputs, (a, b)):
+        for socket, value in zip(node.inputs, (a, b), strict=False):
             if isinstance(value, (int, float)):
                 socket.default_value = value
             else:

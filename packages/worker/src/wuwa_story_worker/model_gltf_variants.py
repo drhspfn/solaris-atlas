@@ -154,7 +154,12 @@ def merge_glb_material_variants(
 
         copied_mat_cache: dict[int, int] = {}
 
-        def copy_image(var_img_idx: int) -> int:
+        def copy_image(
+            var_img_idx: int,
+            var_images=var_images,
+            var_views=var_views,
+            var_bin=var_bin,
+        ) -> int:
             img = deepcopy(var_images[var_img_idx])
             bv_idx = img.get("bufferView")
             if isinstance(bv_idx, int) and 0 <= bv_idx < len(var_views):
@@ -181,7 +186,7 @@ def merge_glb_material_variants(
             base_images.append(img)
             return new_img_idx
 
-        def copy_sampler(var_sampler_idx: int) -> int:
+        def copy_sampler(var_sampler_idx: int, var_samplers=var_samplers) -> int:
             sampler = var_samplers[var_sampler_idx]
             key = json.dumps(sampler, sort_keys=True)
             if key in sampler_to_idx:
@@ -191,7 +196,7 @@ def merge_glb_material_variants(
             sampler_to_idx[key] = idx
             return idx
 
-        def copy_texture(var_tex_idx: int) -> int:
+        def copy_texture(var_tex_idx: int, var_textures=var_textures) -> int:
             tex = deepcopy(var_textures[var_tex_idx])
             if isinstance(tex.get("source"), int):
                 tex["source"] = copy_image(tex["source"])
@@ -205,7 +210,11 @@ def merge_glb_material_variants(
             texture_to_idx[key] = idx
             return idx
 
-        def copy_material(var_mat_idx: int) -> int:
+        def copy_material(
+            var_mat_idx: int,
+            var_materials=var_materials,
+            copied_mat_cache=copied_mat_cache,
+        ) -> int:
             if var_mat_idx in copied_mat_cache:
                 return copied_mat_cache[var_mat_idx]
             mat = deepcopy(var_materials[var_mat_idx])

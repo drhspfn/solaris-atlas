@@ -37,7 +37,9 @@ async def test_localized_tracks_keep_asset_version_and_exact_voice_link(monkeypa
 @pytest.mark.asyncio
 async def test_public_voice_query_projects_only_playback_fields():
     from unittest.mock import AsyncMock
+
     from sqlalchemy.dialects import postgresql
+
     from wuwa_story.db.repositories.voice_media import published_voice_tracks
 
     session = SimpleNamespace(execute=AsyncMock(return_value=[]))

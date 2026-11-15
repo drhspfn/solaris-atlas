@@ -1,7 +1,10 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+
 import pytest
+
 from wuwa_story.ingestion import weapon_backfill
+
 
 @pytest.mark.asyncio
 async def test_weapon_backfill_dry_run_skips_existing_release_items(monkeypatch):

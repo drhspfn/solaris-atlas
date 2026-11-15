@@ -1,7 +1,7 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
-from unittest.mock import AsyncMock
 
 from wuwa_story.api.routes.story import media
 

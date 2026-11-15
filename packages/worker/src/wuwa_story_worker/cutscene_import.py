@@ -430,7 +430,10 @@ async def import_cutscene_recipe(
         originals_by_asset = {}
         published_references = {}
         resolved_videos = []
-        from wuwa_story_worker.cutscene_music_context import render_music_context, select_music_stems
+        from wuwa_story_worker.cutscene_music_context import (
+            render_music_context,
+            select_music_stems,
+        )
         music_stems = {}
         for video in spec.videos:
             if video.music_context:

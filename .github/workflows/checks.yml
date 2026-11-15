@@ -1,0 +1,125 @@
+name: Checks
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'Run checks'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.6"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Lint server (ruff)
+        working-directory: packages/server
+        run: |
+          uv sync --frozen --group dev
+          uv run ruff check src tests scripts
+      - name: Lint worker (ruff)
+        working-directory: packages/worker
+        run: |
+          uv sync --frozen --group dev
+          uv run ruff check src tests
+      - name: Lint and typecheck legacy web
+        working-directory: packages/web
+        run: |
+          npm ci
+          npx eslint .
+          npx tsc -b
+
+  web:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'Run checks'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install web_new dependencies
+        working-directory: packages/web_new
+        run: npm ci
+      - name: Typecheck web_new
+        working-directory: packages/web_new
+        run: npx tsc --noEmit
+      - name: Build web_new
+        working-directory: packages/web_new
+        run: npm run build
+      - name: Test MCP docs
+        working-directory: packages/web_new
+        run: node --test tests/mcpDocs.test.mjs
+
+  worker:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'Run checks'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.6"
+      - name: Install worker dependencies
+        working-directory: packages/worker
+        run: uv sync --frozen --group dev
+      - name: Run worker tests
+        working-directory: packages/worker
+        run: uv run pytest -q
+
+  server-and-visual-memory:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'Run checks'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: visual_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d visual_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/visual_test
+      WUWA_VISUAL_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/visual_test
+      PYTHONPATH: src:../worker/src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.6"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install CPU test prerequisites
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install server and test dependencies
+        working-directory: packages/server
+        run: uv sync --frozen --group dev
+      - name: Apply migrations
+        working-directory: packages/server
+        run: uv run alembic upgrade head
+      - name: Validate visual memory, permissions and video processing
+        working-directory: packages/server
+        run: >-
+          uv run pytest tests/test_visual_memory_*.py tests/test_admin_visual_memory.py
+          tests/test_agent_chat_roles.py tests/test_mcp_media_tools.py tests/test_mcp_character_tools.py
+          -q
+      - name: Validate import, search and migration tests
+        working-directory: packages/server
+        run: >-
+          uv run pytest tests/test_import_perf_queries.py tests/test_search_batching.py
+          tests/test_lexical_search_priority.py tests/test_npc_search_names.py
+          tests/test_localization_dedup.py tests/test_canonical_edge_batches.py
+          tests/test_npc_canonical_import.py tests/test_compiler_importer_deadlock.py
+          tests/test_import_progress.py -q
+      - name: Validate admin interaction and tool documentation
+        run: node --test packages/server/tests/test_visual_memory_*.mjs packages/server/tests/test_bbox_annotation_ui.mjs packages/web_new/tests/mcpDocs.test.mjs

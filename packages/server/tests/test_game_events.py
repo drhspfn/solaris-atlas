@@ -124,6 +124,7 @@ def test_new_prefab_images_are_visible_with_the_same_occurrence_snapshot():
 
 def test_banner_uses_promotional_art_not_generic_quest_or_prefab_defaults():
     from types import SimpleNamespace
+
     from wuwa_story.api.routes.game_events import _artwork, _client_preview
     images=[{'role':'featured_stand','path':'/Game/Quest/Jiyan'},
             {'role':'featured_card','path':'/Game/CorrectPortrait'},

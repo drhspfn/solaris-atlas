@@ -10,8 +10,8 @@ from pathlib import Path
 
 from flatbuffers.table import Table
 from wuwa_story.ingestion.cutscenes import CutsceneRecipe
-
 from wuwa_story.version import MIN_SUPPORTED_CLIENT_VERSION, is_supported_cutscene_version
+
 from wuwa_story_worker.cutscene_caption_audio import caption_soundtracks
 
 

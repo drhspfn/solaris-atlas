@@ -160,6 +160,7 @@ def test_raw_material_color_parameter_uses_the_exact_reference(tmp_path):
 
 def test_authored_stencil_mask_is_fetched_and_preserved_with_its_slot(tmp_path):
     import base64
+
     from wuwa_story_worker.model_bundle import stencil_mask_payload
 
     cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
