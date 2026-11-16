@@ -1,4 +1,5 @@
-import { memo, useState, type CSSProperties, type HTMLAttributes } from "react";
+import { memo, useRef, useState, type CSSProperties, type HTMLAttributes } from "react";
+import { createPortal } from "react-dom";
 
 import { gameTextRuns, type PlayerDisplay } from "../../data/gameText";
 import { localizedText } from "../../data/localized";
@@ -34,6 +35,9 @@ function TermRun({
   terms?: Record<string, GameTerm>;
 }) {
   const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
   if (!term || (!term.title && !term.description)) {
     return (
       <span className="game-term-plain" style={style}>
@@ -41,35 +45,56 @@ function TermRun({
       </span>
     );
   }
-  return (
+
+  const show = () => {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (rect && typeof window !== "undefined") {
+      const width = Math.min(360, window.innerWidth - 24);
+      const left = Math.max(12, Math.min(rect.left, window.innerWidth - width - 12));
+      const top = Math.min(rect.bottom + 6, window.innerHeight - 16);
+      setCoords({ top, left });
+    }
+    setOpen(true);
+  };
+
+  const popover = open && (
     <span
-      className="game-term-wrap"
+      className="game-term-popover"
+      role="tooltip"
+      style={coords ? { top: coords.top, left: coords.left } : undefined}
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
     >
+      {term.title && <span className="game-term-title">{term.title}</span>}
+      {term.description && (
+        <span className="game-term-desc">
+          <PlayerText
+            value={term.description}
+            display={display}
+            terms={terms}
+          />
+        </span>
+      )}
+    </span>
+  );
+
+  return (
+    <span
+      className="game-term-wrap"
+      onMouseEnter={show}
+      onMouseLeave={() => setOpen(false)}
+    >
       <button
+        ref={triggerRef}
         type="button"
         className="game-term-trigger"
         style={style}
         aria-expanded={open}
-        onClick={() => setOpen((prev) => !prev)}
+        onClick={() => (open ? setOpen(false) : show())}
       >
         {label}
       </button>
-      {open && (
-        <span className="game-term-popover" role="tooltip">
-          {term.title && <span className="game-term-title">{term.title}</span>}
-          {term.description && (
-            <span className="game-term-desc">
-              <PlayerText
-                value={term.description}
-                display={display}
-                terms={terms}
-              />
-            </span>
-          )}
-        </span>
-      )}
+      {popover && (typeof document !== "undefined" ? createPortal(popover, document.body) : popover)}
     </span>
   );
 }
