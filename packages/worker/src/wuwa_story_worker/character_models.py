@@ -1359,7 +1359,23 @@ async def build_scene_bundles(staging, forms, *, include_animations=True, **opti
         async with semaphore:
             form_options = {**options}
             if form.get("model"):
-                form_options["animation_ownership"] = ownership_for(form, forms)
+                ownership = ownership_for(form, forms)
+                form_options["animation_ownership"] = ownership
+                if ownership.get("inherits"):
+                    from wuwa_story_worker.model_animation_packs import variant_root
+
+                    inherited_roots = set(ownership["inherits"])
+                    blueprints = list(form.get("blueprints") or [])
+                    montages = list(form.get("montages") or [])
+                    for base in forms:
+                        if base is not form and base.get("model") and variant_root(base["model"]) in inherited_roots:
+                            for bp in base.get("blueprints") or ():
+                                if bp not in blueprints:
+                                    blueprints.append(bp)
+                            for montage in base.get("montages") or ():
+                                if montage not in montages:
+                                    montages.append(montage)
+                    form = {**form, "blueprints": blueprints, "montages": montages}
             root = staging / form["id"]
             root.mkdir()
             if options.get("local_client") is None:

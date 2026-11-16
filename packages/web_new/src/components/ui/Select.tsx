@@ -28,8 +28,11 @@ export function flattenSelectCategories(categories: readonly SelectCategory[], p
 
 /** Single-value selector. Native popovers provide the top layer, Escape and outside dismissal. */
 export function Select({
-  value,
+  value = '',
   onChange,
+  multiple = false,
+  values = [],
+  onValuesChange,
   options: sourceOptions = [],
   categories = [],
   searchable = false,
@@ -42,8 +45,11 @@ export function Select({
   disabled = false,
   placeholder = 'Select',
 }: {
-  value: string | number;
-  onChange: (value: string) => void;
+  value?: string | number;
+  onChange?: (value: string) => void;
+  multiple?: boolean;
+  values?: readonly (string | number)[];
+  onValuesChange?: (values: string[]) => void;
   options?: readonly SelectOption[];
   categories?: readonly SelectCategory[];
   searchable?: boolean;
@@ -85,6 +91,21 @@ export function Select({
   const [active, setActive] = useState(0);
   const search = useRef({ text: '', time: 0 });
   const selected = options.findIndex((option) => String(option.value) === String(value));
+  const selectedSet = new Set(values.map(String));
+  const selectedOptions = multiple
+    ? options.filter((option) => selectedSet.has(String(option.value)))
+    : selected >= 0
+      ? [options[selected]]
+      : [];
+  const summaryLabel = multiple
+    ? selectedOptions.length === 0
+      ? placeholder
+      : selectedOptions
+          .slice(0, 3)
+          .map((option) => option.label)
+          .join(', ') +
+        (selectedOptions.length > 3 ? ` +${selectedOptions.length - 3}` : '')
+    : (options[selected]?.label ?? placeholder);
 
   function rememberScroll() {
     if (rememberPosition && panel.current) scrollPositions.current.set(scrollKey, panel.current.scrollTop);
@@ -106,7 +127,7 @@ export function Select({
     if (rich) {
       if (!rememberPosition) { setPath(selected >= 0 ? pathOf(options[selected]) : []); setQuery(''); }
       restoreScroll.current = rememberPosition;
-      setActive(Math.max(0, rows.findIndex(option => !option.branch && String(option.value) === String(value))));
+      setActive(Math.max(0, rows.findIndex(option => !option.branch && (multiple ? selectedSet.has(String(option.value)) : String(option.value) === String(value)))));
     } else setActive(Math.max(0, selected));
     panel.current?.showPopover();
     setOpen(true);
@@ -115,7 +136,19 @@ export function Select({
     const option = rows[index];
     if (!option || option.disabled) return;
     if (option.branch) { navigate([...path, option.branch]); return; }
-    onChange(String(option.value));
+    const key = String(option.value);
+    if (multiple) {
+      const next = new Set(selectedSet);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      onValuesChange?.(
+        options
+          .map((item) => String(item.value))
+          .filter((item) => next.has(item)),
+      );
+      return;
+    }
+    onChange?.(key);
     close();
   }
   useEffect(() => {
@@ -229,7 +262,7 @@ export function Select({
         type="button"
         className="atlas-select-trigger"
         disabled={disabled || !options.length}
-        aria-label={`${label}: ${options[selected]?.label ?? placeholder}`}
+        aria-label={`${label}: ${summaryLabel}`}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={id}
@@ -241,7 +274,7 @@ export function Select({
           }
         }}
       >
-        <span>{options[selected]?.label ?? placeholder}</span>
+        <span>{summaryLabel}</span>
         <ChevronDown size={15} aria-hidden="true" />
       </button>
       <div
@@ -250,6 +283,7 @@ export function Select({
         className={`atlas-select-popup${rich ? ' atlas-select-catalog' : ''}`}
         popover="auto"
         role={rich ? "dialog" : "listbox"}
+        aria-multiselectable={!rich && multiple ? true : undefined}
         tabIndex={-1}
         aria-label={label}
         aria-activedescendant={!rich && rows[active] ? `${id}-${active}` : undefined}
@@ -271,8 +305,11 @@ export function Select({
           </>}
         </div>}
         <div id={rich ? `${id}-options` : undefined} role={rich ? "listbox" : undefined} aria-label={rich ? label : undefined}
+          aria-multiselectable={rich && multiple ? true : undefined}
           aria-activedescendant={rich && rows[active] ? `${id}-${active}` : undefined}>
-        {rows.map((option, index) => (
+        {rows.map((option, index) => {
+          const isSelected = !option.branch && (multiple ? selectedSet.has(String(option.value)) : String(option.value) === String(value));
+          return (
           <div key={option.value}>
             {!categorized && option.group && option.group !== rows[index - 1]?.group && (
               <div className="atlas-select-group">{option.group}</div>
@@ -281,7 +318,7 @@ export function Select({
               id={`${id}-${index}`}
               role="option"
               data-index={index}
-              aria-selected={!option.branch && String(option.value) === String(value)}
+              aria-selected={isSelected}
               aria-disabled={option.disabled || undefined}
               className={`atlas-select-option${index === active ? ' is-focused' : ''}`}
               onPointerMove={() => setActive(index)}
@@ -289,10 +326,11 @@ export function Select({
             >
               <span>{option.label}</span>
               {option.branch ? <ChevronRight size={16} aria-hidden="true" />
-                : String(option.value) === String(value) && <Check size={16} aria-hidden="true" />}
+                : isSelected && <Check size={16} aria-hidden="true" />}
             </div>
           </div>
-        ))}
+          );
+        })}
         {rich && !rows.length && <p className="atlas-select-empty" role="status">No matching options.</p>}
         </div>
       </div>

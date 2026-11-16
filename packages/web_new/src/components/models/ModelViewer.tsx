@@ -16,7 +16,6 @@ import {
   ArrowDownToLine,
   Box,
   ChevronLeft,
-  ChevronDown,
   ChevronRight,
   Focus,
   Maximize2,
@@ -192,6 +191,13 @@ function ModelViewerInstance({
   const [panel, setPanel] = useState<"scene" | "physics" | "camera">("scene");
   const controller = useRef<ViewerController | null>(null);
   const drawer = useRef<HTMLDialogElement>(null);
+  const downloadsDrawer = useRef<HTMLDialogElement>(null);
+  const hasDownloads = Boolean(
+    assets.download ||
+      assets.blender ||
+      packs.some((pack) => pack && typeof pack.url === "string") ||
+      assets.animation_manifest,
+  );
   const root = useRef<HTMLDivElement>(null);
   const report = useCallback((patch: Partial<ViewerState>) => {
     setState((current) => ({ ...current, ...patch }));
@@ -503,75 +509,17 @@ function ModelViewerInstance({
                 onChange={(value) => controller.current?.materialVariant(value)}
               />
             )}
-            {(assets.download || assets.blender) && (
-              <details className="model-downloads">
-                <summary className="ui-button ui-button-default ui-button-sm">
-                  {`Download · ${[name, formLabel || "Default", state.materialVariant && !formLabel?.includes(state.materialVariant) ? state.materialVariant : ""].filter(Boolean).join(" - ")}`}
-                  <ChevronDown size={16} aria-hidden="true" />
-                </summary>
-                <div className="model-download-list">
-                  {assets.download && (
-                    <a
-                      className="ui-button ui-button-default ui-button-sm"
-                      href={assets.download.url}
-                      download
-                    >
-                      {label(".glb", assets.download.size_bytes)}
-                    </a>
-                  )}
-                  {assets.blender && (
-                    <a
-                      className="ui-button ui-button-default ui-button-sm"
-                      href={assets.blender.url}
-                      download
-                    >
-                      {label(
-                        ".blend (with shaders)",
-                        assets.blender.size_bytes,
-                      )}
-                    </a>
-                  )}
-                </div>
-              </details>
-            )}
-            {(packs.length > 0 || assets.animation_manifest) && (
-              <details className="model-downloads">
-                <summary className="ui-button ui-button-ghost ui-button-sm">
-                  Animation downloads{" "}
-                  <ChevronDown size={16} aria-hidden="true" />
-                </summary>
-                <div className="model-download-list">
-                  {packs.map(
-                    (pack, index) =>
-                      pack &&
-                      typeof pack.url === "string" && (
-                        <a
-                          className="ui-button ui-button-default ui-button-sm"
-                          href={pack.url}
-                          download
-                          key={`${pack.url}:${index}`}
-                        >
-                          {label(
-                            `${index === 0 ? "Animations" : "Additional animations"}${"clips" in pack && Array.isArray(pack.clips) ? ` · ${pack.clips.length} ${pack.clips.length === 1 ? "clip" : "clips"}` : ""}`,
-                            pack.size_bytes,
-                          )}
-                        </a>
-                      ),
-                  )}
-                  {assets.animation_manifest && (
-                    <a
-                      className="ui-button ui-button-default ui-button-sm"
-                      href={assets.animation_manifest.url}
-                      download
-                    >
-                      {label(
-                        "Animation manifest",
-                        assets.animation_manifest.size_bytes,
-                      )}
-                    </a>
-                  )}
-                </div>
-              </details>
+            {hasDownloads && (
+              <div className="model-downloads">
+                <Button
+                  variant="default"
+                  size="sm"
+                  icon={<ArrowDownToLine size={16} />}
+                  onClick={() => downloadsDrawer.current?.showModal()}
+                >
+                  Download
+                </Button>
+              </div>
             )}
             {state.animations.length > 0 && (
               <div className="model-animation-controls">
@@ -672,59 +620,78 @@ function ModelViewerInstance({
                   {checkbox("Turntable", "turntable")}
                   {checkbox("Lock root position", "lock", !state.rootAvailable)}
                   {state.components.length > 0 && (
-                    <fieldset>
-                      <legend>Linked components</legend>
-                      {state.components.map((component) => (
-                        <div key={component.id}>
-                          <Checkbox
-                            label={component.name}
-                            checked={component.visible}
-                            disabled={disabled}
-                            onChange={(event) =>
-                              controller.current?.component(
-                                component.id,
-                                event.target.checked,
-                              )
+                    <label>
+                      Linked components
+                      <Select
+                        multiple
+                        searchable
+                        label="Linked components"
+                        placeholder="None"
+                        disabled={disabled}
+                        values={state.components
+                          .filter((component) => component.visible)
+                          .map((component) => component.id)}
+                        options={state.components.map((component) => ({
+                          value: component.id,
+                          label: component.name,
+                        }))}
+                        onValuesChange={(nextValues) => {
+                          const selected = new Set(nextValues);
+                          for (const component of state.components) {
+                            const want = selected.has(component.id);
+                            if (want !== component.visible) {
+                              controller.current?.component(component.id, want);
                             }
-                          />
-                          {component.override !== null && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() =>
-                                controller.current?.component(
-                                  component.id,
-                                  null,
-                                )
-                              }
-                            >
-                              Follow animation
-                            </Button>
-                          )}
-                          {component.loading && (
-                            <SkeletonGroup label="Loading linked model">
-                              <Skeleton style={{ width: "5rem" }} />
-                            </SkeletonGroup>
-                          )}
-                          {component.error && (
-                            <div role="alert">
-                              {component.error}{" "}
+                          }
+                        }}
+                      />
+                      {state.components
+                        .filter(
+                          (component) =>
+                            component.override !== null ||
+                            component.loading ||
+                            component.error,
+                        )
+                        .map((component) => (
+                          <div key={component.id} className="model-linked-status">
+                            {component.override !== null && (
                               <Button
                                 size="sm"
+                                variant="ghost"
                                 onClick={() =>
                                   controller.current?.component(
                                     component.id,
-                                    true,
+                                    null,
                                   )
                                 }
                               >
-                                Retry
+                                {component.name}: Follow animation
                               </Button>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </fieldset>
+                            )}
+                            {component.loading && (
+                              <SkeletonGroup label={`Loading ${component.name}`}>
+                                <Skeleton style={{ width: "5rem" }} />
+                              </SkeletonGroup>
+                            )}
+                            {component.error && (
+                              <div role="alert">
+                                {component.name}: {component.error}{" "}
+                                <Button
+                                  size="sm"
+                                  onClick={() =>
+                                    controller.current?.component(
+                                      component.id,
+                                      true,
+                                    )
+                                  }
+                                >
+                                  Retry
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                    </label>
                   )}
                   {state.accessories.length > 0 && (
                     <fieldset>
@@ -894,6 +861,109 @@ function ModelViewerInstance({
                     Pause for inspection
                   </Button>
                 </>
+              )}
+            </div>
+          </dialog>
+          <dialog
+            ref={downloadsDrawer}
+            className="model-settings"
+            aria-label="Model downloads"
+            onClick={(event) => {
+              if (event.target === event.currentTarget)
+                downloadsDrawer.current?.close();
+            }}
+          >
+            <header>
+              <h3>
+                <ArrowDownToLine size={18} /> Downloads
+              </h3>
+              <Button
+                size="icon"
+                variant="ghost"
+                autoFocus
+                aria-label="Close downloads"
+                title="Close downloads"
+                icon={<X size={20} />}
+                onClick={() => downloadsDrawer.current?.close()}
+              />
+            </header>
+            <div className="model-settings-content">
+              <p>
+                {[
+                  name,
+                  formLabel || "Default",
+                  state.materialVariant &&
+                  !formLabel?.includes(state.materialVariant)
+                    ? state.materialVariant
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+              {(assets.download || assets.blender) && (
+                <div className="model-download-section">
+                  <h4>Model</h4>
+                  <div className="model-download-list">
+                    {assets.download && (
+                      <a
+                        className="ui-button ui-button-default ui-button-sm"
+                        href={assets.download.url}
+                        download
+                      >
+                        {label(".glb", assets.download.size_bytes)}
+                      </a>
+                    )}
+                    {assets.blender && (
+                      <a
+                        className="ui-button ui-button-default ui-button-sm"
+                        href={assets.blender.url}
+                        download
+                      >
+                        {label(
+                          ".blend (with shaders)",
+                          assets.blender.size_bytes,
+                        )}
+                      </a>
+                    )}
+                  </div>
+                </div>
+              )}
+              {(packs.some((pack) => pack && typeof pack.url === "string") ||
+                assets.animation_manifest) && (
+                <div className="model-download-section">
+                  <h4>Animations</h4>
+                  <div className="model-download-list">
+                    {packs.map(
+                      (pack, index) =>
+                        pack &&
+                        typeof pack.url === "string" && (
+                          <a
+                            className="ui-button ui-button-default ui-button-sm"
+                            href={pack.url}
+                            download
+                            key={`${pack.url}:${index}`}
+                          >
+                            {label(
+                              `${index === 0 ? "Animations" : "Additional animations"}${"clips" in pack && Array.isArray(pack.clips) ? ` · ${pack.clips.length} ${pack.clips.length === 1 ? "clip" : "clips"}` : ""}`,
+                              pack.size_bytes,
+                            )}
+                          </a>
+                        ),
+                    )}
+                    {assets.animation_manifest && (
+                      <a
+                        className="ui-button ui-button-default ui-button-sm"
+                        href={assets.animation_manifest.url}
+                        download
+                      >
+                        {label(
+                          "Animation manifest",
+                          assets.animation_manifest.size_bytes,
+                        )}
+                      </a>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
           </dialog>

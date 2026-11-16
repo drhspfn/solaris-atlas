@@ -169,10 +169,26 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
   host.append(renderer.domElement);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  controls.minDistance = 0.015;
-  controls.maxDistance = 12;
+  controls.minDistance = 0.25;
+  controls.maxDistance = 24;
   controls.maxPolarAngle = Math.PI;
   controls.enabled = !preview;
+  const wheelDirection = new THREE.Vector3();
+  function onCanvasWheel(event) {
+    if (!controls.enabled || event.deltaY >= 0) return;
+    if (camera.position.distanceTo(controls.target) > 0.3) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    camera.getWorldDirection(wheelDirection);
+    const step = Math.min(0.35, Math.max(0.03, Math.abs(event.deltaY) * 0.001));
+    camera.position.addScaledVector(wheelDirection, step);
+    controls.target.addScaledVector(wheelDirection, step);
+    controls.update();
+  }
+  renderer.domElement.addEventListener("wheel", onCanvasWheel, {
+    capture: true,
+    passive: false,
+  });
   const follow = new BoneCamera(camera, controls);
   const target = new THREE.Vector3();
   scene.add(new THREE.HemisphereLight("#e5f0ff", "#657370", 2.6));
@@ -532,7 +548,14 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
           new THREE.Vector3(0, 1, 0),
           ((name === "left" ? -1 : 1) * Math.PI) / 8,
         );
-      else
+      else if (name === "closer" && offset.length() * 0.85 < controls.minDistance) {
+        camera.getWorldDirection(wheelDirection);
+        const step = Math.max(0.05, offset.length() * 0.15);
+        camera.position.addScaledVector(wheelDirection, step);
+        controls.target.addScaledVector(wheelDirection, step);
+        controls.update();
+        return;
+      } else
         offset.setLength(
           THREE.MathUtils.clamp(
             offset.length() * (name === "closer" ? 0.85 : 1.15),
@@ -700,6 +723,9 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
       observer.disconnect();
       renderer.setAnimationLoop(null);
       document.removeEventListener("visibilitychange", visibility);
+      renderer.domElement.removeEventListener("wheel", onCanvasWheel, {
+        capture: true,
+      });
       renderer.domElement.removeEventListener("webglcontextlost", contextLost);
       controls.dispose();
       mixer?.stopAllAction();
