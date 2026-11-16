@@ -29,3 +29,26 @@ test('leaves old models unchanged when the hair reader is unknown', () => {
   assert.equal(installHairStencil(root), false);
   assert.equal(root.children.length, 0);
 });
+
+
+test('resolves Hiyuki masks and Blender material suffixes without guessing ambiguous matches', () => {
+  const original = THREE.TextureLoader.prototype.load;
+  THREE.TextureLoader.prototype.load = () => new THREE.Texture();
+  try {
+    const root = new THREE.Group();
+    const make = name => { const mesh = new THREE.SkinnedMesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial()); mesh.material.name = name; root.add(mesh); return mesh; };
+    make('MI_HiyukiFace01.001');
+    const hair = make('MI_HiyukiBangs01.001');
+    root.userData.solaris_hair_stencil = JSON.stringify({format: 'solaris-hair-stencil-v1',
+      masks: [{target_material: null, material: '/Game/MI_HiyukiFace_HET.0', mime_type: 'image/png', data_base64: 'YWJj'}],
+      readers: [{material: '/Game/MI_HiyukiBangs01'}]});
+    assert.equal(installHairStencil(root), true);
+    assert.equal(hair.material.stencilFunc, THREE.NotEqualStencilFunc);
+    const ambiguous = new THREE.Group();
+    for (const name of ['MI_HiyukiFace01', 'MI_HiyukiFace02', 'MI_HiyukiBangs01']) {
+      const mesh = new THREE.SkinnedMesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial()); mesh.material.name = name; ambiguous.add(mesh);
+    }
+    ambiguous.userData.solaris_hair_stencil = root.userData.solaris_hair_stencil;
+    assert.equal(installHairStencil(ambiguous), false);
+  } finally { THREE.TextureLoader.prototype.load = original; }
+});

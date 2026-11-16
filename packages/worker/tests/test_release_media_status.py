@@ -1053,3 +1053,13 @@ async def test_cutscene_assembly_not_in_videodata_is_partial_without_failing(mon
     assert result["media_report"]["entries"][0]["status"] == "not_in_videodata"
     cleanup.assert_awaited_once()
 
+
+
+def test_video_database_accepts_authored_table_capitalization(tmp_path):
+    import sqlite3
+
+    database = tmp_path / 'video.db'
+    with sqlite3.connect(database) as db:
+        db.execute('CREATE TABLE VideoData (CgId INTEGER)')
+        db.execute('CREATE TABLE VideoSound (CgId INTEGER)')
+    assert release_media.video_database(tmp_path) == database

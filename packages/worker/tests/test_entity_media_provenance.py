@@ -347,6 +347,11 @@ async def test_complete_target_is_committed_before_later_target_failure(tmp_path
         owner = parameters["id"]
         events.append(("lock", owner))
 
+    async def prepare_file(path, *args):
+        assert owner is None
+        events.append(("prepare", path.name))
+        return path.name
+
     async def register_file(db, path, *args, **kwargs):
         events.append(("file", owner))
         pending_files.append(path.name)
@@ -396,6 +401,7 @@ async def test_complete_target_is_committed_before_later_target_failure(tmp_path
     session.execute.side_effect = execute
     session.commit.side_effect = commit
     session.rollback.side_effect = rollback
+    service.prepare_file.side_effect = prepare_file
     service.register_file.side_effect = register_file
     service.register_variant.side_effect = register_variant
     service.register_reference.side_effect = register_reference

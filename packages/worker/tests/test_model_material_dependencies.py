@@ -235,3 +235,17 @@ def test_effect_base_dependency_requires_known_parent(tmp_path, family):
         'ObjectName': "Material'Other'", 'ObjectPath': '/Game/Other.0'}}}])
     texture.unlink()
     assert missing_material_resources(cooked, converted, ['Body']) == []
+
+def test_stencil_mask_resolves_numbered_authored_material(tmp_path):
+    from wuwa_story_worker.model_bundle import stencil_mask_payload
+
+    cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
+    model = converted / 'Client/Content/Body.uemodel'
+    put(cooked, 'Body', [{'Type': 'SkeletalMesh', 'SkeletalMaterials': [
+        {'MaterialSlotName': 'HET_Face', 'Material': {'ObjectPath': '/Game/Face_HET.0'}},
+        {'MaterialSlotName': 'MI_Face', 'Material': {'ObjectPath': '/Game/Face01.0'}}]}])
+    put(cooked, 'Face_HET', [{'Type': 'MaterialInstanceConstant', 'Properties': {
+        'Parent': {'ObjectPath': '/Game/Aki/Render/Shaders/Character/M_WriteStencil'}}}])
+    put(converted, 'Face_HET', {'Textures': {'Mask': {'ObjectPath': '/Game/FaceMask.0'}}})
+    (converted / 'Client/Content/FaceMask.png').write_bytes(b'mask')
+    assert stencil_mask_payload([model], converted, cooked)['masks'][0]['target_material'] == '/Game/Face01'

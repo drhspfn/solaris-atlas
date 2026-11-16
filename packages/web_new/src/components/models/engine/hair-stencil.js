@@ -17,10 +17,22 @@ export function installHairStencil(root) {
   root.traverse(node => { if (node.isSkinnedMesh && !Array.isArray(node.material)) meshes.push(node); });
   const find = ref => {
     const name = basename(ref);
-    const matches = meshes.filter(mesh => mesh.material?.name === name);
+    const matches = meshes.filter(mesh => basename(mesh.material?.name) === name);
     return name && matches.length === 1 ? matches[0] : null;
   };
-  const writers = payload.masks.map(mask => ({ mask, mesh: find(mask.target_material) }))
+  const findMaskTarget = mask => {
+    if (mask.target_material) return find(mask.target_material);
+    // Some exported HET slots omit target_material even though their name
+    // identifies the authored face or eye material (e.g. Face_HET / Face01).
+    const name = basename(mask.material).replace(/_HET$/i, '');
+    if (!name || name === basename(mask.material)) return null;
+    const matches = meshes.filter(mesh => {
+      const material = basename(mesh.material?.name);
+      return material === name || (material.startsWith(name) && /^\d+$/.test(material.slice(name.length)));
+    });
+    return matches.length === 1 ? matches[0] : null;
+  };
+  const writers = payload.masks.map(mask => ({ mask, mesh: findMaskTarget(mask) }))
     .filter(({ mask, mesh }) => mesh && mask.mime_type === 'image/png'
       && typeof mask.data_base64 === 'string' && /^[A-Za-z0-9+/=]+$/.test(mask.data_base64));
   const readers = [...new Set(payload.readers.map(row => find(row.material)).filter(Boolean))];

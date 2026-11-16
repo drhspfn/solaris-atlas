@@ -297,6 +297,18 @@ function ModelViewerInstance({
           <h2 id={titleId}>
             {name} <span>· 3D model</span>
           </h2>
+            {hasDownloads && (
+              <div className="model-downloads">
+                <Button
+                  variant="default"
+                  size="sm"
+                  icon={<ArrowDownToLine size={16} />}
+                  onClick={() => downloadsDrawer.current?.showModal()}
+                >
+                  Download
+                </Button>
+              </div>
+            )}
           <div className="model-studio-actions">
             {formSelector}
             <Button
@@ -509,18 +521,6 @@ function ModelViewerInstance({
                 onChange={(value) => controller.current?.materialVariant(value)}
               />
             )}
-            {hasDownloads && (
-              <div className="model-downloads">
-                <Button
-                  variant="default"
-                  size="sm"
-                  icon={<ArrowDownToLine size={16} />}
-                  onClick={() => downloadsDrawer.current?.showModal()}
-                >
-                  Download
-                </Button>
-              </div>
-            )}
             {state.animations.length > 0 && (
               <div className="model-animation-controls">
                 <Button
@@ -571,6 +571,7 @@ function ModelViewerInstance({
               <Select
                 searchable
                 rememberPosition
+                className="model-face-select"
                 label="Facial animation"
                 value={state.face}
                 options={state.faces}
