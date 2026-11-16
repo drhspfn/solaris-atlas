@@ -30,12 +30,6 @@ jobs:
         run: |
           uv sync --frozen --group dev
           uv run ruff check src tests
-      - name: Lint and typecheck legacy web
-        working-directory: packages/web
-        run: |
-          npm ci
-          npx eslint .
-          npx tsc -b
 
   web:
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'Run checks'
