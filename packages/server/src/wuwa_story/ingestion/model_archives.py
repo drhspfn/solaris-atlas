@@ -201,7 +201,7 @@ def read_archive(source, destination):
         if any(stat.S_ISLNK(info.external_attr >> 16) or info.flag_bits & 1 for info in infos):
             raise ValueError("Encrypted files and links are not allowed")
         info = archive.getinfo("manifest.json")
-        if info.file_size > 16 * 1024**2:
+        if info.file_size > 64 * 1024**2:
             raise ValueError("Archive manifest exceeds size limit")
         manifest = validate_manifest(json.loads(archive.read(info)))
         expected = {"manifest.json", *("objects/" + key for key in manifest["objects"])}

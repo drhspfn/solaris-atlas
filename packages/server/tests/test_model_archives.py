@@ -226,3 +226,26 @@ def test_archive_rejects_more_than_128_components(tmp_path):
                 for i in range(129)]
     with pytest.raises(ValueError, match="128 components"):
         write_archive(tmp_path / "too-many.zip", {"character_key": "character:1"}, [root, *children])
+
+
+def test_read_archive_accepts_large_manifest_up_to_64_mib(tmp_path):
+    path = tmp_path / "big-manifest.zip"
+    root = bundle(tmp_path)
+    manifest = write_archive(path, {"character_key": "character:1"}, [root])
+    manifest["forms"][0]["form"]["cues_padding"] = "x" * (20 * 1024**2)
+    with zipfile.ZipFile(path) as src:
+        members = {info.filename: src.read(info.filename) for info in src.infolist() if info.filename != "manifest.json"}
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as dst:
+        dst.writestr("manifest.json", json.dumps(manifest))
+        for name, data in members.items():
+            dst.writestr(name, data)
+    restored = read_archive(path, tmp_path / "decoded")
+    assert len(restored["forms"][0]["form"]["cues_padding"]) == 20 * 1024**2
+
+    manifest["forms"][0]["form"]["cues_padding"] = "x" * (65 * 1024**2)
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as dst:
+        dst.writestr("manifest.json", json.dumps(manifest))
+        for name, data in members.items():
+            dst.writestr(name, data)
+    with pytest.raises(ValueError, match="Archive manifest exceeds size limit"):
+        read_archive(path, tmp_path / "decoded-over")
