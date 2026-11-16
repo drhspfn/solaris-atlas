@@ -788,3 +788,27 @@ async def test_legacy_seven_column_public_rows(public_forms):
     public_forms.extend(row[:7] for row in form_rows("old"))
     result = await service.public_character_model(AsyncMock(), 15, SimpleNamespace(id=8, game_version="1"))
     assert result["status"] == "ready" and result["forms"][0]["id"] == "mesh-100038"
+
+
+async def test_skin_inherits_component_cues_and_bindings_from_matching_base(public_forms):
+    base, skin = 'mesh-100038', 'mesh-100039'
+    cue = {'kind': 'TsAnimNotifyStateSubMeshControl_C', 'source_clip': '/Game/Attack', 'start': 1}
+    binding = {'parent_clip': '/Game/Attack', 'child_clip': '/Game/SwordAttack'}
+    scene_cue = {'kind': 'Effect', 'source_clip': '/Game/Attack', 'start': 2}
+    own_cue = {'kind': 'Effect', 'source_clip': '/Game/Skin', 'start': 0}
+    base_scene = {'format': 'solaris-model-scene-v1', 'cues': [scene_cue]}
+    skin_scene = {'format': 'solaris-model-scene-v1', 'cues': [own_cue]}
+    base_component = {'id': 'OtherCase1', 'parent_form_id': base, 'socket': 'Weapon',
+                      'cues': [cue], 'bindings': [binding]}
+    skin_component = {'id': 'OtherCase1', 'parent_form_id': skin, 'socket': 'Weapon',
+                      'cues': [], 'bindings': []}
+    public_forms.extend([(*row, None, base_scene) for row in form_rows('new', base, 'Default', 0)])
+    public_forms.extend([(*row, None, skin_scene) for row in form_rows('new', skin, 'Skin', 1)])
+    public_forms.extend([(*row, base_component, None) for row in form_rows('new', 'component-0000000000000001', 'Sword', 2)])
+    public_forms.extend([(*row, skin_component, None) for row in form_rows('new', 'component-0000000000000002', 'Sword', 3)])
+    result = await service.public_character_model(AsyncMock(), 15, SimpleNamespace(id=8, game_version='3.8.0'))
+    actual = result['forms'][1]
+    assert actual['scene']['cues'] == [own_cue, scene_cue]
+    assert actual['linked_models'][0]['component']['cues'] == [cue]
+    assert actual['linked_models'][0]['component']['bindings'] == [binding]
+    assert len(actual['linked_models']) == 1

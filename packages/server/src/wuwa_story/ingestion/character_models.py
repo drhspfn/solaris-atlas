@@ -322,7 +322,23 @@ async def public_character_model(session, owner_node_id, release):
             base_form = result["forms"][0]
             base_packs = base_form.get("animation_packs") or []
             base_linked = base_form.get("linked_models") or []
+            base_scene = base_form.get("scene") if isinstance(base_form.get("scene"), dict) else {}
+            base_scene_cues = base_scene.get("cues") if isinstance(base_scene.get("cues"), list) else []
+            base_by_comp_id = {
+                (item.get("component") or {}).get("id"): item
+                for item in base_linked
+                if (item.get("component") or {}).get("id")
+            }
+            base_by_key = {
+                (item.get("label"), (item.get("component") or {}).get("socket")): item
+                for item in base_linked
+            }
             for skin_form in result["forms"][1:]:
+                if base_scene_cues:
+                    skin_scene = dict(skin_form.get("scene") or {}) if isinstance(skin_form.get("scene"), dict) else {"format": base_scene.get("format", "solaris-model-scene-v1")}
+                    skin_scene_cues = list(skin_scene.get("cues") or []) if isinstance(skin_scene.get("cues"), list) else []
+                    skin_scene["cues"] = skin_scene_cues + [cue for cue in base_scene_cues if cue not in skin_scene_cues]
+                    skin_form["scene"] = skin_scene
                 own_clips = {
                     clip
                     for pack in (skin_form.get("animation_packs") or [])
@@ -341,18 +357,46 @@ async def public_character_model(session, owner_node_id, release):
                             "inherited": True,
                         })
                         own_clips.update(extra_clips)
-                own_linked = {
-                    (item.get("label"), (item.get("component") or {}).get("socket"))
-                    for item in (skin_form.get("linked_models") or [])
-                }
+                own_linked = set()
+                own_comp_ids = set()
+                for idx, skin_item in enumerate(list(skin_form.get("linked_models") or [])):
+                    skin_comp = dict(skin_item.get("component") or {})
+                    comp_id = skin_comp.get("id")
+                    key = (skin_item.get("label"), skin_comp.get("socket"))
+                    own_linked.add(key)
+                    if comp_id:
+                        own_comp_ids.add(comp_id)
+                    matched_base = base_by_comp_id.get(comp_id) if comp_id else None
+                    matched_base = matched_base or base_by_key.get(key)
+                    if matched_base:
+                        base_comp = matched_base.get("component") or {}
+                        if base_comp.get("cues"):
+                            own_cues = skin_comp.get("cues") or []
+                            skin_comp["cues"] = own_cues + [cue for cue in base_comp["cues"] if cue not in own_cues]
+                        if base_comp.get("bindings"):
+                            existing_bindings = list(skin_comp.get("bindings") or [])
+                            seen_binding_clips = {b.get("parent_clip") for b in existing_bindings if isinstance(b, dict)}
+                            for b in base_comp.get("bindings") or []:
+                                if isinstance(b, dict) and b.get("parent_clip") not in seen_binding_clips:
+                                    existing_bindings.append(b)
+                                    seen_binding_clips.add(b.get("parent_clip"))
+                            skin_comp["bindings"] = existing_bindings
+                        skin_form["linked_models"][idx] = {**skin_item, "component": skin_comp}
                 for item in base_linked:
-                    key = (item.get("label"), (item.get("component") or {}).get("socket"))
-                    if key not in own_linked and item.get("parent_id") == base_form.get("id"):
+                    item_comp = dict(item.get("component") or {})
+                    comp_id = item_comp.get("id")
+                    key = (item.get("label"), item_comp.get("socket"))
+                    if key not in own_linked and (not comp_id or comp_id not in own_comp_ids) and item.get("parent_id") == base_form.get("id"):
+                        if item_comp.get("parent_form_id") == base_form.get("id"):
+                            item_comp["parent_form_id"] = skin_form.get("id")
                         skin_form.setdefault("linked_models", []).append({
                             **item,
                             "parent_id": skin_form.get("id"),
+                            "component": item_comp,
                         })
                         own_linked.add(key)
+                        if comp_id:
+                            own_comp_ids.add(comp_id)
         for kind in ("preview", "download", "blender", "physics", "animations", "facial",
                      "animation_manifest", "animation_packs", "viewer_url"):
             result[kind] = result["forms"][0][kind]

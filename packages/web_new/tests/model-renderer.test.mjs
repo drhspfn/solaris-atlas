@@ -11,6 +11,7 @@ import { declaredAccessories } from '../src/components/models/engine/accessories
 import { createLinkedModels } from '../src/components/models/engine/linked-models.js';
 import { installHairStencil } from '../src/components/models/engine/hair-stencil.js';
 import { installEyeMaterials } from '../src/components/models/engine/eye-material.js';
+import { extractMaterialVariants, applyMaterialVariant } from '../src/components/models/engine/material-variants.js';
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function rig(animated = false, facial = false) {
@@ -71,10 +72,10 @@ async function viewer({ preview = false, defer = false, hold = false, accessory 
   }
   const state = {};
   const code = (await readFile(new URL('../src/components/models/engine/viewer.js', import.meta.url), 'utf8'))
-    .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
+    .replace(/^import [\s\S]*? from [^;]+;\r?\n/gm, '').replace(/^export /gm, '');
   const context = { THREE: { ...THREE, WebGLRenderer: Renderer }, GLTFLoader: Loader, OrbitControls: Controls,
     SpringBones: class { joints = [1]; missing = []; reset() {} restore() {} update() {} },
-    BoneCamera, cameraBones, RootMotionLock, FacialAnimation, loadAnimationPacks, bindAnimationPacks, disposeAnimationPacks, attachAnimationCatalog, prepareAnimatedMeshes, declaredAccessories, createLinkedModels, installHairStencil, installEyeMaterials,
+    BoneCamera, cameraBones, RootMotionLock, FacialAnimation, loadAnimationPacks, bindAnimationPacks, disposeAnimationPacks, attachAnimationCatalog, prepareAnimatedMeshes, declaredAccessories, createLinkedModels, installHairStencil, installEyeMaterials, extractMaterialVariants, applyMaterialVariant,
     location: { href: 'https://atlas.test/characters/hero', protocol: 'https:' }, URL, AbortController,
     devicePixelRatio: 1, document: { hidden: false, addEventListener: (key, fn) => events.set(key, fn), removeEventListener: key => events.delete(key) },
     ResizeObserver: class { observe() {} disconnect() { disconnected = true; } },

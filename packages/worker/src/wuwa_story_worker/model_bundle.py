@@ -433,8 +433,11 @@ def stencil_mask_payload(models, converted, cooked):
                     continue
                 image = converted / resource(mask).with_suffix('.png')
                 base = ref.split('.', 1)[0].removesuffix('_HET')
+                candidates = [item for item in authored if item == base or
+                              (item.startswith(base) and item[len(base):].isdigit())]
+                target = candidates[0] if len(candidates) == 1 else None
                 masks.append({'mesh': relative.as_posix(), 'slot': slot.get('MaterialSlotName'),
-                              'target_material': base if base in authored else None,
+                              'target_material': target,
                               'material': ref, 'texture': mask, 'mime_type': 'image/png',
                               'data_base64': base64.b64encode(image.read_bytes()).decode('ascii')})
     return {'format': 'solaris-hair-stencil-v1', 'masks': masks, 'readers': readers} if masks else None
