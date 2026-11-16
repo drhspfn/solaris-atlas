@@ -584,6 +584,11 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                                 {'path': target['path'], 'error': str(error)[:500]})
                             animation = {**animation, 'display': 'static', 'state': 'conversion_failed',
                                          'reasons': [{'code': 'conversion_failed', 'error': str(error)[:500]}]}
+                    stage = 'prepare_upload'
+                    prepared = await service.prepare_file(path, mime)
+                    prepared_originals = {original_path: await service.prepare_file(original_path)
+                        for original_path in originals
+                        if not (target['kind'] == 'spine' and original_path.suffix.lower() == '.mp4')}
                     stage = 'publish'
                     await session.execute(text("SELECT pg_advisory_xact_lock(:id)"),
                                           {"id": target["owner"]})
@@ -634,7 +639,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         await session.commit()
                         current_target = None
                         continue
-                    published = await service.register_file(session, path, kind, mime_type=mime)
+                    published = await service.register_file(session, path, kind, mime_type=mime, prepared=prepared)
                     rendered_metadata = {}
                     if rendered is not None:
                         from wuwa_story_worker.riglyph_render import publish_animation
@@ -649,6 +654,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                             session,
                             original_path,
                             "audio_wem" if original_path.suffix == ".wem" else "unknown",
+                            prepared=prepared_originals[original_path],
                         )
                         variant = await service.register_variant(
                             session, original.id, published.id, "entity_media_decode", run.id,
@@ -755,7 +761,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                             len(riglyph_failures))
             except Exception as error:
                 logger.error('entity_media.stage_failed run=%s owner=%s resource=%s stage=%s error_type=%s',
-                             run.id, current_target.get('owner') if current_target else None,
+                             payload['run_id'], current_target.get('owner') if current_target else None,
                              hashlib.sha256(current_target['path'].encode()).hexdigest()[:16] if current_target else None,
                              stage, type(error).__name__)
                 await session.rollback()

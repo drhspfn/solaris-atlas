@@ -441,7 +441,7 @@ def video_database(root, *, cache=None):
     for path in sorted(root.rglob("*.db")):
         try:
             with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
-                tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                tables = {row[0].casefold() for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                 if {"videodata", "videosound"}.issubset(tables):
                     save_json(marker, {"path": path.relative_to(root).as_posix()})
                     return path
