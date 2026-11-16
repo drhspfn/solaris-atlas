@@ -18,7 +18,7 @@ test('identity creation selects a server-provided type and rejects a forged typo
   const document={querySelector:()=>root,body:{style:{}},activeElement:new Element()};
   class FormData { constructor() { return new URLSearchParams(); } }
   vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js',import.meta.url),'utf8')+' '+readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),
-    {document,fetch,URL,URLSearchParams,FormData,location:{href:'http://test/'},setTimeout});
+    {document,fetch,URL,URLSearchParams,FormData,location:{href:'http://api.test/', hostname:'api.test', port:''},setTimeout});
   root.querySelector('#vm-create-identity').events.click();
   const body=root.querySelector('#vm-dialog-body');
   assert.match(body.innerHTML,/<select[^>]+name="kind"/);
@@ -53,7 +53,7 @@ test('library paginates and ignores stale filter results', async () => {
   const document = {querySelector: () => root, body: {style: {}}, activeElement: new Element()};
   class FormData { constructor() { return new URLSearchParams(); } }
   vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url), 'utf8') + ' ' + readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js', import.meta.url), 'utf8'),
-    {document, fetch, URL, URLSearchParams, FormData, location: {href:'http://test/'}, setTimeout});
+    {document, fetch, URL, URLSearchParams, FormData, location: {href:'http://api.test/', hostname:'api.test', port:''}, setTimeout});
   assert.match(requests[0].url, /offset=0/);
   root.querySelector('#vm-filters').events.submit({preventDefault(){}});
   assert.equal(requests.length, 2);
@@ -89,7 +89,7 @@ test('editing detected bounds clears candidates and selected identities', async 
   } : {items:[], total:0}});
   const document = {querySelector:()=>root, body:{style:{}}, activeElement:new Element()};
   vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url), 'utf8') + ' ' + readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js', import.meta.url),'utf8'),
-    {document, fetch, URL, URLSearchParams, FormData, FileReader, location:{href:'http://test/'}, setTimeout});
+    {document, fetch, URL, URLSearchParams, FormData, FileReader, location:{href:'http://api.test/', hostname:'api.test', port:''}, setTimeout});
   await root.querySelector('#vm-file').events.change({target:{files:[{type:'image/png',size:1}]}});
   await root.querySelector('#vm-detect').events.click({currentTarget:root.querySelector('#vm-detect')});
   await new Promise(resolve => setImmediate(resolve));
@@ -127,7 +127,7 @@ test('reference approval and rejection send explicit moderation decisions', asyn
   class FormData {constructor(){return new URLSearchParams();}}
   const fetch=async (url,opts={})=>{ requests.push({url,opts}); return {ok:true,json:async()=>url==='/auth/csrf'?{csrf_token:'t'}:url.endsWith('/history')?{items:[]}:url.endsWith('/references/7')?{id:7,status:'pending',enabled_for_search:false,links:[],source_page:'https://example.test/page',source_url:'javascript:evil()'}:{items:[],total:0}}; };
   const document={querySelector:()=>root,body:{style:{}},activeElement:new Element()};
-  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url), 'utf8') + ' ' + readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),{document,fetch,URL,URLSearchParams,FormData,location:{href:'http://test/'},setTimeout});
+  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url), 'utf8') + ' ' + readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),{document,fetch,URL,URLSearchParams,FormData,location:{href:'http://api.test/', hostname:'api.test', port:''},setTimeout});
   const review={dataset:{action:'details',id:'7'},disabled:false,setAttribute(){},removeAttribute(){}};
   root.querySelector('#vm-cards').events.click({target:{closest:()=>review}});
   await new Promise(resolve=>setImmediate(resolve));
@@ -161,7 +161,7 @@ test('late image reads cannot replace a newer upload', async () => {
   class FormData {constructor(){return new URLSearchParams();}}
   const fetch=async()=>({ok:true,json:async()=>({items:[],total:0})});
   const document={querySelector:()=>root,body:{style:{}},activeElement:new Element()};
-  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url), 'utf8') + ' ' + readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),{document,fetch,URL,URLSearchParams,FormData,FileReader,location:{href:'http://test/'},setTimeout});
+  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url), 'utf8') + ' ' + readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),{document,fetch,URL,URLSearchParams,FormData,FileReader,location:{href:'http://api.test/', hostname:'api.test', port:''},setTimeout});
   const change=root.querySelector('#vm-file').events.change;
   const first=change({target:{files:[{type:'image/png',size:1}]}}), second=change({target:{files:[{type:'image/png',size:1}]}});
   readers[1].result='data:image/png;base64,bmV3'; readers[1].onload(); await second;
@@ -182,7 +182,7 @@ test('pointer gestures cannot change boxes while inference is pending', async ()
   let finish;
   const fetch=async url=>url.endsWith('/identify') ? new Promise(resolve=>{finish=()=>resolve({ok:true,json:async()=>({detections:[]})});}) : {ok:true,json:async()=>url==='/auth/csrf'?{csrf_token:'token'}:{items:[],total:0}};
   const document={querySelector:()=>root,body:{style:{}},activeElement:new Element()};
-  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url), 'utf8') + ' ' + readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),{document,fetch,URL,URLSearchParams,FormData,FileReader,location:{href:'http://test/'},setTimeout});
+  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url), 'utf8') + ' ' + readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),{document,fetch,URL,URLSearchParams,FormData,FileReader,location:{href:'http://api.test/', hostname:'api.test', port:''},setTimeout});
   await root.querySelector('#vm-file').events.change({target:{files:[{type:'image/png',size:1}]}});
   root.querySelector('#vm-detect').events.click({currentTarget:root.querySelector('#vm-detect')});
   await new Promise(resolve=>setImmediate(resolve));
@@ -205,7 +205,7 @@ test('identity picker searches game catalog, ignores stale results and explicitl
   class FormData {constructor(){return new URLSearchParams();}}
   const fetch=(url,opts={})=>new Promise(resolve=>requests.push({url,opts,resolve}));
   let videoOptions;
-  const context={document,fetch,URL,URLSearchParams,FormData,location:{href:'http://test/'},setTimeout,clearTimeout,createVisualMemoryVideoReview:opts=>{videoOptions=opts;return {open(){}};}};
+  const context={document,fetch,URL,URLSearchParams,FormData,location:{href:'http://api.test/', hostname:'api.test', port:''},setTimeout,clearTimeout,createVisualMemoryVideoReview:opts=>{videoOptions=opts;return {open(){}};}};
   vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url), 'utf8') + ' ' + readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),context);
   const tick=()=>new Promise(resolve=>setImmediate(resolve));
   const response=data=>({ok:true,json:async()=>data});
@@ -246,7 +246,7 @@ test('Rover game choices link appearances to the same identity', async () => {
   const identity={id:15,name:'Rover',appearances:[{id:101,identity_id:15,name:'Male Rover'},{id:102,identity_id:15,name:'Female Rover'}]};
   const fetch=async (url,opts={})=>{ requests.push({url,opts}); return {ok:true,json:async()=>url==='/auth/csrf'?{csrf_token:'token'}:url.endsWith('/identities/from-game')?identity:url.includes('/game-entities?')?{items:[{node_id:77,name:'Rover',kind:'playable',appearance_choices:[{key:'male',name:'Male Rover'},{key:'female',name:'Female Rover'},{key:'spectro',name:'Spectro Rover'}]}],total:1}:{items:[],total:0}}; };
   let videoOptions;
-  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url), 'utf8') + ' ' + readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),{document,fetch,URL,URLSearchParams,FormData,location:{href:'http://test/'},setTimeout,clearTimeout,createVisualMemoryVideoReview:opts=>{videoOptions=opts;return {open(){}};}});
+  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url), 'utf8') + ' ' + readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),{document,fetch,URL,URLSearchParams,FormData,location:{href:'http://api.test/', hostname:'api.test', port:''},setTimeout,clearTimeout,createVisualMemoryVideoReview:opts=>{videoOptions=opts;return {open(){}};}});
   const tick=()=>new Promise(resolve=>setImmediate(resolve));
   let saved;
   videoOptions.chooseLinks({links:[],names:{}},links=>{saved=links;});
@@ -363,7 +363,7 @@ function modalHarness() {
       URL,
       URLSearchParams,
       FormData,
-      location: { href: "http://test/" },
+      location: { href: "http://api.test/", hostname: "api.test", port: "" },
       setTimeout,
       clearTimeout,
       addEventListener: (type, fn) => {
@@ -589,4 +589,22 @@ test("creating an identity returns to the picker with its original dirty baselin
   h.escape();
   assert.match(h.root.querySelector("#vm-dialog-message").innerHTML, /Discard/);
   assert.equal(box.links.length, 0);
+});
+
+
+test('visual memory uses the site API proxy on the frontend host', () => {
+  class Element {
+    constructor() { this.dataset = {}; this.disabled = false; this.value = ''; }
+    querySelector() { return new Element(); }
+    querySelectorAll() { return []; }
+    addEventListener() {} setAttribute() {} removeAttribute() {} focus() {}
+  }
+  const root = new Element(), requests = [];
+  const document = {querySelector: () => root, body: {style: {}}, activeElement: new Element()};
+  const fetch = async url => { requests.push(url); return {ok:true, json:async()=>({items:[],total:0})}; };
+  class FormData { constructor() { return new URLSearchParams(); } }
+  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url),'utf8') + ' ' +
+    readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js', import.meta.url),'utf8'),
+    {document, fetch, URL, URLSearchParams, FormData, location:{href:'https://site.test/', hostname:'site.test', port:''}, setTimeout});
+  assert.match(requests[0], /^\/api\/admin\/visual-memory\//);
 });
