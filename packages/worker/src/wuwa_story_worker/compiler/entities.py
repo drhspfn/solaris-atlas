@@ -101,8 +101,8 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
                     "animation": "idle",
                 }
             if kind == "character":
-                fields = inherited_character_fields(raw, role_templates.get(raw.get("SkillId"), {}))
-                record["shared_artwork_paths"] = sorted({raw[field] for field in fields})
+                artwork_fields = inherited_character_fields(raw, role_templates.get(raw.get("SkillId"), {}))
+                record["shared_artwork_paths"] = sorted({raw[field] for field in artwork_fields})
             if kind == "character" and value in main_roles:
                 record["public_identity"] = main_roles[value]
             if kind == "character" and value in trial_infos:

@@ -46,7 +46,9 @@ def test_compiler_attaches_discovered_rover_variants_without_merging_source_ids(
     for folder in ("role", "main_role_change", "element_info"):
         (base / folder).mkdir(parents=True)
     (base / "role/roleinfo.json").write_text(json.dumps([
-        {"Id": 1501, "ElementId": 5}, {"Id": 9912, "ElementId": 8}, {"Id": 5052},
+        {"Id": 1501, "ElementId": 5, "Name": "RoleInfo_1501_Name", "NickName": "RoleInfo_1501_NickName"},
+        {"Id": 9912, "ElementId": 8},
+        {"Id": 5052},
     ]))
     (base / "main_role_change/mainroleconfig.json").write_text(json.dumps([
         {"Id": 1501, "Gender": 1, "UnlockCondition": 0},
@@ -58,10 +60,15 @@ def test_compiler_attaches_discovered_rover_variants_without_merging_source_ids(
     subtitles.write_text("[]")
     out = tmp_path / "out"
     writer = Writer(out, "4.0.0")
-    compile_entities(tmp_path / "source", writer, {})
+    compile_entities(tmp_path / "source", writer, {
+        "RoleInfo_1501_Name": {"content": "Rover"},
+        "RoleInfo_1501_NickName": {"content": "RoverNick"},
+    })
     writer.finish()
     rows = [json.loads(line) for line in (out / "entities/character.jsonl").read_text().splitlines()]
     assert [row["id"] for row in rows] == ["character:1501", "character:9912", "character:5052"]
+    assert rows[0]["name"]["en"] == "Rover"
+    assert rows[0]["nickname"]["en"] == "RoverNick"
     assert rows[1]["public_identity"]["canonical_key"] == "character:1501"
     assert rows[1]["public_identity"]["gender"] == "female"
     assert "public_identity" not in rows[2]
