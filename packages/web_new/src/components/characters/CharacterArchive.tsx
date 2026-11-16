@@ -16,10 +16,17 @@ import { api, apiUrl } from "../../api/client";
 import { entityPath } from "../../data/entities";
 import { gameTextPlainText } from "@/data/gameText";
 import { availableLocales } from "../../data/locales";
-import { PlayerText, type PlayerDisplay } from "@/components/dialogue/PlayerText";
+import {
+  PlayerText,
+  type GameTerm,
+  type PlayerDisplay,
+} from "@/components/dialogue/PlayerText";
 import { Select } from "@/components/ui/Select";
 import { TrackPlayer } from "@/components/ui/TrackPlayer";
-import { CharacterMediaGallery, useCharacterMedia } from "@/components/characters/CharacterMedia";
+import {
+  CharacterMediaGallery,
+  useCharacterMedia,
+} from "@/components/characters/CharacterMedia";
 import type { AnimationPreview } from "@/components/ui/animationPreview";
 import "@/styles/character-voice-lines.css";
 import "@/styles/character-talents.css";
@@ -106,10 +113,11 @@ export interface CharacterArchiveData {
       source_name: string;
       language: string;
       url: string | null;
-      status: 'available' | 'missing';
+      status: "available" | "missing";
     }[];
   }[];
   other_voice_events: { category: string; event: string }[];
+  terms?: Record<string, GameTerm>;
 }
 
 type MaterialUse = {
@@ -128,8 +136,14 @@ type MaterialUse = {
 };
 
 function hasVoiceLine(line: CharacterArchiveData["voice_lines"][number]) {
-  return !!(line.title?.trim() || line.text?.trim() || line.audio_event_path || line.audio_url ||
-    Object.values(line.audio_tracks ?? {}).some(Boolean) || line.audio_variants?.length);
+  return !!(
+    line.title?.trim() ||
+    line.text?.trim() ||
+    line.audio_event_path ||
+    line.audio_url ||
+    Object.values(line.audio_tracks ?? {}).some(Boolean) ||
+    line.audio_variants?.length
+  );
 }
 
 function artworkLabel(art: CharacterArchiveData["artwork"][number]) {
@@ -149,7 +163,8 @@ function gameText(
   display?: PlayerDisplay,
 ): string {
   if (!value) return "Text unavailable in this language.";
-  const formatted = value.replace(
+  const formatted = value
+    .replace(
       /\{(\d+)\}/g,
       (match, index: string) => params[Number(index)] ?? match,
     )
@@ -175,55 +190,95 @@ const voiceLocales = availableLocales.filter(({ code }) =>
 const initialVoiceLocale = (locale: string) =>
   voiceLocales.some((option) => option.code === locale) ? locale : "en";
 
-export function CharacterVoicePlayback({ line, textLocale, display }: {
-  line: CharacterArchiveData['voice_lines'][number];
+export function CharacterVoicePlayback({
+  line,
+  textLocale,
+  display,
+}: {
+  line: CharacterArchiveData["voice_lines"][number];
   textLocale: string;
   display?: PlayerDisplay;
 }) {
-  const [choice, setChoice] = useState('');
+  const [choice, setChoice] = useState("");
   const label = gameText(line.title, [], false, display);
   const languageLabel = (language: string) =>
-    availableLocales.find((option) => option.code === language)?.label ?? language;
-  const mediaUrl = (url: string) => apiUrl(url.replace(/^\/api/, ''));
-  if (!line.audio_variants?.length) return <TrackPlayer
-    src={line.audio_url ? mediaUrl(line.audio_url) : null}
-    tracks={line.audio_tracks ? Object.fromEntries(Object.entries(line.audio_tracks)
-      .map(([language, url]) => [languageLabel(language), mediaUrl(url)])) : undefined}
-    defaultTrack={languageLabel(initialVoiceLocale(textLocale))}
-    label={label}
-  />;
+    availableLocales.find((option) => option.code === language)?.label ??
+    language;
+  const mediaUrl = (url: string) => apiUrl(url.replace(/^\/api/, ""));
+  if (!line.audio_variants?.length)
+    return (
+      <TrackPlayer
+        src={line.audio_url ? mediaUrl(line.audio_url) : null}
+        tracks={
+          line.audio_tracks
+            ? Object.fromEntries(
+                Object.entries(line.audio_tracks).map(([language, url]) => [
+                  languageLabel(language),
+                  mediaUrl(url),
+                ]),
+              )
+            : undefined
+        }
+        defaultTrack={languageLabel(initialVoiceLocale(textLocale))}
+        label={label}
+      />
+    );
 
   // Authored alternatives can be random/state branches, not gender or a default.
   const counts = new Map<string, number>();
-  const options = [...line.audio_variants].sort((a, b) =>
-    a.language.localeCompare(b.language) || a.source_name.localeCompare(b.source_name),
-  ).map((variant) => {
-    const number = (counts.get(variant.language) ?? 0) + 1;
-    counts.set(variant.language, number);
-    const available = variant.status === 'available' && !!variant.url;
-    return {
-      value: variant.source_name,
-      label: `${languageLabel(variant.language)} · Variant ${number}${available ? '' : ' · unavailable'}`,
-      disabled: !available,
-      url: available ? mediaUrl(variant.url!) : null,
-    };
-  });
+  const options = [...line.audio_variants]
+    .sort(
+      (a, b) =>
+        a.language.localeCompare(b.language) ||
+        a.source_name.localeCompare(b.source_name),
+    )
+    .map((variant) => {
+      const number = (counts.get(variant.language) ?? 0) + 1;
+      counts.set(variant.language, number);
+      const available = variant.status === "available" && !!variant.url;
+      return {
+        value: variant.source_name,
+        label: `${languageLabel(variant.language)} · Variant ${number}${available ? "" : " · unavailable"}`,
+        disabled: !available,
+        url: available ? mediaUrl(variant.url!) : null,
+      };
+    });
   // A different language may still have one proven legacy track.
   for (const [language, url] of Object.entries(line.audio_tracks ?? {})) {
-    if (!counts.has(language)) options.push({
-      value: `track:${language}`, label: languageLabel(language), disabled: false, url: mediaUrl(url),
-    });
+    if (!counts.has(language))
+      options.push({
+        value: `track:${language}`,
+        label: languageLabel(language),
+        disabled: false,
+        url: mediaUrl(url),
+      });
   }
-  const selected = options.find((option) => option.value === choice && !option.disabled);
-  return <div className="character-voice-variants">
-    <Select label={`Audio variant: ${label}`} placeholder="Choose language & variant"
-      value={selected?.value ?? ''} onChange={setChoice} options={options} />
-    {selected && <TrackPlayer key={selected.value} src={selected.url} label={`${label} · ${selected.label}`} />}
-  </div>;
+  const selected = options.find(
+    (option) => option.value === choice && !option.disabled,
+  );
+  return (
+    <div className="character-voice-variants">
+      <Select
+        label={`Audio variant: ${label}`}
+        placeholder="Choose language & variant"
+        value={selected?.value ?? ""}
+        onChange={setChoice}
+        options={options}
+      />
+      {selected && (
+        <TrackPlayer
+          key={selected.value}
+          src={selected.url}
+          label={`${label} · ${selected.label}`}
+        />
+      )}
+    </div>
+  );
 }
 
 export function SkillScaling({
-  skill, display,
+  skill,
+  display,
 }: {
   skill: CharacterArchiveData["skills"][number];
   display?: PlayerDisplay;
@@ -236,7 +291,9 @@ export function SkillScaling({
     ? Math.max(1, Math.floor(skill.max_level))
     : 1;
   const level = Math.min(selectedLevel, maxLevel);
-  const skillLabel = skill.name ? gameTextPlainText(talentText(skill.name), display) : "Talent";
+  const skillLabel = skill.name
+    ? gameTextPlainText(talentText(skill.name), display)
+    : "Talent";
 
   return (
     <div className="character-skill-scaling">
@@ -272,11 +329,21 @@ export function SkillScaling({
               .map((attribute) => (
                 <tr key={attribute.id}>
                   <th scope="row">
-                    <PlayerText value={talentText(attribute.name || attribute.description || "Stat")} display={display} />
+                    <PlayerText
+                      value={talentText(
+                        attribute.name || attribute.description || "Stat",
+                      )}
+                      display={display}
+                    />
                     {attribute.name &&
                       attribute.description &&
                       !/\{\d+[^}]*\}/.test(attribute.description) && (
-                        <small><PlayerText value={talentText(attribute.description)} display={display} /></small>
+                        <small>
+                          <PlayerText
+                            value={talentText(attribute.description)}
+                            display={display}
+                          />
+                        </small>
                       )}
                   </th>
                   <td>
@@ -305,10 +372,13 @@ export function SkillScaling({
 }
 
 export function SkillCard({
-  skill, display,
+  skill,
+  display,
+  terms,
 }: {
   skill: CharacterArchiveData["skills"][number];
   display?: PlayerDisplay;
+  terms?: Record<string, GameTerm>;
 }) {
   const id = useId();
   const [tab, setTab] = useState("description");
@@ -318,7 +388,9 @@ export function SkillCard({
     skill.description,
     skill.description_params || [],
   );
-  const name = skill.name ? gameTextPlainText(talentText(skill.name), display) : "Talent";
+  const name = skill.name
+    ? gameTextPlainText(talentText(skill.name), display)
+    : "Talent";
   const hasStats = !!skill.attributes?.length;
 
   useEffect(() => {
@@ -344,7 +416,12 @@ export function SkillCard({
             <Swords size={19} aria-hidden="true" />
           </span>
         )}
-        <h3><PlayerText value={skill.name ? talentText(skill.name) : "Talent"} display={display} /></h3>
+        <h3>
+          <PlayerText
+            value={skill.name ? talentText(skill.name) : "Talent"}
+            display={display}
+          />
+        </h3>
       </div>
       {hasStats && (
         <div
@@ -395,7 +472,7 @@ export function SkillCard({
       >
         <div className="character-talent-description">
           <p ref={preview} className="character-talent-preview">
-            <PlayerText value={description} display={display} />
+            <PlayerText value={description} display={display} terms={terms} />
           </p>
           {canExpand && (
             <details>
@@ -403,7 +480,13 @@ export function SkillCard({
                 <span className="talent-read-more">Read more</span>
                 <span className="talent-show-less">Show less</span>
               </summary>
-              <p><PlayerText value={description} display={display} /></p>
+              <p>
+                <PlayerText
+                  value={description}
+                  display={display}
+                  terms={terms}
+                />
+              </p>
             </details>
           )}
         </div>
@@ -459,7 +542,7 @@ export function CharacterArchive({
     const controller = new AbortController();
     setTextError("");
     api<CharacterArchiveData>(
-      `/characters/${encodeURIComponent(characterKey)}/archive?${gameVersion ? `game_version=${encodeURIComponent(gameVersion)}&` : ''}locale=${encodeURIComponent(textLocale)}`,
+      `/characters/${encodeURIComponent(characterKey)}/archive?${gameVersion ? `game_version=${encodeURIComponent(gameVersion)}&` : ""}locale=${encodeURIComponent(textLocale)}`,
     )
       .then((result) => {
         if (!controller.signal.aborted)
@@ -489,297 +572,413 @@ export function CharacterArchive({
     (art) =>
       art.kind === "RoleHeadIconLarge" && art.scope !== "shared_resource",
   );
-  const biography = archive?.biography &&
+  const biography =
+    archive?.biography &&
     gameText(archive.biography, [], false, display).replace(/\s+/g, " ") !==
-      (introduction ? gameText(introduction, [], false, display).replace(/\s+/g, " ") : "");
+      (introduction
+        ? gameText(introduction, [], false, display).replace(/\s+/g, " ")
+        : "");
   const profile = archive?.profile;
-  const hasProfileDetails = biography || profile?.element || profile?.quality ||
-    profile?.affiliation || profile?.country || profile?.birthday || profile?.talent || groups.size;
-  const hasProfile = hasProfileDetails || archive?.artwork.length || mediaItems.length;
-  const skills = archive?.skills.filter((skill) =>
-    skill.name?.trim() || skill.description?.trim() || skill.attributes?.length,
-  ) ?? [];
-  const chain = archive?.resonance_chain.filter((entry) =>
-    entry.name?.trim() || entry.description?.trim(),
-  ) ?? [];
+  const hasProfileDetails =
+    biography ||
+    profile?.element ||
+    profile?.quality ||
+    profile?.affiliation ||
+    profile?.country ||
+    profile?.birthday ||
+    profile?.talent ||
+    groups.size;
+  const hasProfile =
+    hasProfileDetails || archive?.artwork.length || mediaItems.length;
+  const skills =
+    archive?.skills.filter(
+      (skill) =>
+        skill.name?.trim() ||
+        skill.description?.trim() ||
+        skill.attributes?.length,
+    ) ?? [];
+  const chain =
+    archive?.resonance_chain.filter(
+      (entry) => entry.name?.trim() || entry.description?.trim(),
+    ) ?? [];
   const voiceLines = spoken?.voice_lines.filter(hasVoiceLine) ?? [];
-  const voiceEvents = spoken?.other_voice_events.filter((event) => event.event?.trim()) ?? [];
-  const hasVoices = !!(archive?.voice_lines.some(hasVoiceLine) ||
+  const voiceEvents =
+    spoken?.other_voice_events.filter((event) => event.event?.trim()) ?? [];
+  const hasVoices = !!(
+    archive?.voice_lines.some(hasVoiceLine) ||
     archive?.other_voice_events.some((event) => event.event?.trim()) ||
-    voiceLines.length || voiceEvents.length);
+    voiceLines.length ||
+    voiceEvents.length
+  );
 
   return (
     <div className="character-archive">
-      {!!hasProfile && <details className="character-fold" open>
-        <summary>
-          <BookOpen size={19} />
-          <span>Profile & progression</span>
-          <small>
-            {hasProfileDetails && archive?.profile.max_level
-              ? `Max level ${archive.profile.max_level}`
-              : "Game records"}
-          </small>
-          <ChevronDown size={17} />
-        </summary>
-        <div className="character-fold-body">
-          {biography && (
+      {!!hasProfile && (
+        <details className="character-fold" open>
+          <summary>
+            <BookOpen size={19} />
+            <span>Profile & progression</span>
+            <small>
+              {hasProfileDetails && archive?.profile.max_level
+                ? `Max level ${archive.profile.max_level}`
+                : "Game records"}
+            </small>
+            <ChevronDown size={17} />
+          </summary>
+          <div className="character-fold-body">
+            {biography && (
               <p className="character-biography">
                 <PlayerText value={archive?.biography} display={display} />
               </p>
             )}
-          <dl className="character-facts">
-            {archive?.profile.element && (
-              <div>
-                <dt>Attribute</dt>
-                <dd><PlayerText value={archive.profile.element} display={display} /></dd>
+            <dl className="character-facts">
+              {archive?.profile.element && (
+                <div>
+                  <dt>Attribute</dt>
+                  <dd>
+                    <PlayerText
+                      value={archive.profile.element}
+                      display={display}
+                    />
+                  </dd>
+                </div>
+              )}
+              {archive?.profile.quality && (
+                <div>
+                  <dt>Rarity</dt>
+                  <dd>
+                    <PlayerText
+                      value={archive.profile.quality}
+                      display={display}
+                    />
+                  </dd>
+                </div>
+              )}
+              {archive?.profile.affiliation && (
+                <div>
+                  <dt>Affiliation</dt>
+                  <dd>
+                    <PlayerText
+                      value={archive.profile.affiliation}
+                      display={display}
+                    />
+                  </dd>
+                </div>
+              )}
+              {archive?.profile.country && (
+                <div>
+                  <dt>Origin</dt>
+                  <dd>
+                    <PlayerText
+                      value={archive.profile.country}
+                      display={display}
+                    />
+                  </dd>
+                </div>
+              )}
+              {archive?.profile.birthday && (
+                <div>
+                  <dt>Birthday</dt>
+                  <dd>
+                    <PlayerText
+                      value={archive.profile.birthday}
+                      display={display}
+                    />
+                  </dd>
+                </div>
+              )}
+              {archive?.profile.talent && (
+                <div>
+                  <dt>Talent</dt>
+                  <dd>
+                    <PlayerText
+                      value={archive.profile.talent}
+                      display={display}
+                    />
+                  </dd>
+                </div>
+              )}
+            </dl>
+            {portrait && !portrait.url && (
+              <div className="character-asset-note">
+                <Image size={16} /> Portrait source found; image export is
+                pending.{" "}
+                <code title={portrait.engine_path}>
+                  {portrait.engine_path.split("/").at(-1)}
+                </code>
               </div>
             )}
-            {archive?.profile.quality && (
-              <div>
-                <dt>Rarity</dt>
-                <dd><PlayerText value={archive.profile.quality} display={display} /></dd>
-              </div>
+            <CharacterMediaGallery />
+            {!!archive?.artwork.length && (
+              <section
+                aria-label="Character artwork"
+                className="character-artwork"
+              >
+                <details className="character-subfold">
+                  <summary>
+                    Source references{" "}
+                    <span>{archive.artwork.length} references</span>
+                  </summary>
+                  <div className="character-asset-list">
+                    {archive.artwork.map((art) => (
+                      <div key={art.kind}>
+                        <strong>{artworkLabel(art)}</strong>
+                        <code title={art.engine_path}>{art.engine_path}</code>
+                        <small>
+                          {art.url ? (
+                            <a
+                              href={apiUrl(art.url.replace(/^\/api/, ""))}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              View image
+                            </a>
+                          ) : (
+                            "No exported image"
+                          )}
+                        </small>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              </section>
             )}
-            {archive?.profile.affiliation && (
-              <div>
-                <dt>Affiliation</dt>
-                <dd><PlayerText value={archive.profile.affiliation} display={display} /></dd>
-              </div>
+            {!!groups.size && (
+              <>
+                <h3>
+                  Upgrade materials <span>{groups.size}</span>
+                </h3>
+                <div className="character-material-grid">
+                  {Array.from(groups.entries()).map(([key, group]) => (
+                    <div className="character-material-card" key={key}>
+                      {group.item?.canonical_key ? (
+                        <Link
+                          to={entityPath({
+                            id: group.item.id,
+                            slug: group.item.slug,
+                            href: group.item.href,
+                            canonical_key: group.item.canonical_key,
+                            node_type: "item",
+                          })}
+                        >
+                          {group.item.label || key}
+                        </Link>
+                      ) : (
+                        <strong>Item #{group.uses[0].item_id}</strong>
+                      )}
+                      <div>
+                        {group.uses.map((use, index) => (
+                          <span key={`${key}-${index}`}>
+                            {use.kind === "character_ascension"
+                              ? `Ascension · Lv. ${use.level_cap ?? "?"}`
+                              : use.kind.replaceAll("_", " ")}
+                            {use.required_count != null
+                              ? ` · ${use.required_count}×`
+                              : ""}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
-            {archive?.profile.country && (
-              <div>
-                <dt>Origin</dt>
-                <dd><PlayerText value={archive.profile.country} display={display} /></dd>
-              </div>
-            )}
-            {archive?.profile.birthday && (
-              <div>
-                <dt>Birthday</dt>
-                <dd><PlayerText value={archive.profile.birthday} display={display} /></dd>
-              </div>
-            )}
-            {archive?.profile.talent && (
-              <div>
-                <dt>Talent</dt>
-                <dd><PlayerText value={archive.profile.talent} display={display} /></dd>
-              </div>
-            )}
-          </dl>
-          {portrait && !portrait.url && (
-            <div className="character-asset-note">
-              <Image size={16} /> Portrait source found; image export is
-              pending.{" "}
-              <code title={portrait.engine_path}>
-                {portrait.engine_path.split("/").at(-1)}
-              </code>
+          </div>
+        </details>
+      )}
+
+      {!!skills.length && (
+        <details className="character-fold">
+          <summary>
+            <Swords size={19} />
+            <span>Talents</span>
+            <ChevronDown size={17} />
+          </summary>
+          <div className="character-fold-body">
+            <div className="character-skill-grid">
+              {skills.map((skill) => (
+                <SkillCard
+                  key={`${characterKey}-${skill.id}`}
+                  skill={skill}
+                  display={display}
+                />
+              ))}
             </div>
-          )}
-          <CharacterMediaGallery />
-          {!!archive?.artwork.length && (
-            <section
-              aria-label="Character artwork"
-              className="character-artwork"
-            >
+          </div>
+        </details>
+      )}
+
+      {!!chain.length && (
+        <details className="character-fold">
+          <summary>
+            <Sparkles size={19} />
+            <span>Resonance chain</span>
+            <small>{chain.length} sequences</small>
+            <ChevronDown size={17} />
+          </summary>
+          <div className="character-fold-body character-chain-grid">
+            {chain.map((chain) => (
+              <article className="character-chain-card" key={chain.id}>
+                <span className="character-chain-number">
+                  {String(chain.order).padStart(2, "0")}
+                </span>
+                <div>
+                  <h3>
+                    <PlayerText
+                      value={chain.name}
+                      fallback="Text unavailable in this language."
+                      display={display}
+                    />
+                  </h3>
+                  <p>
+                    <PlayerText
+                      value={gameText(
+                        chain.description,
+                        chain.description_params,
+                        true,
+                      )}
+                      display={display}
+                      terms={archive?.terms}
+                    />
+                  </p>
+                </div>
+              </article>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {hasVoices && (
+        <details className="character-fold">
+          <summary>
+            <Music2 size={19} />
+            <span>Voice lines</span>
+            <small>{voiceLines.length} entries</small>
+            <ChevronDown size={17} />
+          </summary>
+          <div className="character-fold-body">
+            <div className="character-voice-toolbar">
+              <span>Text language</span>
+              <Select
+                label="Voice line text language"
+                value={textLocale}
+                options={availableLocales.map((option) => ({
+                  value: option.code,
+                  label: option.label,
+                }))}
+                onChange={(value) => {
+                  setTextError("");
+                  setTextLocale(value);
+                }}
+              />
+              {spoken?.profile.voice_actors[textLocale] && (
+                <span>
+                  <PlayerText
+                    value={spoken.profile.voice_actors[textLocale]}
+                    display={display}
+                    terms={archive?.terms}
+                  />
+                </span>
+              )}
+            </div>
+            <p className="character-muted">
+              Choose the text language above. Each player lets you choose its
+              audio language separately.
+            </p>
+            {textError && <p className="character-error">{textError}</p>}
+            {textLoading && <CharacterVoiceSkeleton />}
+            <div className="character-voice-list" aria-busy={textLoading}>
+              {!textLoading &&
+                voiceLines.map((line) => (
+                  <article className="character-voice-line" key={line.id}>
+                    <div>
+                      <small>{String(line.order).padStart(2, "0")}</small>
+                      <h3>
+                        <PlayerText
+                          value={line.title}
+                          fallback="Text unavailable in this language."
+                          display={display}
+                        />
+                      </h3>
+                      <p>
+                        <PlayerText
+                          value={line.text}
+                          fallback="Text unavailable in this language."
+                          display={display}
+                        />
+                      </p>
+                      {line.audio_event_path && (
+                        <small
+                          className="character-source-hint"
+                          title={line.audio_event_path}
+                        >
+                          Voice event ·{" "}
+                          {line.audio_event_path.split("/").at(-1)}
+                        </small>
+                      )}
+                    </div>
+                    <CharacterVoicePlayback
+                      key={`${characterKey}:${line.id}`}
+                      line={line}
+                      textLocale={textLocale}
+                      display={display}
+                    />
+                  </article>
+                ))}
+            </div>
+            {!!voiceEvents.length && (
               <details className="character-subfold">
                 <summary>
-                  Source references{" "}
-                  <span>{archive.artwork.length} references</span>
+                  Other character voice events{" "}
+                  <span>{voiceEvents.length} event names</span>
                 </summary>
                 <div className="character-asset-list">
-                  {archive.artwork.map((art) => (
-                    <div key={art.kind}>
-                      <strong>{artworkLabel(art)}</strong>
-                      <code title={art.engine_path}>{art.engine_path}</code>
-                      <small>
-                        {art.url ? (
-                          <a
-                            href={apiUrl(art.url.replace(/^\/api/, ""))}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            View image
-                          </a>
-                        ) : (
-                          "No exported image"
-                        )}
-                      </small>
+                  {voiceEvents.map((event) => (
+                    <div key={`${event.category}-${event.event}`}>
+                      <strong>
+                        {event.category.replaceAll(/([a-z])([A-Z])/g, "$1 $2")}
+                      </strong>
+                      <code>{event.event}</code>
+                      <small>Event name only</small>
                     </div>
                   ))}
                 </div>
               </details>
-            </section>
-          )}
-          {!!groups.size && (<>
-            <h3>Upgrade materials <span>{groups.size}</span></h3>
-            <div className="character-material-grid">
-              {Array.from(groups.entries()).map(([key, group]) => (
-                <div className="character-material-card" key={key}>
-                  {group.item?.canonical_key ? (
-                    <Link
-                      to={entityPath({
-                        id: group.item.id,
-                        slug: group.item.slug,
-                        href: group.item.href,
-                        canonical_key: group.item.canonical_key,
-                        node_type: "item",
-                      })}
-                    >
-                      {group.item.label || key}
-                    </Link>
-                  ) : (
-                    <strong>Item #{group.uses[0].item_id}</strong>
-                  )}
-                  <div>
-                    {group.uses.map((use, index) => (
-                      <span key={`${key}-${index}`}>
-                        {use.kind === "character_ascension"
-                          ? `Ascension · Lv. ${use.level_cap ?? "?"}`
-                          : use.kind.replaceAll("_", " ")}
-                        {use.required_count != null
-                          ? ` · ${use.required_count}×`
-                          : ""}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </>)}
-        </div>
-      </details>}
-
-      {!!skills.length && <details className="character-fold">
-        <summary>
-          <Swords size={19} />
-          <span>Talents</span>
-          <ChevronDown size={17} />
-        </summary>
-        <div className="character-fold-body">
-            <div className="character-skill-grid">
-              {skills
-                .map((skill) => (
-                  <SkillCard
-                    key={`${characterKey}-${skill.id}`}
-                    skill={skill}
-                    display={display}
-                  />
-                ))}
-            </div>
-        </div>
-      </details>}
-
-      {!!chain.length && <details className="character-fold">
-        <summary>
-          <Sparkles size={19} />
-          <span>Resonance chain</span>
-          <small>{chain.length} sequences</small>
-          <ChevronDown size={17} />
-        </summary>
-        <div className="character-fold-body character-chain-grid">
-          {chain.map((chain) => (
-            <article className="character-chain-card" key={chain.id}>
-              <span className="character-chain-number">
-                {String(chain.order).padStart(2, "0")}
-              </span>
-              <div>
-                <h3><PlayerText value={chain.name} fallback="Text unavailable in this language." display={display} /></h3>
-                <p><PlayerText value={gameText(chain.description, chain.description_params, true)} display={display} /></p>
-              </div>
-            </article>
-          ))}
-        </div>
-      </details>}
-
-      {hasVoices && <details className="character-fold">
-        <summary>
-          <Music2 size={19} />
-          <span>Voice lines</span>
-          <small>{voiceLines.length} entries</small>
-          <ChevronDown size={17} />
-        </summary>
-        <div className="character-fold-body">
-          <div className="character-voice-toolbar">
-            <span>Text language</span>
-            <Select
-              label="Voice line text language"
-              value={textLocale}
-              options={availableLocales.map((option) => ({
-                value: option.code,
-                label: option.label,
-              }))}
-              onChange={(value) => {
-                setTextError("");
-                setTextLocale(value);
-              }}
-            />
-            {spoken?.profile.voice_actors[textLocale] && (
-              <span><PlayerText value={spoken.profile.voice_actors[textLocale]} display={display} /></span>
             )}
           </div>
-          <p className="character-muted">
-            Choose the text language above. Each player lets you choose its
-            audio language separately.
-          </p>
-          {textError && <p className="character-error">{textError}</p>}
-          {textLoading && (
-            <CharacterVoiceSkeleton />
-          )}
-          <div className="character-voice-list" aria-busy={textLoading}>
-            {!textLoading && voiceLines.map((line) => (
-              <article className="character-voice-line" key={line.id}>
-                <div>
-                  <small>{String(line.order).padStart(2, "0")}</small>
-                  <h3><PlayerText value={line.title} fallback="Text unavailable in this language." display={display} /></h3>
-                  <p><PlayerText value={line.text} fallback="Text unavailable in this language." display={display} /></p>
-                  {line.audio_event_path && (
-                    <small
-                      className="character-source-hint"
-                      title={line.audio_event_path}
-                    >
-                      Voice event · {line.audio_event_path.split("/").at(-1)}
-                    </small>
-                  )}
-                </div>
-                <CharacterVoicePlayback key={`${characterKey}:${line.id}`} line={line} textLocale={textLocale} display={display} />
-              </article>
-            ))}
-          </div>
-          {!!voiceEvents.length && (
-            <details className="character-subfold">
-              <summary>
-                Other character voice events{" "}
-                <span>{voiceEvents.length} event names</span>
-              </summary>
-              <div className="character-asset-list">
-                {voiceEvents.map((event) => (
-                  <div key={`${event.category}-${event.event}`}>
-                    <strong>
-                      {event.category.replaceAll(/([a-z])([A-Z])/g, "$1 $2")}
-                    </strong>
-                    <code>{event.event}</code>
-                    <small>Event name only</small>
-                  </div>
-                ))}
-              </div>
-            </details>
-          )}
-        </div>
-      </details>}
+        </details>
+      )}
     </div>
   );
 }
 
-
 export function CharacterVoiceSkeleton() {
-  return <SkeletonGroup label="Loading voice lines" className="character-voice-list">
-    {[0,1,2].map(index => <article className="character-voice-line" key={index}>
-      <div className="skeleton-card-body"><Skeleton style={{width:'40%',height:'1.2rem'}} /><TextSkeleton lines={3} /><Skeleton style={{height:'2.5rem'}} /></div>
-    </article>)}
-  </SkeletonGroup>;
+  return (
+    <SkeletonGroup label="Loading voice lines" className="character-voice-list">
+      {[0, 1, 2].map((index) => (
+        <article className="character-voice-line" key={index}>
+          <div className="skeleton-card-body">
+            <Skeleton style={{ width: "40%", height: "1.2rem" }} />
+            <TextSkeleton lines={3} />
+            <Skeleton style={{ height: "2.5rem" }} />
+          </div>
+        </article>
+      ))}
+    </SkeletonGroup>
+  );
 }
 export function CharacterArchiveSkeleton() {
-  return <SkeletonGroup label="Loading character details" className="page-skeleton">
-    <Skeleton style={{width:'35%',height:'1.5rem'}} />
-    <div className="page-skeleton-panels">{[0,1,2].map(index => <article className="page-skeleton-panel" key={index}><Skeleton style={{height:'5rem'}} /><TextSkeleton lines={3} /></article>)}</div>
-  </SkeletonGroup>;
+  return (
+    <SkeletonGroup label="Loading character details" className="page-skeleton">
+      <Skeleton style={{ width: "35%", height: "1.5rem" }} />
+      <div className="page-skeleton-panels">
+        {[0, 1, 2].map((index) => (
+          <article className="page-skeleton-panel" key={index}>
+            <Skeleton style={{ height: "5rem" }} />
+            <TextSkeleton lines={3} />
+          </article>
+        ))}
+      </div>
+    </SkeletonGroup>
+  );
 }
