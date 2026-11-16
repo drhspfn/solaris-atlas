@@ -801,6 +801,7 @@ export function CharacterArchive({
                   key={`${characterKey}-${skill.id}`}
                   skill={skill}
                   display={display}
+                  terms={archive?.terms}
                 />
               ))}
             </div>
