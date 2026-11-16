@@ -318,6 +318,41 @@ async def public_character_model(session, owner_node_id, release):
             if form["scene"] is not None:
                 public_form["scene"] = form["scene"]
             result["forms"].append(public_form)
+        if len(result["forms"]) > 1:
+            base_form = result["forms"][0]
+            base_packs = base_form.get("animation_packs") or []
+            base_linked = base_form.get("linked_models") or []
+            for skin_form in result["forms"][1:]:
+                own_clips = {
+                    clip
+                    for pack in (skin_form.get("animation_packs") or [])
+                    for clip in (pack.get("clips") or [])
+                }
+                for base_pack in base_packs:
+                    extra_clips = [
+                        clip for clip in (base_pack.get("clips") or [])
+                        if clip not in own_clips
+                    ]
+                    if extra_clips:
+                        skin_form.setdefault("animation_packs", []).append({
+                            **base_pack,
+                            "id": f"inherited:{base_pack['id']}",
+                            "clips": extra_clips,
+                            "inherited": True,
+                        })
+                        own_clips.update(extra_clips)
+                own_linked = {
+                    (item.get("label"), (item.get("component") or {}).get("socket"))
+                    for item in (skin_form.get("linked_models") or [])
+                }
+                for item in base_linked:
+                    key = (item.get("label"), (item.get("component") or {}).get("socket"))
+                    if key not in own_linked and item.get("parent_id") == base_form.get("id"):
+                        skin_form.setdefault("linked_models", []).append({
+                            **item,
+                            "parent_id": skin_form.get("id"),
+                        })
+                        own_linked.add(key)
         for kind in ("preview", "download", "blender", "physics", "animations", "facial",
                      "animation_manifest", "animation_packs", "viewer_url"):
             result[kind] = result["forms"][0][kind]

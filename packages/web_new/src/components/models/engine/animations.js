@@ -116,7 +116,7 @@ export function attachAnimationCatalog(clip, pack, index) {
 
 // Loader-generated names can differ when meshes claim the same name as a bone.
 // Match authored node names, then bind directly to the existing preview bones.
-export function bindAnimationClips(pack, preview, whitelist) {
+export function bindAnimationClips(pack, preview, whitelist, { allowMissingTargets = false } = {}) {
   if (!pack.animations.length)
     throw new Error("Animation pack contains no clips.");
   const targets = new Map();
@@ -131,6 +131,7 @@ export function bindAnimationClips(pack, preview, whitelist) {
     const bound = clip.clone();
     bound.userData = { ...clip.userData };
     attachAnimationCatalog(bound, pack, clipIndex);
+    const keptTracks = [];
     for (const track of bound.tracks) {
       const path = PropertyBinding.parseTrackName(track.name);
       const source = PropertyBinding.findNode(pack.scene, path.nodeName);
@@ -138,7 +139,6 @@ export function bindAnimationClips(pack, preview, whitelist) {
       const name = pack.parser.json.nodes[index]?.name;
       const target = targets.get(name);
       if (
-        !target ||
         path.objectName ||
         !["position", "quaternion", "scale"].includes(path.propertyName)
       ) {
@@ -146,8 +146,16 @@ export function bindAnimationClips(pack, preview, whitelist) {
           `Animation target is missing, ambiguous or unsupported: ${name || track.name}`,
         );
       }
+      if (!target) {
+        if (allowMissingTargets) continue;
+        throw new Error(
+          `Animation target is missing, ambiguous or unsupported: ${name || track.name}`,
+        );
+      }
       track.name = `${target.uuid}.${path.propertyName}`;
+      keptTracks.push(track);
     }
+    bound.tracks = keptTracks;
     return [bound];
   });
 }
@@ -187,7 +195,8 @@ export async function loadAnimationPacks(assets, load, dispose) {
 
 export function bindAnimationPacks(packs, rig) {
   return packs.flatMap(({ source, pack }) => {
-    if (!source.clips) return bindAnimationClips(pack, rig);
+    const options = { allowMissingTargets: Boolean(source.inherited) };
+    if (!source.clips) return bindAnimationClips(pack, rig, undefined, options);
     const names = new Set();
     for (const clip of pack.animations) {
       if (typeof clip.name !== 'string' || !clip.name.trim() || names.has(clip.name))
@@ -196,7 +205,7 @@ export function bindAnimationPacks(packs, rig) {
     }
     for (const name of source.clips) if (!names.has(name))
       throw new Error(`Animation action missing from pack: ${name}`);
-    return bindAnimationClips(pack, rig, new Set(source.clips));
+    return bindAnimationClips(pack, rig, new Set(source.clips), options);
   });
 }
 
