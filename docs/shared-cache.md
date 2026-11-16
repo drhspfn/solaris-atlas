@@ -126,7 +126,8 @@ Compose uses `noeviction`: cached responses cannot evict a live quota or lease.
 All manager entries expire. A full Redis rejects writes; optional HTTP caching
 bypasses storage and public chat returns `503`. Redis remains disposable (no
 AOF/snapshots), so restarting it clears cached values and resets quotas/leases.
-Monitor memory before the 256 MB limit and size it for payload/TTL volume.
+Production defaults to 512 MB; configure `REDIS_MAX_MEMORY` and monitor memory and
+OOM errors to size it for payload/TTL volume. Local Compose defaults to 256 MB.
 
 Deploy API and workers plus the Compose/Redis configuration (the **all**
 deployment applies all three). Applying only new application images does not

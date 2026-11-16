@@ -61,7 +61,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     # Never evict a live quota or operation lease to make room for cached data.
-    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction", "--save", "", "--appendonly", "no"]
+    command: ["redis-server", "--maxmemory", "${REDIS_MAX_MEMORY:-512mb}", "--maxmemory-policy", "noeviction", "--save", "", "--appendonly", "no"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
