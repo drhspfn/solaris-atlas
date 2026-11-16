@@ -58,7 +58,7 @@ def test_component_follow_visibility_and_montage(tmp_path):
     assert result["bindings"][1]["secondary_table"] == "Second"
     assert result["bindings"][1]["node"] == []
     assert "Aki/Alt" in result["required_resources"]
-    assert result["cues"][0]["defaults"]["end_visible"] is True
+    assert result["cues"][0]["defaults"]["end_visible"] is False
     assert result["cues"][0]["segment_start"] == 0.3
     assert result["cues"][1]["properties"]["SwitchToSlotName"] == "WeaponProp01"
 

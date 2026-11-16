@@ -19,7 +19,7 @@ function cueWindows(cue, parentAction) {
   const source = packagePath(parentAction?.getClip().userData?.sourcePackage);
   if (!source || !Number.isFinite(cue.start)) return [];
   const finish = Number.isFinite(cue.end) ? cue.end : cue.start + (cue.duration || 0);
-  if (packagePath(cue.source_clip) === source) return [{ start: cue.start, end: finish, rate: 1 }];
+  if (packagePath(cue.source_clip) === source) return [{ start: cue.start, end: finish, rate: 1, sourceStart: cue.start }];
   if (packagePath(cue.montage) !== source || !(cue.play_rate > 0) ||
       !Number.isFinite(cue.segment_start) || !Number.isFinite(cue.source_start) || !Number.isFinite(cue.source_end) ||
       cue.source_end <= cue.source_start || !Number.isInteger(cue.loop_count) || cue.loop_count < 1 || cue.loop_count > 1000) return [];
@@ -28,7 +28,7 @@ function cueWindows(cue, parentAction) {
   return Array.from({ length: cue.loop_count }, (_, i) => {
     const base = cue.segment_start + i * (cue.source_end - cue.source_start) / cue.play_rate;
     return { start: base + (start - cue.source_start) / cue.play_rate,
-      end: base + (end - cue.source_start) / cue.play_rate, rate: cue.play_rate };
+      end: base + (end - cue.source_start) / cue.play_rate, rate: cue.play_rate, sourceStart: start };
   });
 }
 
@@ -38,14 +38,14 @@ function cueVisibility(cues, parentAction, initial) {
     if (cue.kind !== 'TsAnimNotifyStateSubMeshControl_C' || !cue.defaults) continue;
     const defaults = cue.defaults;
     for (const window of cueWindows(cue, parentAction)) {
-      for (const [time, delay, visible] of [[window.start, defaults.begin_delay, defaults.begin_visible ?? true], [window.end, defaults.end_delay, defaults.end_visible ?? true]]) {
+      for (const [time, delay, visible, isEnd] of [[window.start, defaults.begin_delay, defaults.begin_visible ?? false, false], [window.end, defaults.end_delay, defaults.end_visible ?? false, true]]) {
         if (typeof visible !== 'boolean') continue;
         const position = time + (Number.isFinite(delay) ? delay : 0);
-        if (position <= parentAction.time) events.push({ position, visible });
+        if (position <= parentAction.time) events.push({ position, visible, isEnd });
       }
     }
   }
-  events.sort((a, b) => a.position - b.position);
+  events.sort((a, b) => (a.position - b.position) || (a.isEnd === b.isEnd ? 0 : a.isEnd ? -1 : 1));
   return events.length ? events[events.length - 1].visible : initial;
 }
 
@@ -235,8 +235,15 @@ export function createLinkedModels({ assets, load, dispose, report, getRoot, get
       const automatic = effect ? Boolean(effectCue) : cueVisibility(entry.item.component.cues, parentAction, entry.item.component.default_visible !== false);
       entry.visible = !hideChildren && (effect ? automatic && entry.override !== false : entry.override ?? automatic);
       const parentPath = packagePath(parentAction?.getClip().userData?.sourcePackage);
+      const activeSegment = !effectCue && parentAction ? activeCue(entry.item.component.cues, parentAction, '') : null;
       const bindingPath = effectCue ? packagePath(effectCue.cue.source_clip) : parentPath;
-      const bindings = (entry.item.component.bindings || []).filter(binding => bindingPath && packagePath(binding.parent_clip) === bindingPath && binding.child_clip);
+      let bindings = (entry.item.component.bindings || []).filter(binding => bindingPath && packagePath(binding.parent_clip) === bindingPath && binding.child_clip);
+      let segmentMatch = null;
+      if (!bindings.length && !effectCue && activeSegment?.cue?.source_clip) {
+        const segmentPath = packagePath(activeSegment.cue.source_clip);
+        bindings = (entry.item.component.bindings || []).filter(binding => segmentPath && packagePath(binding.parent_clip) === segmentPath && binding.child_clip);
+        if (bindings.length === 1) segmentMatch = activeSegment;
+      }
       if (!entry.rig) { if ((entry.visible || (!effect && bindings.length === 1 && entry.override !== false)) && !entry.error) void ensure(entry); continue; }
       entry.rig.scene.visible = entry.visible;
       const slotCue = activeCue(entry.item.component.cues, parentAction, 'ChangeSlot');
@@ -261,7 +268,11 @@ export function createLinkedModels({ assets, load, dispose, report, getRoot, get
       if (entry.action && parentAction) {
         const authoredRate = effectCue?.cue?.properties?.PlayRate ?? entry.item.component.source?.properties?.PlayRate ?? binding.source?.play_rate;
         const rate = Number.isFinite(authoredRate) && authoredRate >= 0 ? authoredRate : 1;
-        const time = effectCue ? Math.max(0, (parentAction.time - effectCue.start) * effectCue.rate * rate) : parentAction.time;
+        const time = effectCue
+          ? Math.max(0, (parentAction.time - effectCue.start) * effectCue.rate * rate)
+          : segmentMatch
+            ? Math.max(0, segmentMatch.sourceStart + (parentAction.time - segmentMatch.start) * segmentMatch.rate)
+            : parentAction.time;
         entry.action.time = clip.duration ? (effect && binding.source?.looping === false ? Math.min(time, clip.duration) : time % clip.duration) : 0;
         if (effect && binding.source?.looping === false) { entry.action.setLoop(THREE.LoopOnce, 1); entry.action.clampWhenFinished = true; }
         entry.mixer.update(0);

@@ -424,8 +424,8 @@ def discover(cooked: Path, sources: dict) -> list[dict]:
                         continue
                     cue = cue_for(event, obj, clip, context)
                     if "SubMeshControl" in typ:
-                        cue["defaults"] = {"begin_visible": p.get("开始是否可见", True),
-                                           "end_visible": p.get("结束是否可见", True),
+                        cue["defaults"] = {"begin_visible": p.get("开始是否可见", False),
+                                           "end_visible": p.get("结束是否可见", False),
                                            "begin_delay": p.get("开始延迟时间", 0),
                                            "end_delay": p.get("结束延迟时间", 0)}
                     elif "ChangeSlot" in typ:
