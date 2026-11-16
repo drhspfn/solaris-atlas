@@ -1,6 +1,7 @@
 """Publish a verified local build using the same atomic model publication path."""
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -67,18 +68,64 @@ def _component_summary(path):
             "sha256": digest(path)}
 
 
+def _is_material_override_form(form: dict) -> bool:
+    return bool(
+        form.get("part_material_overrides")
+        and isinstance(form.get("source"), dict)
+        and form["source"].get("material_controller")
+    )
+
+
 def _canonical_authored_forms(forms: list[dict]) -> list[dict]:
-    """Normalize away synthesized ReplaceBaseMaterials forms and material_variants for recipe matching."""
-    base = [
-        {k: v for k, v in form.items() if k not in ("material_variants", "order")}
-        for form in forms
-        if not (
-            form.get("part_material_overrides")
-            and isinstance(form.get("source"), dict)
-            and form["source"].get("material_controller")
-        )
-    ]
+    """Normalize away synthesized ReplaceBaseMaterials forms, material_variants, and inherited blueprints for recipe matching."""
+    base = []
+    for form in forms:
+        if _is_material_override_form(form):
+            continue
+        inherited = set(form.get("inherited_blueprints") or ())
+        normalized = {
+            k: v for k, v in form.items()
+            if k not in ("material_variants", "order", "inherited_blueprints")
+            and not (k == "montages" and not v)
+        }
+        if inherited and isinstance(normalized.get("blueprints"), list):
+            normalized["blueprints"] = [bp for bp in normalized["blueprints"] if bp not in inherited]
+        base.append(normalized)
     return [{**form, "order": idx} for idx, form in enumerate(base)]
+
+
+def _expand_material_form_components(expected_components: dict, forms: list[dict]) -> dict:
+    """Replicate trusted base-form component identities onto synthesized ReplaceBaseMaterials forms."""
+    base_roots = [form for form in forms if not _is_material_override_form(form)]
+    override_roots = [form for form in forms if _is_material_override_form(form)]
+    if not override_roots or not expected_components:
+        return expected_components
+
+    def root_of(cid: str) -> str:
+        parent = expected_components[cid]["component"]["parent_form_id"]
+        while parent in expected_components:
+            parent = expected_components[parent]["component"]["parent_form_id"]
+        return parent
+
+    expanded = dict(expected_components)
+    for form in override_roots:
+        base_form = next(
+            (b for b in base_roots if b.get("model") == form.get("model") and b.get("component_blueprint") == form.get("component_blueprint")),
+            None,
+        )
+        if base_form is None:
+            continue
+        base_cids = [cid for cid in expected_components if root_of(cid) == base_form["id"]]
+        id_map = {base_form["id"]: form["id"]}
+        for cid in base_cids:
+            rel = expected_components[cid]["component"]
+            id_map[cid] = "component-" + hashlib.sha256((form["id"] + "|" + rel["id"]).encode()).hexdigest()[:16]
+        for cid in base_cids:
+            item = expected_components[cid]
+            rel = dict(item["component"])
+            rel["parent_form_id"] = id_map.get(rel["parent_form_id"], rel["parent_form_id"])
+            expanded[id_map[cid]] = {"component": rel, "model": item["model"]}
+    return expanded
 
 
 def decode_bundles(archive, root, job, expected_forms, *, expected_components=None, _manifest=None, archive_digest=None):
@@ -109,6 +156,7 @@ def decode_bundles(archive, root, job, expected_forms, *, expected_components=No
         if not isinstance(expected_components, dict):
             raise ValueError(
                 "Archive components require trusted authored component identities")
+        expected_components = _expand_material_form_components(expected_components, forms)
         actual_ids = {entry["form"]["id"] for entry in children}
         missing = sorted(set(expected_components) - actual_ids)
         unexpected = sorted(actual_ids - set(expected_components))
@@ -255,8 +303,41 @@ def decode_bundles(archive, root, job, expected_forms, *, expected_components=No
     return publication, bundles
 
 
+def _forms_with_inherited_sources(forms: list[dict]) -> list[dict]:
+    from wuwa_story_worker.model_animation_packs import variant_root
+
+    enriched = []
+    for form in forms:
+        sources = dict(form)
+        if form.get("model"):
+            ownership = ownership_for(form, forms)
+            if ownership.get("inherits"):
+                inherited_roots = set(ownership["inherits"])
+                blueprints = list(sources.get("blueprints") or [])
+                inherited_blueprints = list(sources.get("inherited_blueprints") or [])
+                montages = list(sources.get("montages") or [])
+                for base in forms:
+                    if base is not form and base.get("model") and variant_root(base["model"]) in inherited_roots:
+                        for bp in base.get("blueprints") or ():
+                            if bp not in blueprints:
+                                blueprints.append(bp)
+                                inherited_blueprints.append(bp)
+                        for montage in base.get("montages") or ():
+                            if montage not in montages:
+                                montages.append(montage)
+                sources = {
+                    **sources,
+                    "blueprints": blueprints,
+                    "inherited_blueprints": inherited_blueprints,
+                    "montages": montages,
+                }
+        enriched.append(sources)
+    return enriched
+
+
 async def discover_upload_components(root, forms, asset_version, tier, *, include_animations=True):
     """Reuse only our verified discovery, never identities supplied by an upload."""
+    forms = _forms_with_inherited_sources(forms)
     # Coordinate with managed downloads and repairs while reading the client.
     async with wait_workspace_lock(asset_workspace()):
         return await _discover_cached_upload_components(
@@ -333,6 +414,7 @@ async def _discover_upload_components(root, forms, asset_version, tier, *, inclu
         raise ValueError("Linked model client identity changed")
     local_client = {"game": client_path / "game",
                     "keys": client_path / "keys.txt", "processors": 1}
+    forms = _forms_with_inherited_sources(forms)
     result = {}
     for form in forms:
         if not form.get("component_blueprint"):
