@@ -1030,7 +1030,10 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
                 raise ValueError("Blender facial assembly produced no file")
             facial_blend.replace(target_blend)
     profile = None
+    inherited_blueprints = set(sources.get("inherited_blueprints") or ())
     for blueprint in sources["blueprints"]:
+        if blueprint in inherited_blueprints:
+            continue
         path = cooked / "Client/Content" / (blueprint + ".json")
         if path.is_file():
             candidate = spring_profile(
@@ -1366,16 +1369,18 @@ async def build_scene_bundles(staging, forms, *, include_animations=True, **opti
 
                     inherited_roots = set(ownership["inherits"])
                     blueprints = list(form.get("blueprints") or [])
+                    inherited_blueprints = list(form.get("inherited_blueprints") or [])
                     montages = list(form.get("montages") or [])
                     for base in forms:
                         if base is not form and base.get("model") and variant_root(base["model"]) in inherited_roots:
                             for bp in base.get("blueprints") or ():
                                 if bp not in blueprints:
                                     blueprints.append(bp)
+                                    inherited_blueprints.append(bp)
                             for montage in base.get("montages") or ():
                                 if montage not in montages:
                                     montages.append(montage)
-                    form = {**form, "blueprints": blueprints, "montages": montages}
+                    form = {**form, "blueprints": blueprints, "inherited_blueprints": inherited_blueprints, "montages": montages}
             root = staging / form["id"]
             root.mkdir()
             if options.get("local_client") is None:
