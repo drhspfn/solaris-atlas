@@ -82,6 +82,25 @@ async def test_watch_passes_selected_kinds_to_refresh(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_watch_rotates_busy_kinds_and_skips_empty_queues(monkeypatch):
+    stop = asyncio.Event()
+    monkeypatch.setattr(worker, "get_settings", lambda: SimpleNamespace(read_projection_min_free_gib=0))
+    monkeypatch.setattr(worker.shutil, "disk_usage", lambda _: SimpleNamespace(free=1))
+    calls = []
+
+    async def refresh(factory, *, kinds, **filters):
+        calls.append((kinds[0], filters))
+        if len(calls) == 5:
+            stop.set()
+        return int(kinds[0] != "empty")
+
+    monkeypatch.setattr(worker, "refresh_batch", refresh)
+    await worker.watch_refreshes(stop, kinds=["character", "empty", "game_event"], snapshot_key="current")
+    assert [kind for kind, _ in calls] == ["character", "empty", "game_event", "character", "empty"]
+    assert all(filters == {"snapshot_key": "current"} for _, filters in calls)
+
+
+@pytest.mark.asyncio
 async def test_estimate_is_read_only_and_does_not_run_refresh(monkeypatch, capsys):
     from wuwa_story.read_models.refresh import BackfillEstimate
 

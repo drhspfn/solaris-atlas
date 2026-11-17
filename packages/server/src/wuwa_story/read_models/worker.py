@@ -91,6 +91,8 @@ async def refresh_batch(
 
 async def watch_refreshes(stop, *, factory=SessionFactory, interval=2, kinds=None, **claim_filters):
     last_storage_warning = 0.0
+    selected_kinds = list(dict.fromkeys(kinds if kinds is not None else READ_PROJECTION_KINDS))
+    next_kind = 0
     while not stop.is_set():
         # Compose stores worker and PostgreSQL volumes on the same host disk.
         # Leave import/API headroom; pending work is retained in PostgreSQL.
@@ -104,13 +106,20 @@ async def watch_refreshes(stop, *, factory=SessionFactory, interval=2, kinds=Non
             except TimeoutError:
                 pass
             continue
-        try:
-            worked = await refresh_batch(factory, kinds=kinds, **claim_filters)
-        except asyncio.CancelledError:
-            raise
-        except Exception as error:
-            logger.warning("read_projection.poll_failed error=%s", type(error).__name__)
-            worked = 0
+        worked = 0
+        for _ in range(len(selected_kinds)):
+            if stop.is_set():
+                break
+            kind = selected_kinds[next_kind]
+            next_kind = (next_kind + 1) % len(selected_kinds)
+            try:
+                worked = await refresh_batch(factory, kinds=[kind], **claim_filters)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logger.warning("read_projection.poll_failed kind=%s error=%s", kind, type(error).__name__)
+            if worked:
+                break
         if not worked:
             try:
                 await asyncio.wait_for(stop.wait(), timeout=interval)
