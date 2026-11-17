@@ -52,6 +52,8 @@ async def test_snapshot_capture_applies_to_events_and_periods_without_mutating_c
             db.add_all([event, no_period, GameEventSnapshot(version="3.8.0", download_id="capture-38", complete=True)])
             await db.flush()
             event_id, no_period_id = event.id, no_period.id
+            await db.execute(text("INSERT INTO ops.read_projection_scope(kind,snapshot_key) "
+                                  "VALUES ('game_event','3.8.0')"))
             db.add_all([
                 GameEventSnapshotMember(version="3.8.0", event_id=event_id, client_capture=old),
                 GameEventSnapshotMember(version="3.8.0", event_id=no_period_id, client_capture=old),

@@ -213,7 +213,8 @@ Readers preserve the selected capture and every actual period. A catalog-only
 `client:<version>` record is presentation metadata, not a period: its public
 `occurrence_id` is null. Manual periods retain their IDs even when both endpoints
 are unknown, including manually edited former catalog records. Snapshot member
-writes invalidate both current and exact-version projections. Rebuild projections
+writes invalidate current and already registered exact-version projections. Register
+the initial version scope with `mark_dirty` after backfill. Rebuild projections
 incrementally and verify list, calendar and detail parity. Rolling back application code is
 compatible with the additive column; dropping it would discard captures written
 since deployment and requires a backup or export first.
