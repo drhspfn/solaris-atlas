@@ -56,12 +56,15 @@ const monthFormat = new Intl.DateTimeFormat("en", {
 export function EventsPage({
   initialData,
   initialEventIds = [],
+  versions = [],
 }: {
   initialData?: EventsResponse | null;
   initialEventIds?: number[];
+  versions?: string[];
 }) {
   const display = usePlayerDisplay();
   const [server, setServer] = useState<Server>("europe");
+  const [version, setVersion] = useState("");
   const [kind, setKind] = useState<EventFilter>("all");
   const [events, setEvents] = useState(initialData?.events ?? []);
   const [selected, setSelected] = useState<GameEvent | null>(null);
@@ -90,7 +93,7 @@ export function EventsPage({
     return () => clearInterval(timer);
   }, []);
   useEffect(() => {
-    if (initialData && server === "europe" && retry === 0) {
+    if (initialData && server === "europe" && !version && retry === 0) {
       setEvents(initialData.events);
       setLoading(false);
       setError("");
@@ -100,7 +103,8 @@ export function EventsPage({
     setLoading(true);
     setError("");
     setSelected(null);
-    void api<EventsResponse>(`/events?server=${server}&summary=true`, {
+    setEvents([]);
+    void api<EventsResponse>(`/events?server=${server}&summary=true${version ? `&version=${encodeURIComponent(version)}` : ""}`, {
       signal: controller.signal,
     })
       .then((data) => {
@@ -119,7 +123,7 @@ export function EventsPage({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [server, initialData, retry]);
+  }, [server, version, initialData, retry]);
   useEffect(() => {
     setCatalogLimit(24);
   }, [search, kind, chosen]);
@@ -242,6 +246,18 @@ export function EventsPage({
               value,
               label,
             }))}
+          />
+        </div>
+        <div className="events-filter">
+          <span>Game version</span>
+          <Select
+            label="Game version"
+            value={version}
+            onChange={(value) => { setVersion(value); setChosen([]); }}
+            options={[
+              { value: "", label: "All versions" },
+              ...versions.map((value) => ({ value, label: `v${value}` })),
+            ]}
           />
         </div>
         <div className="events-filter">

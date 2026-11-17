@@ -69,11 +69,12 @@ test('SSR requests summary and resolves slug filters without a detail request', 
   const requests = [];
   const { default: Page } = load('../src/app/events/page.tsx', {
     'next/server': { connection: async () => {} },
-    '@/api/serverApi': { serverApi: async (url) => { requests.push(url); return { events: [{ ...summary, slug: '7-event' }] }; } },
+    '@/api/serverApi': { serverApi: async (url) => { requests.push(url); return url.endsWith('/snapshots') ? { versions: ['3.8.0'] } : { events: [{ ...summary, slug: '7-event' }] }; } },
     '@/components/events/EventsClient': { EventsPage: () => null },
   });
   const tree = await Page({ searchParams: Promise.resolve({ event: '7-event' }) });
-  assert.deepEqual(requests, ['/events?server=europe&summary=true']);
+  assert.deepEqual(requests, ['/events?server=europe&summary=true', '/events/snapshots']);
+  assert.equal(tree.props.versions.join(','), '3.8.0');
   assert.equal(tree.props.initialEventIds.join(','), '7');
   assert.equal(tree.props.initialData.events.length, 1);
 });

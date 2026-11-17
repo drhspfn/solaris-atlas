@@ -136,6 +136,10 @@ def projection_request(scope: Scope, settings: Settings) -> bool:
         }.get(root)
     if root == "events":
         snapshot = query.get("version") if len(parts) == 1 else None
+        # Historical event membership is read from source until its projections
+        # are rebuilt with snapshot-aware payloads and invalidation.
+        if snapshot:
+            return False
     elif root in {"locations", "notices"}:
         snapshot = None
     if root == "notices":

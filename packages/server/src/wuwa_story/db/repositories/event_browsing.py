@@ -7,7 +7,7 @@ from sqlalchemy import and_, case, cast, func, or_, select, tuple_
 from sqlalchemy.dialects.postgresql import JSONB, JSONPATH
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
+from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence, GameEventSnapshotMember
 from wuwa_story.db.models.graph import Node
 from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
@@ -45,10 +45,9 @@ async def read_event_runs(
     if kind:
         statement = statement.where(GameEvent.event_kind == kind)
     if version:
-        statement = statement.where(
-            (GameEventOccurrence.game_version == version)
-            | (GameEventOccurrence.game_version.is_(None))
-        )
+        statement = statement.where(GameEvent.id.in_(
+            select(GameEventSnapshotMember.event_id).where(GameEventSnapshotMember.version == version)
+        ))
     if event_id is not None:
         statement = statement.where(GameEvent.id == event_id)
         statement = statement.where(
@@ -77,7 +76,7 @@ async def read_event_runs(
         ]
     else:
         rows = list((await session.execute(statement)).all())
-    if version is None and event_id is None:
+    if event_id is None:
         placeholders = {
             occurrence.id for _, occurrence in rows
             if occurrence and occurrence.source_occurrence_id.startswith("client:")

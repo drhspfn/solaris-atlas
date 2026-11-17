@@ -3,7 +3,10 @@
 from sqlalchemy import delete, select, text
 
 from wuwa_story.db.models.game_events import (
-    GameEvent, GameEventOccurrence, GameEventSnapshot, GameEventSnapshotMember,
+    GameEvent,
+    GameEventOccurrence,
+    GameEventSnapshot,
+    GameEventSnapshotMember,
 )
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE, SERVER_KEYS, SOURCE
 

@@ -4,7 +4,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from wuwa_story.db.models.game_events import (
-    GameEvent, GameEventOccurrence, GameEventSnapshot, GameEventSnapshotMember,
+    GameEvent,
+    GameEventOccurrence,
+    GameEventSnapshot,
+    GameEventSnapshotMember,
 )
 from wuwa_story.ingestion.client_events import store_client_events
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE, SOURCE

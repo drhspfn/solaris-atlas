@@ -63,6 +63,22 @@ have separate task diagnostics. They are not described as unpublished future art
 
 ## Dates and version meaning
 
+The calendar defaults to all known events. `GET /events/snapshots` lists client
+asset versions with a complete imported catalog; `GET /events?version=3.8.0`
+selects membership in that exact catalog and retains the known schedule history
+of its members. A two-part version is accepted only when exactly one complete
+snapshot matches; an ambiguous version returns 409 and an unavailable snapshot
+returns 404. Versioned event lists use source reads, including when historical
+read projections are enabled.
+
+Migration 0035 creates empty snapshot tables; it does not infer old catalog
+membership from schedule versions or mutable presentation data. Historical
+recovery requires the original retained client catalog and a membership-only
+backfill; the normal import also changes current event presentation and should
+not be used blindly for older clients. An import with unresolved event localization
+does not publish a complete snapshot. Media package errors alone do not affect
+catalog membership. Snapshot membership is replaced atomically on reimport.
+
 The client includes past, current, future and hidden configuration rows. Presence
 in a 3.7 client is not proof that an event is running in 3.7. Opening windows and
 limit-to-permanent phase changes are supplied by the game server. Preserve known
