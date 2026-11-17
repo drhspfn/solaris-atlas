@@ -263,3 +263,31 @@ async def test_shared_state_is_projected_only_as_co_presence_with_both_line_sour
     assert "source_record.release_id = 12" in query
     assert "edge_evidence.release_id = 12" in query
     assert "exact_join" in query
+
+
+@pytest.mark.asyncio
+async def test_shared_state_sorts_owner_once_and_keeps_first_seen_unique_evidence(context, monkeypatch):
+    import builtins
+
+    owner_sorts = []
+
+    def counted_sorted(values, *args, **kwargs):
+        if isinstance(values, set) and values == {101, 102}:
+            owner_sorts.append(1)
+        return builtins.sorted(values, *args, **kwargs)
+
+    monkeypatch.setattr(relations, "sorted", counted_sorted, raising=False)
+    context.session.execute.side_effect = [
+        [], [(4, 20)], [(101, 4, 9, 33), (102, 4, 9, 34)], [(88, 9)],
+        [(16, 9, 202, 44, 30), (16, 9, 203, None, 31),
+         (16, 9, 202, 44, 31), (16, 9, 203, None, 30)],
+    ]
+    rows = await builders.build_relations(context.session, "character", 7)
+    fact = next(row for row in rows if row["relation_type"] == "co_present_in_flow_state")["evidence"]["source_facts"][0]
+    assert fact["owner_dialogue_node_ids"] == [101, 102]
+    assert fact["other_dialogue_node_ids"] == [202, 203]
+    assert fact["other_source_record_ids"] == [44, None]
+    assert fact["other_crosswalk_edge_ids"] == [30, 31]
+    # One sort for the quest relation and one for the shared-state fact,
+    # independent of the number of joined co-presence rows.
+    assert len(owner_sorts) == 2
