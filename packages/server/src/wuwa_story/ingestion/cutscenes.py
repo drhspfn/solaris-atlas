@@ -126,6 +126,7 @@ class FrameAudioInput(StrictModel):
     rover: Literal["male", "female"] | None = None
     start_seconds: float = Field(ge=0)
     end_seconds: float | None = Field(default=None, gt=0)
+    source_offset_seconds: float = Field(default=0, ge=0, allow_inf_nan=False, strict=True)
     reference: str = Field(pattern=r"^/Game/Aki/WwiseAudio/Events/")
     source: dict = Field(default_factory=dict)
     mode: Literal["Global", "MusicSubtitle"]
@@ -139,6 +140,13 @@ class FrameAudioInput(StrictModel):
         if self.end_seconds is not None and self.end_seconds <= self.start_seconds:
             raise ValueError("Frame audio end must follow its source start")
         return self
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_identity(self, handler):
+        value = handler(self)
+        if self.source_offset_seconds == 0:
+            value.pop('source_offset_seconds', None)
+        return value
 
 
 class MusicContext(StrictModel):

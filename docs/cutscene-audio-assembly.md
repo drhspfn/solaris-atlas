@@ -98,6 +98,15 @@ These contexts remain unresolved and are not rendered as movie-clock audio.
 Unknown intervening actions, invalid waits and multiple prior posts do not
 produce an inferred offset or an arbitrary event selection.
 
+Frame-audio recipes can explicitly provide `source_offset_seconds`, a finite,
+nonnegative offset into the rendered event. Assembly trims that much from the
+source before placing the remaining audio at `start_seconds` on the movie
+clock; `end_seconds` still refers to the movie clock. The same projection is
+used for the fallback video and the independent role stems. The default zero
+is omitted from serialized recipes, preserving existing recipe identities.
+The offset is not inferred from `PlayEffect2` wait sums; event rendering and
+all existing native routing and selection limitations still apply.
+
 For the inspected 3.8.0 source, entity 185750044 posts
 `play_vo_level_2_6_younuo_fly_01` before `Fly_M0294` and `Fly_M0312`;
 the authored wait sums are 11.3 and 29.8 seconds respectively. The 3.8.0

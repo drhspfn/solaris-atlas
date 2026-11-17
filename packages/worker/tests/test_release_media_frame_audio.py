@@ -49,6 +49,20 @@ async def test_conflicting_actual_complete_contexts_are_not_arbitrarily_selected
 
 
 @pytest.mark.asyncio
+async def test_different_source_offsets_are_distinct_contexts(tmp_path, monkeypatch):
+    first, second = frame_binding(), frame_binding()
+    second['events'][0]['source_offset_seconds'] = 3
+    monkeypatch.setattr(cutscene_frame_catalog, 'catalog_movie_frame_bindings', lambda *_: [first, second])
+    native = AsyncMock()
+    monkeypatch.setattr(cutscene_frame_audio, 'event_soundtracks', native)
+    inputs, report = await release_media.frame_audio_inputs(tmp_path, tmp_path, tmp_path / 'video.db',
+                                                           'M0374', tmp_path / 'fmodel', tmp_path)
+    assert not inputs
+    assert report['diagnostics'][-1]['code'] == 'alternative_movie_audio_contexts_require_selection'
+    native.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_exact_launcher_without_events_is_not_missing_audio(tmp_path, monkeypatch):
     binding = frame_binding()
     binding['events'] = []
