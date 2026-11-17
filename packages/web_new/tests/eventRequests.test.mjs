@@ -79,6 +79,72 @@ test('SSR requests summary and resolves slug filters without a detail request', 
   assert.equal(tree.props.initialData.events.length, 1);
 });
 
+test('catalog shows one card and keeps independent undated periods selectable in its history', () => {
+  const now = Date.now();
+  const day = 86_400_000;
+  const base = { ...summary, detail_url: undefined, source_id: 'activity:7',
+    description: null, game_version: null, catalog_version: '3.8.0',
+    banner_path: null, source_url: '', rewards: null, season: null };
+  const active = { ...base, occurrence_id: 1,
+    starts_at: new Date(now - day).toISOString(), ends_at: new Date(now + day).toISOString() };
+  const unknown = [2, 3].map((occurrence_id) => ({ ...base, occurrence_id,
+    starts_at: null, ends_at: new Date(now + 2 * day).toISOString() }));
+  const historical = Array.from({ length: 1900 }, (_, i) => ({ ...base, occurrence_id: i + 4,
+    starts_at: new Date(Date.UTC(1900, 0, i + 1)).toISOString(),
+    ends_at: new Date(Date.UTC(1900, 0, i + 2)).toISOString() }));
+  const events = [...unknown, ...historical, active];
+  let stateIndex = 0;
+  const states = [];
+  const hooks = {
+    useState(value) {
+      const i = stateIndex++;
+      if (!(i in states)) states[i] = value;
+      return [states[i], (next) => { states[i] = typeof next === 'function' ? next(states[i]) : next; }];
+    },
+    useRef: (value) => ({ current: value }),
+    useMemo: (fn) => fn(),
+    useEffect() {},
+  };
+  const noOp = () => null;
+  const { EventsPage } = load('../src/components/events/EventsClient.tsx', {
+    react: hooks,
+    '@/styles/events.css': {},
+    'lucide-react': { ChevronLeft: noOp, ChevronRight: noOp, X: noOp },
+    '@/api/client': { api: noOp },
+    '@/components/dialogue/PlayerText': { PlayerText: noOp },
+    '@/data/gameText': { gameTextPlainText: (value) => value },
+    '@/hooks/usePlayerDisplay': { usePlayerDisplay: () => ({}) },
+    '@/components/ui/Select': { Select: noOp },
+    '@/components/ui/Feedback': { ErrorPanel: noOp },
+    '@/components/ui/Skeleton': { Skeleton: noOp, SkeletonGroup: noOp },
+    './EventDetails': { EventDetails: noOp },
+    './EventArtwork': { EventArtwork: noOp },
+    './EventArchiveHeader': { EventArchiveHeader: noOp },
+    './calendar': calendar,
+  });
+  const render = () => { stateIndex = 0; return EventsPage({ initialData: { events, source_url: '' } }); };
+  const grids = nodes(render()).filter((node) => node.props?.className === 'events-catalog-grid');
+  const cards = grids.flatMap((grid) => nodes(grid).filter((node) => node.type === 'button'));
+  assert.equal(cards.length, 1);
+  assert(nodes(cards[0]).some((node) => node.type === 'small' &&
+    [node.props.children].flat(Infinity).includes(' · 1903 periods')));
+  cards[0].props.onClick({ currentTarget: {} });
+  const details = nodes(render()).find((node) => node.type === noOp && node.props?.history);
+  assert.equal(details.props.event.occurrence_id, active.occurrence_id, 'card opens the active period');
+  assert.equal(details.props.history.length, 1903);
+
+  const detail = harness();
+  detail.props.event = details.props.event;
+  detail.props.history = details.props.history;
+  const history = nodes(detail.render()).find((node) => node.props?.className === 'events-history');
+  const undatedButtons = nodes(history).filter((node) => node.type === 'button' &&
+    typeof node.props.children === 'string' && node.props.children.startsWith('Dates not recorded'));
+  assert.equal(undatedButtons.length, 2);
+  undatedButtons.forEach((button) => button.props.onClick());
+  assert.deepEqual(detail.selections.map((event) => event.occurrence_id), [2, 3]);
+  detail.close();
+});
+
 test('selection loads full gallery, retains image selection and cancels on close', async () => {
   const h = harness();
   assert(nodes(h.render()).some((n) => n.type?.name === 'EventDetailsSkeleton'));
