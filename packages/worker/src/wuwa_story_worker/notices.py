@@ -24,7 +24,9 @@ async def refresh_recurring_schedules(session):
         result = await import_recurring_schedules(session, apply=True)
         await session.commit()
         return {"source": result["source"], "revision": result["revision"],
-                "updated": len(result["occurrences"])}, None
+                "updated": len(result["occurrences"]),
+                "calculated": len(result.get("calculated_cycles", [])),
+                "superseded": len(result.get("superseded_cycle_ids", []))}, None
     except Exception as error:
         await session.rollback()
         return None, {"expected": "recurring_schedule", "status": "recurring_schedule_failed",

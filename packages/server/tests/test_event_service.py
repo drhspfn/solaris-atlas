@@ -297,7 +297,12 @@ def test_single_published_prefab_background_does_not_prove_event_preview(source,
 
 
 @pytest.mark.asyncio
-async def test_start_estimate_survives_source_and_projected_calendar_and_detail(event, repository, service, monkeypatch):
+@pytest.mark.parametrize("estimate", [
+    {"basis": "previous_version_banner_end", "occurrence_id": 99, "version": "3.7", "server": "europe"},
+    {"basis": "declared_recurrence", "occurrence_id": 2427, "version": None,
+     "server": "europe", "weeks": 4, "end_is_estimated": True},
+])
+async def test_start_estimate_survives_source_and_projected_calendar_and_detail(event, repository, service, monkeypatch, estimate):
     from datetime import UTC, datetime
     from types import SimpleNamespace
 
@@ -310,8 +315,6 @@ async def test_start_estimate_survives_source_and_projected_calendar_and_detail(
     from wuwa_story.read_models.readers import events as projected
     from wuwa_story.read_models.source_sections import _calendar_payload
 
-    estimate = {"basis": "previous_version_banner_end",
-                "occurrence_id": 99, "version": "3.7", "server": "europe"}
     run = EventOccurrence(id=42, game_version="3.8", starts_at=datetime(2026, 11, 11, tzinfo=UTC),
                           ends_at=None, season=None, banner_path=None, source_data={"start_estimate": estimate})
     repository.runs.return_value = [EventRun(event, run)]
