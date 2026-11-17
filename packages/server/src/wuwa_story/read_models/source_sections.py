@@ -31,6 +31,7 @@ from wuwa_story.db.models.raw import SourceRecord
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.db.repositories import cutscenes as cutscene_repository
 from wuwa_story.db.repositories.event_browsing import _PREVIEW_ROLES
+from wuwa_story.events.catalog_duplicates import client_signature
 from wuwa_story.events.composition import browse_events
 from wuwa_story.ingestion.character_artwork import character_artwork_scope
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
@@ -374,13 +375,23 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
                 GameEventOccurrence.id, GameEventOccurrence.server, GameEventOccurrence.game_version,
                 GameEventOccurrence.source_occurrence_id, GameEventOccurrence.starts_at,
                 GameEventOccurrence.ends_at,
+                func.jsonb_build_object(
+                    "client", func.jsonb_build_object(
+                        "table", GameEventOccurrence.source_data["client"]["table"],
+                        "title_key", GameEventOccurrence.source_data["client"]["title_key"],
+                        "description_key", GameEventOccurrence.source_data["client"]["description_key"],
+                        "featured_ids", GameEventOccurrence.source_data["client"]["featured_ids"],
+                        "locales", func.jsonb_build_object(
+                            "en", GameEventOccurrence.source_data["client"]["locales"]["en"]),
+                    ),
+                ),
             )
             .where(GameEventOccurrence.event_id == entity_id)
             .order_by(GameEventOccurrence.starts_at.desc().nullslast(), GameEventOccurrence.id)
         )
     )
     selected, unversioned = [], []
-    for occurrence_id, server, version, source_occurrence_id, starts_at, ends_at in runs:
+    for occurrence_id, server, version, source_occurrence_id, starts_at, ends_at, data in runs:
         run_version = _event_version(version)
         if snapshot_key != "current" and run_version not in (selected_version, None):
             continue
@@ -402,7 +413,8 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
             raise ValueError("Event occurrence could not be projected unambiguously")
         run = {**matching[0], "server": server, "game_version": version,
                "_catalog_placeholder": source_occurrence_id.startswith("client:")
-               and starts_at is None and ends_at is None}
+               and starts_at is None and ends_at is None,
+               "_client_signature": client_signature(data)}
         if snapshot_key != "current" and run_version is None:
             unversioned.append(run)
         else:
