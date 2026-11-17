@@ -3,8 +3,8 @@
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0035_event_snapshots"
-down_revision = "0034_import_performance_indexes"
+revision = "0036_event_snapshots"
+down_revision = "0035_sequence_video_fallback"
 branch_labels = None
 depends_on = None
 
