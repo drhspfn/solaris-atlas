@@ -638,6 +638,7 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
     },
     '@/components/story/encounterTransitions': { encounterFlows },
     '@/components/story/sequenceVideo': loadStory('sequenceVideo'),
+    '@/components/story/SequenceVideoAdmin': { SequenceVideoAdmin: () => null },
     '@/components/story/cutsceneAnchor': loadStory('cutsceneAnchor'),
 
     '@/components/story/questReading': loadStory('questReading'),

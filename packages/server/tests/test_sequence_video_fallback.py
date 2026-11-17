@@ -1,6 +1,8 @@
+import importlib.util
 from copy import deepcopy
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -13,6 +15,7 @@ from wuwa_story.auth.constants import UserRole
 from wuwa_story.auth.dependencies import get_auth_context
 from wuwa_story.auth.security import csrf_token
 from wuwa_story.config.settings import get_settings
+from wuwa_story.db.models.story import SequenceVideoFallback
 from wuwa_story.db.session import get_session
 from wuwa_story.story.sequence_video import attach_sequence_videos, occurrence_id, youtube_id
 
@@ -84,6 +87,24 @@ def test_projection_cache_tracks_fallback_table():
     assert "ops.sequence_video_fallback" in PROJECTION_TABLES
 
 
+def test_migration_tracks_cache_revision_and_removes_it_on_downgrade(monkeypatch):
+    path = Path(__file__).resolve().parents[1] / "migrations/versions/0035_sequence_video_fallback.py"
+    spec = importlib.util.spec_from_file_location("sequence_video_migration", path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    operations = SimpleNamespace(create_table=Mock(), execute=Mock(), drop_table=Mock())
+    monkeypatch.setattr(migration, "op", operations)
+    migration.upgrade()
+    assert operations.create_table.call_args.kwargs["schema"] == SequenceVideoFallback.__table__.schema
+    statements = [call.args[0] for call in operations.execute.call_args_list]
+    assert any("INSERT INTO ops.public_cache_revision" in sql for sql in statements)
+    assert any("CREATE TRIGGER public_cache_changed" in sql and "INSERT OR UPDATE OR DELETE OR TRUNCATE" in sql
+               for sql in statements)
+    migration.downgrade()
+    operations.drop_table.assert_called_once_with("sequence_video_fallback", schema="ops")
+    assert "DELETE FROM ops.public_cache_revision" in operations.execute.call_args.args[0]
+
+
 def test_admin_api_requires_admin_and_csrf_and_valid_occurrence(monkeypatch):
     app = FastAPI()
     app.include_router(media.router)
@@ -134,3 +155,8 @@ async def test_projected_media_overlays_current_video(monkeypatch):
     result = await media.quest_media("1", "3.7", "en", session)
     assert result["events"][0]["youtube_fallback"]["video_id"] == "abcdefghijk"
     assert "youtube_fallback" not in projected["events"][0]
+    projected["events"][0]["youtube_fallback"] = {"video_id": "stale"}
+    session.scalars.return_value = []
+    result = await media.quest_media("1", "3.7", "en", session)
+    assert "youtube_fallback" not in result["events"][0]
+    assert projected["events"][0]["youtube_fallback"]["video_id"] == "stale"

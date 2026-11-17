@@ -35,7 +35,8 @@ import {
   runtimeBlockSlots,
 } from "@/components/story/QuestRuntimeBlock";
 import { encounterFlows } from "@/components/story/encounterTransitions";
-import { encounterSequenceRecordings } from "@/components/story/sequenceVideo";
+import { encounterSequenceRecordings, updateSequenceRecording } from "@/components/story/sequenceVideo";
+import { SequenceVideoAdmin } from "@/components/story/SequenceVideoAdmin";
 import { QuestIllustration } from "@/components/story/QuestIllustration";
 import { QuestIllustratedScene } from "@/components/story/QuestIllustratedScene";
 import { QuestFork } from "@/components/story/QuestFork";
@@ -1185,6 +1186,9 @@ export function QuestPageClient({
           </div>
         </div>
       </section>
+      <SequenceVideoAdmin questKey={questKey} manifest={loading ? null : media} onChange={(occurrence, version, recording) => {
+        setMedia((previous) => updateSequenceRecording(previous, occurrence, version, recording));
+      }} />
       <QuestClassification value={classification} />
       {profile?.item_requirements?.length > 0 && (
         <section className="subsection" aria-label="Item requirements">

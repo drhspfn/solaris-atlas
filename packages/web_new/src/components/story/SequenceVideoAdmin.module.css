@@ -1,0 +1,25 @@
+.panel {
+  margin-block: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+.panel summary { cursor: pointer; }
+.panel p, .source { overflow-wrap: anywhere; }
+.form { display: grid; gap: .5rem; padding-block: 1rem; border-top: 1px solid var(--border-default); }
+.form p { margin: 0; }
+.source { color: var(--text-secondary); }
+.form input {
+  width: 100%;
+  min-width: 0;
+  padding: .55rem .65rem;
+  color: var(--text-primary);
+  background: var(--surface-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+}
+.form input:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
+.times { display: flex; flex-wrap: wrap; gap: .75rem; }
+.times label { display: grid; gap: .5rem; flex: 1 1 10rem; }
+.actions { display: flex; flex-wrap: wrap; gap: .5rem; }

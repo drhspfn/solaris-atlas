@@ -7,6 +7,11 @@ runtime playthrough.
 
 ## Administrator video fallback for quest sequences
 
+An authenticated administrator can open **Manage scene recordings** on a
+quest page to edit or remove the recording for each distinguishable sequence
+occurrence in the displayed snapshot. Changes update the current reader without
+reloading it.
+
 `GET /quests/{game_quest_id}/media?game_version=3.7.0` returns an
 `occurrence_id` on each unambiguous sequence occurrence. Use its exact quest,
 snapshot and identifier to save or replace a recording:

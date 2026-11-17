@@ -1,4 +1,4 @@
-import type { QuestMediaEvent } from "./QuestMediaReferences";
+import type { QuestMediaEvent, QuestMediaManifest } from "./QuestMediaReferences";
 import type { EncounterCinematic, EncounterFlow } from "./encounterTransitions";
 
 export function sequenceVideoUrls(video: QuestMediaEvent["youtube_fallback"]) {
@@ -12,6 +12,16 @@ export function sequenceVideoUrls(video: QuestMediaEvent["youtube_fallback"]) {
     embed: `https://www.youtube-nocookie.com/embed/${video.video_id}?${query}`,
     watch: `https://www.youtube.com/watch?v=${video.video_id}&t=${video.start_seconds}s`,
   };
+}
+
+export function updateSequenceRecording(
+  manifest: QuestMediaManifest | null, occurrence: string, version: string,
+  recording: QuestMediaEvent["youtube_fallback"] | null,
+) {
+  if (!manifest || manifest.game_version !== version) return manifest;
+  return { ...manifest, events: manifest.events.map((event) =>
+    event.occurrence_id === occurrence
+      ? { ...event, youtube_fallback: recording ?? undefined } : event) };
 }
 
 export function encounterSequenceRecordings(
