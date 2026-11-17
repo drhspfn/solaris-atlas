@@ -10,6 +10,8 @@ from wuwa_story.events.domain import (
     EventRun,
 )
 
+EVENT_RUN_BATCH_SIZE = 16
+
 
 class EventRepository(Protocol):
     async def spine(self, captures: set[tuple[str, str]]) -> list[EventMedia]: ...
@@ -28,6 +30,7 @@ class EventRepository(Protocol):
         summary: bool,
         event_id: int | None,
         occurrence_id: int | None,
+        occurrence_ids: list[int] | None = None,
     ) -> list[EventRun]: ...
 
     async def announcements(

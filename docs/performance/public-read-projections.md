@@ -92,6 +92,37 @@ Projected neighbor responses derive summaries and evidence counts from the reque
 
 ## Event refresh media reuse
 
+### Bounded event period batches (2026-11-17)
+
+The source builder renders at most 16 exact occurrence IDs per server at a time.
+It shares one event header across all servers for that entity/snapshot build;
+period queries select occurrence columns without repeating the full event header.
+Selected snapshots retain the existing capture-enrichment SQL. Notices, rewards
+and media are resolved together per chunk, with media URL matching still scoped
+to each period's own paths. Public single-period and catalog calls keep their
+existing defaults.
+
+An isolated PostgreSQL 17 fixture with 51 genuine periods (17 per server), a
+64 KiB header body and 32 KiB client captures measured:
+
+| Presentation | Individual SELECTs / full headers | Batched SELECTs / full headers | Individual / batched elapsed |
+| --- | ---: | ---: | ---: |
+| Current | 156 / 52 | 21 / 1 | 0.423 / 0.105 s |
+| Selected 3.8.0 capture | 157 / 52 | 22 / 1 | 0.572 / 0.134 s |
+
+Complete per-period and undated payloads matched, including canonical IDs,
+historical suffix media, pinned notice revisions, manual periods dated before
+the game existed, and unknown starts. These synthetic loopback measurements
+are not production queue throughput or endpoint latency claims. Reproduce with
+`test_event_projection_batches_postgres.py` and an isolated
+`WUWA_TEST_DATABASE_URL`; no production writes or whole-catalog benchmark is needed.
+
+Temporary source memory is one shared header plus at most 16 period captures and
+their chunk's presentation dependencies. The required final payload still grows
+with the number of periods/gallery entries; the limit is a row bound, not a byte
+ceiling. Header/media caches are discarded on entity/locale build exit. There is
+no cross-entity cache or truncation of periods, capture fields, or full galleries.
+
 An isolated read-only production comparison built three recorded runs of event 1574 in the same repeatable-read transaction. Complete output matched (1,472,837 bytes, SHA-256 `b264a907d509db30c4485e781e0fd15a68f19144b1b0dbc39cf860cd4d42b408`). Original assembly took 18.925 s across 12 queries; the source-build-only media cache took 5.243 s across 10 queries. Its successive runs took 4.104, 0.685 and 0.150 s. This is an observed per-event rebuild improvement, not a public-calendar latency claim.
 
 Exact and suffix lookups, including negative results, are reused only within one entity/locale build and separated by bucket/path. Capture-specific fallback is still evaluated for every run. Scope exit clears the cache, and ordinary public reads retain their existing uncached repository behavior. A separate candidate that narrowed full-detail JSON transfer was not merged because timings did not demonstrate a consistent improvement.
