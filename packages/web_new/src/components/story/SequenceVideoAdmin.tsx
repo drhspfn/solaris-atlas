@@ -34,7 +34,7 @@ export function SequenceVideoAdmin({ event }: { event: QuestMediaEvent }) {
       {open && <dialog ref={dialog} className={styles.dialog} aria-labelledby={titleId}
         onCancel={(e) => { e.preventDefault(); setOpen(false); }}>
         <header className={styles.header}><h2 id={titleId}>YouTube recording</h2>
-          <Button variant="ghost" size="icon" aria-label="Close recording editor" onClick={() => setOpen(false)}><X size={20} /></Button>
+          <Button variant="ghost" size="icon" icon={<X size={20} />} aria-label="Close recording editor" onClick={() => setOpen(false)} />
         </header>
         <p className={styles.hint}>Add a recording for this scene and choose the time range.</p>
           <SequenceVideoForm

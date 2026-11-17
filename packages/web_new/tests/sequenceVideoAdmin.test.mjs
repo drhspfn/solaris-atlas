@@ -91,6 +91,8 @@ test("recording editor opens for the selected scene and closes on Escape", () =>
   tree = h.admin();
   const dialog = all(tree).find((node) => node.type === "dialog");
   assert.ok(dialog);
+  const close = all(dialog).find((node) => node.props["aria-label"] === "Close recording editor");
+  assert.ok(close.props.icon, "the icon-only Button receives its visible icon");
   let prevented = false;
   dialog.props.onCancel({ preventDefault() { prevented = true; } });
   assert.ok(prevented);
