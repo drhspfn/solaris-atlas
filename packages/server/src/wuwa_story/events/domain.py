@@ -207,10 +207,10 @@ def _client_preview(
             if url := image_url(asset["path"]):
                 return url
     for role in (
-        "tab_selected",
-        "tab",
         "featured_portrait",
         "featured_weapon",
+        "tab_selected",
+        "tab",
         "featured_card",
     ):
         for asset in artwork:
