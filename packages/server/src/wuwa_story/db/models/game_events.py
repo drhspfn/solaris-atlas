@@ -92,3 +92,4 @@ class GameEventSnapshotMember(Base):
     event_id: Mapped[int] = mapped_column(
         ForeignKey("core.game_event.id", ondelete="CASCADE"), primary_key=True
     )
+    client_capture: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
