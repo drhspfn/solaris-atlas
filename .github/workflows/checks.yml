@@ -136,6 +136,7 @@ jobs:
                                            password="postgres", database="visual_test")
               try:
                   await conn.execute("CREATE DATABASE quest_reader_ci_verification")
+                  await conn.execute("CREATE DATABASE visual_cleanup_ci_verification")
               finally:
                   await conn.close()
 
@@ -161,10 +162,11 @@ jobs:
         working-directory: packages/server
         env:
           WUWA_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/visual_test
+          WUWA_DEDICATED_EMPTY_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/visual_cleanup_ci_verification
         run: >-
           uv run pytest tests/test_cutscene_analysis_plan.py tests/test_cutscene_analysis_ui.py
           tests/test_scene_analysis_reader.py tests/test_visual_enqueue_lock.py
-          tests/test_video_analysis_roles_and_limits.py -q
+          tests/test_video_analysis_roles_and_limits.py tests/test_visual_cleanup_shared_pg.py -q
       - name: Validate event catalog and projection regressions
         working-directory: packages/server
         run: >-
