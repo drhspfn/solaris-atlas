@@ -45,6 +45,15 @@ class WorkerConfigurationTests(unittest.TestCase):
         self.assertEqual(settings["compose.env"]["WUWA_VIDEO_CPUS"], "2")
         self.assertEqual(settings["compose.env"]["WUWA_IMAGE_REPLICAS"], "1")
 
+    def test_projection_budget_covers_the_measured_event_catalog(self):
+        settings = self.settings()["shared.env"]
+        # The 666-event scope was rejected at 2 GiB before any keyset pages
+        # were queued, leaving published artwork and metadata stale.
+        self.assertGreater(int(settings["READ_PROJECTION_MAX_BYTES"]), 2_246_074_344)
+        self.assertEqual(int(settings["READ_PROJECTION_MAX_BYTES"]), 4 * 1024**3)
+        self.assertEqual(settings["READ_PROJECTION_MAX_ROWS"], "250000")
+        self.assertGreaterEqual(int(settings["READ_PROJECTION_MIN_FREE_GIB"]), 20)
+
     def test_measured_replica_overrides_are_supported_without_assuming_reserved_ram(self):
         settings = self.settings()
         settings["compose.env"].update({"WUWA_IMAGE_REPLICAS": "2", "WUWA_AUDIO_REPLICAS": "2"})

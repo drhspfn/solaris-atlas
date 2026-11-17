@@ -154,6 +154,16 @@ async def test_activity_background_precedes_tab_icon(event, repository, service,
     assert result["events"][0]["preview_url"] == "https://cdn/background.png"
 
 
+def test_preview_prefers_full_subject_art_over_navigation_tabs():
+    from wuwa_story.events.domain import _client_preview
+
+    art = [{"path": "/Game/Tab", "role": "tab_selected"},
+           {"path": "/Game/Portrait", "role": "featured_portrait"}]
+    assert _client_preview(art, lambda path: path) == "/Game/Portrait"
+    assert _client_preview(art, lambda path: path if path == "/Game/Tab" else None) == "/Game/Tab"
+    assert _client_preview([*art, {"path": "/Game/Banner", "role": "content"}], lambda path: path) == "/Game/Banner"
+
+
 def test_preview_preserves_content_and_falls_back_for_missing_or_placeholder_background():
     from wuwa_story.events.domain import _client_preview
 
