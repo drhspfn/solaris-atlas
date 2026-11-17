@@ -31,10 +31,13 @@ export default async function EventsPage({
   const params = await searchParams;
   const values = Array.isArray(params.event) ? params.event : [params.event ?? ''];
   const keys = values.flatMap((value) => value.split(','));
-  const initialData = await serverApi<any>('/events?server=europe&summary=true', { revalidate: 0 });
+  const [initialData, snapshots] = await Promise.all([
+    serverApi<any>('/events?server=europe&summary=true', { revalidate: 0 }),
+    serverApi<{ versions: string[] }>('/events/snapshots', { revalidate: 0 }),
+  ]);
   const ids: number[] = [...new Set<number>((initialData?.events ?? [])
     .filter((event: any) => keys.includes(event.slug) || keys.includes(String(event.id)))
     .map((event: any) => event.id))];
 
-  return <EventsClient key={ids.join(',')} initialData={initialData} initialEventIds={ids} />;
+  return <EventsClient key={ids.join(',')} initialData={initialData} initialEventIds={ids} versions={snapshots?.versions ?? []} />;
 }

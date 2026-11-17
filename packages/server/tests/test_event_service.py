@@ -104,7 +104,8 @@ async def test_undated_calendar_and_detail_keep_public_contract(event, repositor
                 "banner_path": "UI/banner.png",
                 "banner_url": "https://cdn/current.png",
                 "artwork": [
-                    {"path": "UI/banner.png", "role": "content", "url": "https://cdn/current.png"}
+                    {"path": "UI/banner.png", "role": "content",
+                        "url": "https://cdn/current.png"}
                 ],
                 "preview_url": "https://cdn/current.png",
                 "preview_provenance": "game_client",
@@ -120,7 +121,8 @@ async def test_undated_calendar_and_detail_keep_public_contract(event, repositor
         ],
     }
     detail = await service.detail(7, "asia", locale="fr")
-    assert detail == {key: value for key, value in payload.items() if key != "detail_url"}
+    assert detail == {key: value for key,
+                      value in payload.items() if key != "detail_url"}
     repository.runs.assert_awaited_with(
         server="asia",
         kind=None,
@@ -155,13 +157,17 @@ async def test_activity_background_precedes_tab_icon(event, repository, service,
 def test_preview_preserves_content_and_falls_back_for_missing_or_placeholder_background():
     from wuwa_story.events.domain import _client_preview
 
-    background = {"path": "/Game/Background", "role": "background", "table": "Activity"}
+    background = {"path": "/Game/Background",
+                  "role": "background", "table": "Activity"}
     tab = {"path": "/Game/Tab", "role": "tab", "table": "Activity"}
-    content = {"path": "/Game/Content", "role": "content", "table": "GachaViewInfo"}
+    content = {"path": "/Game/Content",
+               "role": "content", "table": "GachaViewInfo"}
+
     def resolve(path):
         return path if path != "/Game/Background" else None
     assert _client_preview([background, tab], resolve) == "/Game/Tab"
-    assert _client_preview([background, tab, content], lambda path: path) == "/Game/Content"
+    assert _client_preview([background, tab, content],
+                           lambda path: path) == "/Game/Content"
     black = {**background, "path": "/Game/T_CommonBlack_UI"}
     assert _client_preview([black, tab], lambda path: path) == "/Game/Tab"
     gacha = {**background, "table": "GachaViewInfo"}
@@ -193,7 +199,8 @@ async def test_verified_prefab_preview_excludes_shared_activity_background(event
     assert payload["banner_url"] is None
 
     # Shared art and a prefab belonging to another activity cannot become a preview.
-    repository.runs.return_value = [EventRun(replace(record, source_id="activity:102000009"), None)]
+    repository.runs.return_value = [
+        EventRun(replace(record, source_id="activity:102000009"), None)]
     payload = (await service.browse("asia", summary=summary))["events"][0]
     assert payload["preview_url"] is None and payload["banner_url"] is None
 
@@ -209,12 +216,15 @@ def test_prefab_preview_requires_exact_prefab_and_available_capture():
     prefab, path = PREFAB_PREVIEWS[source]
     asset = {"role": "prefab_texture", "path": path, "prefab": prefab}
     assert _client_preview([asset], lambda _: None, source) is None
-    assert _client_preview([{**asset, "prefab": "/Game/Other"}], lambda p: p, source) is None
+    assert _client_preview(
+        [{**asset, "prefab": "/Game/Other"}], lambda p: p, source) is None
     assert _client_preview([asset], lambda p: p, "activity:other") is None
     tab = {"role": "tab", "path": "/Game/Tab"}
     for shared in SHARED_ACTIVITY_BACKGROUNDS:
-        background = {"role": "background", "table": "Activity", "path": shared}
-        assert _client_preview([background, tab], lambda p: p, source) == "/Game/Tab"
+        background = {"role": "background",
+                      "table": "Activity", "path": shared}
+        assert _client_preview(
+            [background, tab], lambda p: p, source) == "/Game/Tab"
 
 
 @pytest.mark.parametrize("source,prefab,path", [
@@ -246,7 +256,8 @@ async def test_start_estimate_survives_source_and_projected_calendar_and_detail(
     from wuwa_story.read_models.readers import events as projected
     from wuwa_story.read_models.source_sections import _calendar_payload
 
-    estimate = {"basis": "previous_version_banner_end", "occurrence_id": 99, "version": "3.7", "server": "europe"}
+    estimate = {"basis": "previous_version_banner_end",
+                "occurrence_id": 99, "version": "3.7", "server": "europe"}
     run = EventOccurrence(id=42, game_version="3.8", starts_at=datetime(2026, 11, 11, tzinfo=UTC),
                           ends_at=None, season=None, banner_path=None, source_data={"start_estimate": estimate})
     repository.runs.return_value = [EventRun(event, run)]
@@ -254,9 +265,12 @@ async def test_start_estimate_survives_source_and_projected_calendar_and_detail(
     assert source["start_estimate"] == estimate and source["schedule_status"] == "estimated"
     detail = await service.detail(7, "europe", occurrence_id=42)
     assert detail["start_estimate"] == estimate
-    payload = _calendar_payload(jsonable_encoder({"event": source, "occurrences": [{**source, "server": "europe"}]}))
-    monkeypatch.setattr(projected.entities, "_scope_entries", AsyncMock(return_value=[SimpleNamespace(entity_id=7, payload=payload)]))
-    monkeypatch.setattr(projected.entities, "page_payload", AsyncMock(return_value=payload))
+    payload = _calendar_payload(jsonable_encoder(
+        {"event": source, "occurrences": [{**source, "server": "europe"}]}))
+    monkeypatch.setattr(projected.entities, "_scope_entries", AsyncMock(
+        return_value=[SimpleNamespace(entity_id=7, payload=payload)]))
+    monkeypatch.setattr(projected.entities, "page_payload",
+                        AsyncMock(return_value=payload))
     assert (await projected.events_page(None, "europe", summary=True))["events"][0]["start_estimate"] == estimate
     assert (await projected.event_detail(None, 7, "europe", 42))["start_estimate"] == estimate
     summary_query = select(_summary_source(GameEventOccurrence.source_data, "en")).compile(
@@ -312,8 +326,10 @@ async def test_historical_capture_and_notice_identity_remain_scoped(event, repos
         )
     ]
     repository.notice_snapshots.return_value = [
-        EventNoticeSnapshot(11, "shared", {"banner_url": "https://official/old.png"}),
-        EventNoticeSnapshot(99, "shared", {"banner_url": "https://official/other.png"}),
+        EventNoticeSnapshot(
+            11, "shared", {"banner_url": "https://official/old.png"}),
+        EventNoticeSnapshot(
+            99, "shared", {"banner_url": "https://official/other.png"}),
     ]
     payload = await service.detail(7, "europe", 42, "fr")
     assert payload["title"] == "Old title"
@@ -367,15 +383,21 @@ async def test_http_routes_use_overridden_service_and_map_domain_errors(monkeypa
     app = FastAPI()
     app.include_router(game_events.router)
     app.dependency_overrides[game_events.get_event_service] = lambda: service
-    app.dependency_overrides[game_events.get_session] = lambda: object()
+    session = AsyncMock()
+    session.scalars.return_value = ["3.7.0"]
+    session.get.return_value.complete = True
+    app.dependency_overrides[game_events.get_session] = lambda: session
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         response = await client.get(
             "/events?server=asia&kind=banner&version=3.7&locale=fr&summary=true"
         )
-        assert response.status_code == 200 and response.json() == {"events": []}
+        assert response.status_code == 200 and response.json() == {
+            "events": []}
         missing = await client.get("/events/7/detail?server=america&occurrence_id=42&locale=fr")
-    service.browse.assert_awaited_once_with("asia", "banner", "3.7", "fr", summary=True)
+    service.browse.assert_awaited_once_with(
+        "asia", "banner", "3.7.0", "fr", summary=True)
     service.detail.assert_awaited_once_with(7, "america", 42, "fr")
-    assert missing.status_code == 404 and missing.json() == {"detail": "Event run not found"}
+    assert missing.status_code == 404 and missing.json() == {
+        "detail": "Event run not found"}

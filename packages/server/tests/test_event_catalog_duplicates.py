@@ -40,7 +40,7 @@ async def test_projection_all_versions_filters_only_proven_placeholders(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_source_calendar_filters_only_unfiltered_list():
+async def test_source_calendar_suppresses_matching_placeholders_in_snapshots():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
 
@@ -54,9 +54,7 @@ async def test_source_calendar_filters_only_unfiltered_list():
     session = AsyncMock()
     session.execute.return_value = Mock(all=Mock(return_value=[(event, dated), (event, stub)]))
     assert await read_event_runs(session, server="europe") == [(event, dated)]
-    assert await read_event_runs(session, server="europe", version="3.8") == [
-        (event, dated), (event, stub)
-    ]  # SQL applies the version predicate in production.
+    assert await read_event_runs(session, server="europe", version="3.8") == [(event, dated)]
     dated.source_data = sample_client("Blooms for the Shadow")
     stub.source_data = sample_client("Gifts of Singing Drizzle")
     assert await read_event_runs(session, server="europe") == [(event, dated), (event, stub)]

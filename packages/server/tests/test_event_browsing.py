@@ -17,6 +17,34 @@ from wuwa_story.events import composition as event_composition
 from wuwa_story.events import service as event_service
 
 
+@pytest.mark.asyncio
+async def test_snapshot_routes_only_complete_membership_to_source(monkeypatch):
+    app = FastAPI()
+    app.include_router(game_events.router)
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(complete=True)
+    session.scalars.return_value = ["3.7.1", "3.10.0", "3.8.0"]
+    service = SimpleNamespace(browse=AsyncMock(return_value={"events": []}))
+    app.dependency_overrides[game_events.get_session] = lambda: session
+    app.dependency_overrides[game_events.get_event_service] = lambda: service
+    projection = Mock(side_effect=AssertionError("snapshot must use source"))
+    monkeypatch.setattr(game_events.read_projections, "should_route_to_projection", projection)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        assert (await client.get("/events/snapshots")).json() == {"versions": ["3.10.0", "3.8.0", "3.7.1"]}
+        assert (await client.get("/events?version=3.8.0")).status_code == 200
+        assert service.browse.await_args.args[2] == "3.8.0"
+        session.scalars.return_value = ["3.8.0"]
+        assert (await client.get("/events?version=3.8")).status_code == 200
+        assert service.browse.await_args.args[2] == "3.8.0"
+        session.scalars.return_value = ["3.8.0", "3.8.1"]
+        assert (await client.get("/events?version=3.8")).status_code == 409
+        session.get.return_value = None
+        assert (await client.get("/events?version=3.7.0")).status_code == 404
+        session.get.return_value = SimpleNamespace(complete=False)
+        assert (await client.get("/events?version=3.7.0")).status_code == 404
+    projection.assert_not_called()
+
+
 def event():
     return SimpleNamespace(
         id=7, slug="7-event", source_id="client:7", title="Event", description="Description",
@@ -96,7 +124,8 @@ async def test_summary_projects_json_in_sql_and_preserves_undated_rows_and_filte
     assert "jsonb_path_query_array" in sql
     assert "LEFT OUTER JOIN" in sql
     assert "starts_at DESC NULLS LAST" in sql
-    assert "game_version IS NULL" in sql
+    assert "game_event_snapshot_member" in sql
+    assert "game_version IS NULL" not in sql
     assert {"europe", "banner", "3.7", "ru"} <= set(
         value for value in compiled.params.values() if isinstance(value, str)
     )

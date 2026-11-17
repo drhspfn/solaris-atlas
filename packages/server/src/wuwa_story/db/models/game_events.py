@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     ForeignKey,
     Identity,
@@ -70,3 +71,24 @@ class GameEventOccurrence(Base):
     rewards: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
     season: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     source_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+
+class GameEventSnapshot(Base):
+    __tablename__ = "game_event_snapshot"
+    __table_args__ = {"schema": "core"}
+
+    version: Mapped[str] = mapped_column(String(32), primary_key=True)
+    download_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    complete: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
+class GameEventSnapshotMember(Base):
+    __tablename__ = "game_event_snapshot_member"
+    __table_args__ = {"schema": "core"}
+
+    version: Mapped[str] = mapped_column(
+        ForeignKey("core.game_event_snapshot.version", ondelete="CASCADE"), primary_key=True
+    )
+    event_id: Mapped[int] = mapped_column(
+        ForeignKey("core.game_event.id", ondelete="CASCADE"), primary_key=True
+    )

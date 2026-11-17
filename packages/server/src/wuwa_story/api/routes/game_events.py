@@ -3,10 +3,12 @@
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.api import read_projections
 from wuwa_story.api.dependencies import get_event_service
+from wuwa_story.db.models.game_events import GameEventSnapshot
 from wuwa_story.db.session import get_session
 from wuwa_story.events.composition import browse_events as _game_events_response
 from wuwa_story.events.domain import EventRunNotFound
@@ -42,7 +44,7 @@ async def list_game_events(
     server: str = Query(default="europe", pattern="^(asia|europe|america)$"),
     kind: str | None = Query(
         default=None, pattern="^(banner|limited|recurring|permanent)$"),
-    version: str | None = Query(default=None, pattern=r"^\d+\.\d+$"),
+    version: str | None = Query(default=None, pattern=r"^\d+\.\d+(?:\.\d+)?$"),
     locale: str = Query(default="en", pattern=r"^[a-zA-Z-]{2,16}$"),
     summary: bool = Query(
         default=False,
@@ -51,9 +53,30 @@ async def list_game_events(
     session: AsyncSession = Depends(get_session),
     service: EventService = Depends(get_event_service),
 ) -> dict[str, Any]:
-    if read_projections.should_route_to_projection("game_event", version, locale=locale):
+    if version:
+        if version.count(".") == 1:
+            candidates = list(await session.scalars(select(GameEventSnapshot.version).where(
+                GameEventSnapshot.version.startswith(version + ".", autoescape=True),
+                GameEventSnapshot.complete.is_(True),
+            )))
+            if len(candidates) > 1:
+                raise HTTPException(status_code=409, detail="Multiple event snapshots match; specify the full version")
+            if not candidates:
+                raise HTTPException(status_code=404, detail="Event catalog snapshot not available")
+            version = candidates[0]
+        snapshot = await session.get(GameEventSnapshot, version)
+        if snapshot is None or not snapshot.complete:
+            raise HTTPException(status_code=404, detail="Event catalog snapshot not available")
+        return await service.browse(server, kind, version, locale, summary=summary)
+    if read_projections.should_route_to_projection("game_event", None, locale=locale):
         return await read_projections.events_page(session, server, kind, version, locale, summary)
     return await service.browse(server, kind, version, locale, summary=summary)
+
+
+@router.get("/events/snapshots")
+async def list_event_snapshots(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    versions = list(await session.scalars(select(GameEventSnapshot.version).where(GameEventSnapshot.complete.is_(True))))
+    return {"versions": sorted(versions, key=lambda value: tuple(map(int, value.split("."))), reverse=True)}
 
 
 @router.get("/events/{event_id}/detail")

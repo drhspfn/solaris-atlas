@@ -1,8 +1,13 @@
 """Persist client-authored events independently of the historical timetable."""
 
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 
-from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
+from wuwa_story.db.models.game_events import (
+    GameEvent,
+    GameEventOccurrence,
+    GameEventSnapshot,
+    GameEventSnapshotMember,
+)
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE, SERVER_KEYS, SOURCE
 
 
@@ -15,6 +20,9 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
         raise ValueError("The game client contains no event catalog records")
     # Serialize catalog writes across replicas, but only for the short DB phase.
     await session.execute(text("SELECT pg_advisory_xact_lock(705, 1)"))
+    snapshot = await session.get(GameEventSnapshot, asset_version, populate_existing=True)
+    if snapshot and snapshot.download_id != download_id:
+        raise ValueError("Existing event snapshot belongs to a different download")
     existing = list(await session.scalars(select(GameEvent).where(
         GameEvent.source.in_([CLIENT_SOURCE, SOURCE])).order_by(GameEvent.id).with_for_update()))
     indexed = {
@@ -26,6 +34,14 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
         group, _, identifier = event.source_id.partition(":")
         legacy.setdefault(f"gacha:{identifier}" if group ==
                           "1" else f"activity:{identifier}", event)
+    if snapshot and snapshot.complete and all(record.get("locales", {}).get("en") for record in records.values()):
+        members = set(await session.scalars(select(GameEventSnapshotMember.event_id).where(
+            GameEventSnapshotMember.version == asset_version
+        )))
+        matches = [indexed.get(client_identity(key)) or legacy.get(client_identity(key)) for key in records]
+        if (any(event is None for event in matches) or len(matches) != len(members)
+                or {event.id for event in matches} != members):
+            raise ValueError("Existing complete event snapshot differs from the imported catalog")
     version = ".".join(asset_version.split(".")[:2])
     events = []
     missing = []
@@ -65,6 +81,15 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
     if not events:
         raise ValueError("No localized client events could be imported")
     await session.flush()
+    # Keep an authoritative snapshot when a reimport is incomplete. Complete
+    # snapshots were checked above and need no membership rewrite.
+    if not (snapshot and snapshot.complete):
+        await session.execute(delete(GameEventSnapshot).where(GameEventSnapshot.version == asset_version))
+        session.add(GameEventSnapshot(version=asset_version, download_id=download_id, complete=not missing))
+        await session.flush()
+        session.add_all([
+            GameEventSnapshotMember(version=asset_version, event_id=event.id) for event in events
+        ])
     occurrences = list(await session.scalars(select(GameEventOccurrence).where(
         GameEventOccurrence.event_id.in_([e.id for e in events]),
         GameEventOccurrence.game_version == version)))

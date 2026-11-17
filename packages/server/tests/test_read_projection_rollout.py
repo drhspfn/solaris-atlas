@@ -213,7 +213,7 @@ async def test_current_only_rollout_keeps_explicit_history_on_source(
     path += (
         ("&" if "?" in path else "?")
         + version_param
-        + ("=3.3" if version_param == "version" else "=3.3.0")
+        + "=3.3.0"
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app), base_url="http://test"

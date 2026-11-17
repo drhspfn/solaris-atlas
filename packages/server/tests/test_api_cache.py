@@ -372,6 +372,16 @@ def test_partial_rollout_keeps_source_revision_for_unselected_slices():
     assert not selected("/categories")
 
 
+def test_event_snapshot_cache_uses_source_revision_even_when_projection_is_enabled():
+    from wuwa_story.api.cache import projection_request
+
+    settings = Settings(read_projections_enabled=True, read_projection_kinds="game_event",
+                        read_projection_snapshots="current,3.8.0")
+    assert projection_request({"path": "/events", "query_string": b"server=europe"}, settings)
+    assert not projection_request({"path": "/events", "query_string": b"version=3.8.0"}, settings)
+    assert not projection_request({"path": "/events/snapshots", "query_string": b""}, settings)
+
+
 @pytest.mark.asyncio
 async def test_response_cache_reuses_application_manager_pool():
     from wuwa_story.cache import CacheManager
