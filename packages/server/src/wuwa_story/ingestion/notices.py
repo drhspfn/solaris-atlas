@@ -8,7 +8,7 @@ from html.parser import HTMLParser
 from urllib.parse import urlencode, urlparse
 
 import httpx
-from sqlalchemy import or_, select, text
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
@@ -298,6 +298,7 @@ async def store_notices(session, feed, page, document):
             if notice is None:
                 notice = GameNotice(feed=feed, locale="en", source_id=str(raw["id"]))
                 session.add(notice)
+            previous_content = notice.content if isinstance(notice.content, dict) else None
             matched = notice_matches(content, events)
             match_evidence = None
             if not matched:
@@ -366,27 +367,32 @@ async def store_notices(session, feed, page, document):
                         row = candidates[0]
                     else:
                         start, end = period
-                        if trial and trial[1]["basis"] == "notice_section":
-                            existing = await session.scalar(select(GameEventOccurrence.id).where(
-                                GameEventOccurrence.event_id == event.id,
-                                GameEventOccurrence.server == server,
-                                GameEventOccurrence.ends_at == end,
-                            ).limit(1))
-                            if existing is not None:
-                                continue
-                        identity = (
-                            f"trial:{end.isoformat()}" if trial else
-                            f"notice:{notice.source_id}@{start.isoformat()}" if start
-                            else f"notice:{notice.source_id}@update"
-                        )
+                        suffix = start.isoformat() if start else "update"
+                        identity = (f"trial:{notice.id}@{end.isoformat()}" if trial else
+                                    f"notice:{notice.id}:{notice.source_id}@{suffix}")
+                        legacy = f"trial:{end.isoformat()}" if trial else f"notice:{notice.source_id}@{suffix}"
+                        known_notice = GameEventOccurrence.source_data["notice_id"].astext == str(notice.id)
+                        match = or_(GameEventOccurrence.source_occurrence_id == identity,
+                                    and_(GameEventOccurrence.source_occurrence_id == legacy, known_notice))
+                        previous_period = (notice_period(previous_content, server)
+                                           if previous_content and isinstance(previous_content.get("text"), str)
+                                           and not trial else None)
+                        if start and previous_period and previous_period[1] == end and previous_period[0] in (None, start):
+                            # The earlier revision describes the same end and either
+                            # an unknown start or this exact start. Never infer a
+                            # relationship from a null/same start alone.
+                            update_keys = [f"notice:{notice.id}:{notice.source_id}@update",
+                                           f"notice:{notice.source_id}@update"]
+                            match = or_(match, and_(known_notice,
+                                GameEventOccurrence.source_occurrence_id.in_(update_keys),
+                                or_(GameEventOccurrence.ends_at == end,
+                                    GameEventOccurrence.source_data["schedule_source"].astext == "manual")))
                         row = await session.scalar(
                             select(GameEventOccurrence)
                             .where(
                                 GameEventOccurrence.event_id == event.id,
                                 GameEventOccurrence.server == server,
-                                (or_(GameEventOccurrence.starts_at == start,
-                                     GameEventOccurrence.source_occurrence_id == identity) if start and not trial else
-                                 GameEventOccurrence.source_occurrence_id == identity),
+                                match,
                             )
                             .order_by((GameEventOccurrence.source_occurrence_id == identity).desc())
                             .limit(1)
@@ -405,6 +411,10 @@ async def store_notices(session, feed, page, document):
                         manual = (row.source_data or {}).get("schedule_source") == "manual"
                         if not manual:
                             row.ends_at = end
+                            if start and not trial and row.source_occurrence_id.endswith("@update"):
+                                row.starts_at = start
+                                row.source_data = {**(row.source_data or {})}
+                                row.source_data.pop("start_estimate", None)
                         if trial and not manual:
                             version = (re.search(r"Version\s+(\d+\.\d+)\s+update", trial[0]["text"], re.I)
                                        or re.search(r"Patch Notes for Version\s+(\d+\.\d+)", content["title"], re.I))
