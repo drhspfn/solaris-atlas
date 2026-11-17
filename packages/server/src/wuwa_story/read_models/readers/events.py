@@ -1,10 +1,11 @@
 """Event occurrence and announcement response projections."""
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from wuwa_story.db.models.game_events import GameEventSnapshotMember
+from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence, GameEventSnapshotMember
 from wuwa_story.db.repositories.read_models import ENTITY_READ_MODELS
+from wuwa_story.events.catalog import catalog_rows
 from wuwa_story.events.catalog_duplicates import visible_occurrences
 from wuwa_story.events.domain import is_preview_artwork
 from wuwa_story.events.selectable_pools import group_selectable_pools, pool_key, proven_member_ids
@@ -22,12 +23,38 @@ def _time(value):
         raise entities._unready() from None
 
 
-async def event_detail(session, event_id, server, occurrence_id, locale="en"):
-    payload = await entities.page_payload(session, "game_event", event_id, locale, selector=None)
+async def _period_owner(session, event_id, server, occurrence_id):
+    root = select(func.coalesce(GameEvent.canonical_event_id, GameEvent.id)).where(
+        GameEvent.id == event_id).scalar_subquery()
+    return await session.scalar(select(GameEventOccurrence.event_id).join(
+        GameEvent, GameEvent.id == GameEventOccurrence.event_id).where(
+            GameEventOccurrence.id == occurrence_id, GameEventOccurrence.server == server,
+            func.coalesce(GameEvent.canonical_event_id, GameEvent.id) == root))
+
+
+async def event_detail(session, event_id, server, occurrence_id, locale="en", version=None):
+    selection = {"selector": None}
+    if version:
+        selection["snapshot_key"] = version
+    try:
+        payload = await entities.page_payload(session, "game_event", event_id, locale, **selection)
+    except HTTPException as exc:
+        if exc.status_code != 404 or version is None or occurrence_id is None:
+            raise
+        owner = await _period_owner(session, event_id, server, occurrence_id)
+        if type(owner) is not int or owner == event_id:
+            raise
+        return await event_detail(session, owner, server, occurrence_id, locale, version)
     runs = payload.get("occurrences")
     event = payload.get("event")
     if not isinstance(runs, list) or not isinstance(event, dict):
         raise entities._unready()
+    if event.get("canonical_event_id") is not None and occurrence_id is not None and not any(
+        run.get("server") == server and run.get("occurrence_id") == occurrence_id for run in runs
+    ):
+        owner = await _period_owner(session, event_id, server, occurrence_id)
+        if type(owner) is int and owner != event_id:
+            return await event_detail(session, owner, server, occurrence_id, locale, version)
     if occurrence_id is None:
         if (
             not any(run.get("server") == server for run in runs)
@@ -43,6 +70,9 @@ async def event_detail(session, event_id, server, occurrence_id, locale="en"):
         if len(matches) == 1:
             result = {key: value for key, value in matches[0].items()
                       if key not in {"server", "_catalog_placeholder", "_client_signature", "_pool_match"}}
+            result["id"] = result.get("canonical_event_id") or result["id"]
+            if matches[0].get("_catalog_placeholder"):
+                result["occurrence_id"] = None
             if key := pool_key(matches[0]):
                 proof = matches[0]["_pool_match"]
                 candidates = []
@@ -88,7 +118,7 @@ async def events_page(session, server, kind=None, version=None, locale="en", sum
         session,
         "game_event",
         locale,
-        "current",
+        version or "current",
         selector="calendar" if summary else None,
         card=summary,
     )
@@ -124,6 +154,8 @@ async def events_page(session, server, kind=None, version=None, locale="en", sum
                 )
                 if run.get("occurrence_id") is not None:
                     result["detail_url"] += f"&occurrence_id={run['occurrence_id']}"
+                if version:
+                    result["detail_url"] += f"&version={version}"
             events.append(result)
     placeholders = {event["occurrence_id"] for event in events
                     if event.get("_catalog_placeholder") is True}
@@ -135,6 +167,7 @@ async def events_page(session, server, kind=None, version=None, locale="en", sum
     events = [event for event in events if event.get("occurrence_id") not in placeholders
               or event["occurrence_id"] in keep]
     events = group_selectable_pools(events, server, locale)
+    events = catalog_rows(events)
     for event in events:
         event.pop("_catalog_placeholder", None)
         event.pop("_client_signature", None)

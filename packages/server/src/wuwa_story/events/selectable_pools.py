@@ -50,6 +50,8 @@ def group_selectable_pools(events, server, locale):
 
 def pool_match(data):
     data = data or {}
+    if data.get("schedule_source") == "manual" or data.get("manual_schedule"):
+        return None
     match = data.get("notice_match")
     if not isinstance(match, dict):
         return None

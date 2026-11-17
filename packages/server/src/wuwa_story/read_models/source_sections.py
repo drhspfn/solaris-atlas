@@ -24,12 +24,13 @@ from wuwa_story.db.models.core import (
     QuestAction,
     QuestNode,
 )
-from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
+from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence, GameEventSnapshotMember
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.raw import SourceRecord
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.db.repositories import cutscenes as cutscene_repository
+from wuwa_story.events.catalog import is_catalog_capture
 from wuwa_story.events.catalog_duplicates import client_signature
 from wuwa_story.events.composition import browse_events
 from wuwa_story.events.domain import is_preview_artwork
@@ -381,6 +382,8 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
                     "notice_match", GameEventOccurrence.source_data["notice_match"],
                     "notice_id", GameEventOccurrence.source_data["notice_id"],
                     "notice_revision", GameEventOccurrence.source_data["notice_revision"],
+                    "schedule_source", GameEventOccurrence.source_data["schedule_source"],
+                    "manual_schedule", GameEventOccurrence.source_data["manual_schedule"],
                     "client", func.jsonb_build_object(
                         "table", GameEventOccurrence.source_data["client"]["table"],
                         "title_key", GameEventOccurrence.source_data["client"]["title_key"],
@@ -403,7 +406,7 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
         response = await browse_events(
             server,
             None,
-            None,
+            snapshot_key if selected_version is not None else None,
             locale,
             session,
             event_id=entity_id,
@@ -417,8 +420,7 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
         if len(matching) != 1:
             raise ValueError("Event occurrence could not be projected unambiguously")
         run = {**matching[0], "server": server, "game_version": version,
-               "_catalog_placeholder": source_occurrence_id.startswith("client:")
-               and starts_at is None and ends_at is None,
+               "_catalog_placeholder": is_catalog_capture(source_occurrence_id, starts_at, ends_at, data),
                "_client_signature": client_signature(data)}
         if match := pool_match(data):
             run["_pool_match"] = match
@@ -426,9 +428,11 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
             unversioned.append(run)
         else:
             selected.append(run)
-    if snapshot_key != "current" and not selected:
-        raise HTTPException(404, "No event occurrence recorded for this version")
-    # With no runs there is no server or historical version to invent.
+    if selected_version is not None and not selected:
+        member = await session.get(GameEventSnapshotMember, (snapshot_key, entity_id))
+        if member is None:
+            raise HTTPException(404, "Event is not in the selected catalog snapshot")
+    # A catalog member exists independently of whether a period was recorded.
     summary = {
         "id": event.id,
         "title": (selected[0].get("title") if selected else None) or event.title,
@@ -441,7 +445,8 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
     # Capture the source LEFT JOIN fallback even for events with regional runs:
     # another server may have no occurrence. This never selects a regional run.
     response = await browse_events(
-        "", None, None, locale, session, event_id=entity_id, occurrence_id=None
+        "", None, snapshot_key if selected_version is not None else None,
+        locale, session, event_id=entity_id, occurrence_id=None
     )
     matching = [
         run for run in response["events"] if run["id"] == entity_id and run["occurrence_id"] is None

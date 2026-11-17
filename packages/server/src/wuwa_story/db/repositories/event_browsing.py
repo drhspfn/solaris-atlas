@@ -3,8 +3,9 @@
 from types import SimpleNamespace
 from typing import Any
 
-from sqlalchemy import and_, case, cast, func, or_, select, tuple_
-from sqlalchemy.dialects.postgresql import JSONB, JSONPATH
+from fastapi import HTTPException
+from sqlalchemy import Text, and_, case, cast, func, literal, or_, select, tuple_
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, JSONPATH
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.db.models.game_events import (
@@ -16,6 +17,7 @@ from wuwa_story.db.models.game_events import (
 from wuwa_story.db.models.graph import Node
 from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
+from wuwa_story.events.catalog import is_catalog_capture
 from wuwa_story.events.catalog_duplicates import client_signature, visible_occurrences
 from wuwa_story.events.domain import (
     CLIENT_SOURCE,
@@ -52,18 +54,22 @@ async def read_event_runs(
     if kind:
         statement = statement.where(GameEvent.event_kind == kind)
     if version:
-        statement = statement.where(GameEvent.id.in_(
-            select(GameEventSnapshotMember.event_id)
-            .join(GameEventSnapshot, GameEventSnapshot.version == GameEventSnapshotMember.version)
-            .where(GameEventSnapshotMember.version == version, GameEventSnapshot.complete.is_(True))
-        ))
+        statement = statement.join(GameEventSnapshotMember, and_(
+            GameEventSnapshotMember.event_id == GameEvent.id, GameEventSnapshotMember.version == version
+        )).join(GameEventSnapshot, GameEventSnapshot.version == GameEventSnapshotMember.version).where(
+            GameEventSnapshot.complete.is_(True))
     if event_id is not None:
-        statement = statement.where(GameEvent.id == event_id)
+        if occurrence_id is not None:
+            root = select(func.coalesce(GameEvent.canonical_event_id, GameEvent.id)).where(
+                GameEvent.id == event_id).scalar_subquery()
+            statement = statement.where(func.coalesce(GameEvent.canonical_event_id, GameEvent.id) == root)
+        else:
+            statement = statement.where(GameEvent.id == event_id)
         statement = statement.where(
             GameEventOccurrence.id == occurrence_id if occurrence_id is not None
             else GameEventOccurrence.id.is_(None)
         )
-    if summary:
+    if summary or version:
         # Project JSON in PostgreSQL: joined ORM rows otherwise transfer and decode
         # the complete prefab catalog once per occurrence before we can trim it.
         columns: list[Any] = []
@@ -71,10 +77,13 @@ async def read_event_runs(
         for model in (GameEvent, GameEventOccurrence):
             fields = [column.key for column in model.__table__.columns]
             names.append(fields)
+            source = model.source_data
+            if version:
+                source = func.jsonb_set(func.coalesce(source, cast({}, JSONB)),
+                    cast(literal("{client}"), ARRAY(Text)), GameEventSnapshotMember.client_capture, type_=JSONB)
             columns.extend(
-                _summary_source(model.source_data, locale) if name == "source_data"
-                else getattr(model, name) for name in fields
-            )
+                (_summary_source(source, locale) if summary else source) if name == "source_data"
+                else getattr(model, name) for name in fields)
         projected = (await session.execute(statement.with_only_columns(*columns))).all()
         split = len(names[0])
         rows: list[Any] = [
@@ -85,11 +94,15 @@ async def read_event_runs(
         ]
     else:
         rows = list((await session.execute(statement)).all())
+    if version and any(not isinstance(event.source_data, dict) or not isinstance(
+        event.source_data.get("client"), dict) or not event.source_data["client"].get("download_id")
+        for event, _ in rows):
+        raise HTTPException(503, "The selected event snapshot capture is not ready")
     if event_id is None:
         placeholders = {
             occurrence.id for _, occurrence in rows
-            if occurrence and occurrence.source_occurrence_id.startswith("client:")
-            and occurrence.starts_at is None and occurrence.ends_at is None
+            if occurrence and is_catalog_capture(occurrence.source_occurrence_id,
+                occurrence.starts_at, occurrence.ends_at, occurrence.source_data)
         }
         keep = visible_occurrences(
             [(event.id, occurrence.id if occurrence else None,
@@ -121,6 +134,8 @@ def _summary_source(source: Any, locale: str) -> Any:
         "asset_version", field("client", "asset_version"),
         "hidden", func.coalesce(field("client", "hidden"), func.to_jsonb(False)),
         "convene_type", field("client", "convene_type"),
+        "gacha_type", field("client", "gacha_type"),
+        "gacha_pool_proof", field("client", "gacha_pool_proof"),
         "table", field("client", "table"),
         "title_key", field("client", "title_key"),
         "description_key", field("client", "description_key"),
@@ -142,6 +157,8 @@ def _summary_source(source: Any, locale: str) -> Any:
         "notice_match", field("notice_match"),
         "notice_presentation", field("notice_presentation"),
         "start_estimate", field("start_estimate"),
+        "schedule_source", field("schedule_source"),
+        "manual_schedule", field("manual_schedule"),
         "official_url", field("official_url"),
         type_=JSONB,
     )
@@ -331,12 +348,14 @@ class SqlAlchemyEventRepository:
                     title=event.title, description=event.description, event_kind=event.event_kind,
                     banner_path=event.banner_path, rewards=event.rewards, game_path=event.game_path,
                     source_url=event.source_url, source_data=event.source_data,
+                    canonical_event_id=getattr(event, "canonical_event_id", None),
                 ),
                 EventOccurrence(
                     id=occurrence.id, game_version=occurrence.game_version,
                     starts_at=occurrence.starts_at, ends_at=occurrence.ends_at,
                     season=occurrence.season, banner_path=occurrence.banner_path,
                     source_data=occurrence.source_data,
+                    source_occurrence_id=getattr(occurrence, "source_occurrence_id", None),
                 ) if occurrence else None,
             )
             for event, occurrence in rows

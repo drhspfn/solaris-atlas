@@ -45,11 +45,12 @@ async def test_client_import_adds_unlisted_events_and_preserves_exact_historical
     assert old.source == CLIENT_SOURCE and old.source_id == "activity:100"
     assert occurrence.starts_at == "preserved date"
     assert occurrence.source_data["time"] == ["preserved date"]
+    assert "client" not in occurrence.source_data
     assert old.title == "Client title" and old.banner_path == "/Game/Actual"
     created = [row for row in added if isinstance(row, GameEvent)]
     assert created[0].source_id == "activity:101"
     assert len([row for row in added if isinstance(
-        row, GameEventOccurrence)]) == 5
+        row, GameEventOccurrence)]) == 6  # The dated row has no matching client capture.
     assert result["artwork_paths"] == ["/Game/Actual"]
     assert [(row.version, row.download_id, row.complete) for row in added if isinstance(row, GameEventSnapshot)] == [
         ("3.7.0", "a" * 64, True)
@@ -77,7 +78,9 @@ async def test_client_import_preserves_manual_unknown_start_and_locks_occurrence
 async def test_reimport_reuses_client_identity_and_retains_discovered_prefab_images():
     image = {"path": "/Game/FromPrefab", "role": "prefab_texture"}
     event = SimpleNamespace(id=7, source=CLIENT_SOURCE, source_id="activity:100",
-                            source_data={"client": {"download_id": "a" * 64, "prefab_artwork": [image]}})
+                            source_data={"client": {"download_id": "a" * 64, "prefab_artwork": [image],
+                                                    "resources": record()["resources"],
+                                                    "artwork": record()["artwork"]}})
     rows = [SimpleNamespace(event_id=7, server=server, source_data={})
             for server in ["asia", "europe", "america"]]
     session = AsyncMock()
@@ -112,7 +115,8 @@ async def test_new_download_does_not_overwrite_dated_run_snapshots():
     for row in rows:
         assert row.banner_path == "/Game/FirstRun"
         assert row.source_data["client"] == old_client
-    assert not any(isinstance(row, (GameEvent, GameEventOccurrence)) for row in added)
+    assert not any(isinstance(row, GameEvent) for row in added)
+    assert len([row for row in added if isinstance(row, GameEventOccurrence)]) == 3
 
 
 @pytest.mark.asyncio
@@ -130,4 +134,4 @@ async def test_partial_import_does_not_publish_an_incomplete_snapshot():
     assert result["unresolved"]
     assert [row.complete for row in added if isinstance(row, GameEventSnapshot)] == [False]
     assert [row.event_id for row in added if isinstance(row, GameEventSnapshotMember)] == [7]
-    assert "DELETE FROM core.game_event_snapshot" in str(session.execute.call_args.args[0])
+    assert all("DELETE" not in str(call.args[0]) for call in session.execute.await_args_list)

@@ -178,9 +178,15 @@ async def test_event_snapshot_selects_membership_and_preserves_captured_run_hist
     )
     database.entry("game_event", 8, payload={"event": {"id": 8, "kind": "limited"},
                                                "occurrences": [dict(run(5, "asia", None), id=8)]})
+    database.entry("game_event", 7, snapshot_key="3.10.0", payload={
+        "event": {"id": 7, "kind": "limited"},
+        "occurrences": [run(1, "asia", "3.10"), run(3, "asia", None),
+                        {**run(4, "asia", "3.9"), "catalog_version": "3.10.0"}],
+    })
     response = await reader.events_page(database, "asia", version="3.10.0", summary=True)
     assert {item["occurrence_id"] for item in response["events"]} == {1, 3, 4}
-    assert next(item for item in response["events"] if item["occurrence_id"] == 4)["catalog_version"] == "3.9.0"
+    assert next(item for item in response["events"] if item["occurrence_id"] == 4)["catalog_version"] == "3.10.0"
+    assert all("version=3.10.0" in row["detail_url"] for row in response["events"])
     assert all(len(item["artwork"]) == 1 for item in response["events"])
     assert response["events"][0]["detail_url"].startswith("/events/7/detail?server=asia")
     assert (await reader.event_detail(database, 7, "europe", 2))["game_version"] == "3.9"
@@ -390,7 +396,8 @@ async def test_asia_only_event_keeps_authoritative_europe_outerjoin_fallback(dat
     assert len(europe["events"]) == 1 and europe["events"][0]["occurrence_id"] is None
     assert europe["events"][0]["title"] == "Undated"
     assert (await reader.event_detail(database, 7, "europe", None))["occurrence_id"] is None
-    assert (await reader.events_page(database, "asia", version="3.11"))["events"][0]["occurrence_id"] == 1
+    database.entry("game_event", 7, snapshot_key="3.11", payload={"event": undated, "occurrences": []})
+    assert (await reader.events_page(database, "asia", version="3.11"))["events"][0]["occurrence_id"] is None
     assert (await reader.events_page(database, "europe", version="3.11"))["events"][0][
         "occurrence_id"
     ] is None

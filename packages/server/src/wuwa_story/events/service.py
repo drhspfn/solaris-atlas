@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from wuwa_story.events.catalog import catalog_rows, is_catalog_capture
 from wuwa_story.events.domain import (
     CLIENT_SOURCE,
     SHARED_ACTIVITY_BACKGROUNDS,
@@ -82,6 +83,11 @@ class EventService:
         )
         artwork = {run.key: _artwork(run.event, run.occurrence) for run in runs}
         announcements = await self._announcements(runs, event_id)
+        if version:
+            # Selected snapshots may use a pinned notice revision, never today's
+            # unrelated notice artwork as a replacement for missing old media.
+            announcements.latest.clear()
+            announcements.banners.clear()
         presentations = {run.key: _presentation(run.event, run.occurrence, locale) for run in runs}
         reward_keys = {
             f"item:{reward['id']}"
@@ -111,8 +117,12 @@ class EventService:
                          announcements, reward_addresses, images, spine)
             for run in runs
         ]
+        if version and summary:
+            for row in rendered:
+                row["detail_url"] += f"&version={version}"
         if event_id is None:
             rendered = group_selectable_pools(rendered, server, locale)
+            rendered = catalog_rows(rendered)
         if not _include_pool_match:
             for row in rendered:
                 row.pop("_pool_match", None)
@@ -130,9 +140,11 @@ class EventService:
         server: str,
         occurrence_id: int | None = None,
         locale: str = "en",
+        version: str | None = None,
     ) -> dict[str, Any]:
         response = await self.browse(
             server,
+            version=version,
             locale=locale,
             event_id=event_id,
             occurrence_id=occurrence_id,
@@ -150,6 +162,7 @@ class EventService:
             if len(identities) <= 64:
                 for sibling_id, sibling_occurrence_id in identities:
                     sibling = await self.browse(server, locale=locale, summary=True,
+                        version=version,
                         event_id=sibling_id, occurrence_id=sibling_occurrence_id,
                         _include_pool_match=True)
                     candidates.extend(sibling["events"])
@@ -160,6 +173,9 @@ class EventService:
                     result["selectable_members"] = row["selectable_members"]
                     break
         result.pop("_pool_match", None)
+        result["id"] = result.get("canonical_event_id") or result["id"]
+        if result.pop("_catalog_placeholder", False):
+            result["occurrence_id"] = None
         return result
 
     async def _announcements(self, runs: list[EventRun], event_id: int | None) -> _Announcements:
@@ -274,6 +290,8 @@ class EventService:
         )
         result = {
             "id": event.id,
+            "canonical_event_id": getattr(event, "canonical_event_id", None) or event.id,
+            "source_event_id": event.id,
             "slug": event.slug,
             "href": record_url(event, "events"),
             "source_id": event.source_id,
@@ -312,7 +330,14 @@ class EventService:
         }
         if occurrence and (match := pool_match(occurrence.source_data)):
             result["_pool_match"] = match
+        pool = client.get("gacha_pool_proof") or {}
+        if client.get("gacha_type") in {7, 8, 9, 10, 13, 14} and type(pool.get("gacha_id")) is int:
+            result["selectable_pool_id"] = pool["gacha_id"]
+            result["selectable_pool_members"] = pool.get("members", [])
         if occurrence:
+            result["_catalog_placeholder"] = is_catalog_capture(
+                getattr(occurrence, "source_occurrence_id", None), occurrence.starts_at,
+                occurrence.ends_at, occurrence.source_data)
             captured_client = (occurrence.source_data or {}).get("client")
             result["catalog_provenance"] = (
                 "occurrence_snapshot" if captured_client else

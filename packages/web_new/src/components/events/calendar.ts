@@ -46,6 +46,7 @@ export type GameEvent = {
     | null;
   featured_names?: string[];
   up_names?: string[];
+  selectable_pool_id?: number;
   banner_path: string | null;
   banner_url?: string | null;
   preview_url?: string | null;
@@ -140,6 +141,17 @@ export function groupEvents(events: GameEvent[]) {
         (Number.isFinite(startTime(b)) ? startTime(b) : Infinity),
     ),
   );
+}
+export function catalogEvent(periods: GameEvent[], now: number) {
+  const active = periods.filter((period) => startTime(period) <= now && endTime(period) > now);
+  if (active.length) return active.at(-1)!;
+  const future = periods.filter((period) => startTime(period) > now);
+  if (future.length) return future.reduce((a, b) => startTime(a) < startTime(b) ? a : b);
+  const presentation = periods.find((period) => period.occurrence_id == null);
+  if (presentation) return presentation;
+  const recorded = periods.filter((period) => Number.isFinite(startTime(period)));
+  if (recorded.length) return recorded.reduce((a, b) => startTime(a) > startTime(b) ? a : b);
+  return periods.at(-1)!;
 }
 export function isPermanentListing(event: GameEvent) {
   return event.kind === 'permanent' && !event.ends_at;

@@ -33,7 +33,7 @@ async def test_snapshot_routes_only_complete_membership_to_source(monkeypatch):
         assert (await client.get("/events/snapshots")).json() == {"versions": ["3.10.0", "3.8.0", "3.7.1"]}
         response = await client.get("/events?version=3.8.0")
         assert response.status_code == 200
-        assert response.json()["snapshot_presentation"] == "current_and_recorded_occurrences"
+        assert response.json()["snapshot_presentation"] == "versioned_catalog_capture"
         assert service.browse.await_args.args[2] == "3.8.0"
         session.scalars.return_value = ["3.8.0"]
         assert (await client.get("/events?version=3.8")).status_code == 200
@@ -62,7 +62,7 @@ async def test_snapshot_uses_current_projection_when_selected(monkeypatch):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/events?server=asia&version=3.8.0&summary=true")
     assert response.status_code == 200
-    assert response.json() == {"events": [{"id": 7}], "snapshot_presentation": "current_and_recorded_occurrences"}
+    assert response.json() == {"events": [{"id": 7}], "snapshot_presentation": "versioned_catalog_capture"}
     assert reader.await_args.args[1:] == ("asia", None, "3.8.0", "en", True)
     service.browse.assert_not_awaited()
 
@@ -284,7 +284,8 @@ async def test_service_preserves_historical_media_when_current_capture_has_exact
         [("capture/UI/banner.png", "https://cdn.test/old", {"download_id": "old"})],
     ]
     result = await event_composition.browse_events("europe", None, None, "en", session)
-    current, historical = result["events"]
+    historical, current = result["events"]
+    assert current["occurrence_id"] is None  # A catalog presentation is not a period.
     assert current["preview_url"] == current["banner_url"] == "https://cdn.test/current"
     assert historical["preview_url"] == historical["banner_url"] == "https://cdn.test/old"
     assert historical["artwork"][0]["url"] == "https://cdn.test/old"

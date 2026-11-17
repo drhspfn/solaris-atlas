@@ -30,6 +30,10 @@ class GameEvent(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    canonical_event_id: Mapped[int | None] = mapped_column(
+        ForeignKey("core.game_event.id", ondelete="RESTRICT"), index=True
+    )
+    canonical_evidence: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     source: Mapped[str] = mapped_column(String(128), nullable=False)
     source_id: Mapped[str] = mapped_column(String(256), nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
@@ -92,3 +96,4 @@ class GameEventSnapshotMember(Base):
     event_id: Mapped[int] = mapped_column(
         ForeignKey("core.game_event.id", ondelete="CASCADE"), primary_key=True
     )
+    client_capture: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)

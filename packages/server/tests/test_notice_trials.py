@@ -74,6 +74,38 @@ async def test_trial_import_uses_section_duration_and_preserves_unknown_start(mo
     assert added == []
 
 
+@pytest.mark.asyncio
+async def test_different_section_notices_with_same_end_remain_distinct(monkeypatch):
+    from wuwa_story.db.models.game_events import GameEventOccurrence
+    from wuwa_story.db.models.notices import GameNotice
+
+    activity = event(103500006)
+    content = {"text": "Duration: Version 3.8 Update - 2026-12-21 11:59 (server time)"}
+    monkeypatch.setattr(notices, "embedded_notice_activities", lambda *_: [
+        (activity, content, {"basis": "notice_section", "title": "Trial"})])
+    monkeypatch.setattr(notices, "notice_trial_matches", AsyncMock(return_value=[]))
+    session = AsyncMock()
+    session.scalars.return_value = [activity]
+    session.scalar.return_value = None
+    added = []
+    session.add = added.append
+
+    async def flush():
+        for index, notice in enumerate((row for row in added if isinstance(row, GameNotice)), 1):
+            notice.id = 100 + index
+
+    session.flush.side_effect = flush
+    documents = [{"id": str(i), "tabTitle": "Patch", "whiteList": [], "content": "<p>Patch</p>"}
+                 for i in (1, 2)]
+    report = await notices.store_notices(session, "feed", "page", {"game": documents})
+    runs = [row for row in added if isinstance(row, GameEventOccurrence)]
+    assert report["dated_runs"] == 6 and len(runs) == 6
+    for server in ("asia", "europe", "america"):
+        pair = [row for row in runs if row.server == server]
+        assert pair[0].ends_at == pair[1].ends_at
+        assert pair[0].source_occurrence_id != pair[1].source_occurrence_id
+
+
 def test_repeated_featured_banners_never_guess_a_trial():
     first = event(1, "banner", {"gacha_type": 2, "locales": {"en": {"featured_names": ["Qiuyuan"]}}})
     second = event(2, "banner", {"gacha_type": 2, "locales": {"en": {"featured_names": ["Qiuyuan"]}}})

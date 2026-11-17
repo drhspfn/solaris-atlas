@@ -100,7 +100,7 @@ async def test_apply_writes_only_membership_and_refuses_missing_ids(exports):
     assert result["applied"]
     assert [type(row) for row in added] == [GameEventSnapshot, GameEventSnapshotMember, GameEventSnapshotMember]
     assert {row.event_id for row in added[1:]} == {1, 2}
-    assert "DELETE FROM core.game_event_snapshot" in str(session.execute.await_args.args[0])
+    assert all("DELETE" not in str(call.args[0]) for call in session.execute.await_args_list)
 
 
 @pytest.mark.asyncio
@@ -119,3 +119,18 @@ async def test_dry_run_is_read_only_and_conflicting_complete_snapshot_is_rejecte
     session, added = session_for([("activity:100", 1)], SimpleNamespace(download_id=plan["id"], complete=True), [1])
     assert not (await backfill.backfill(session, plan, identities, apply=True))["applied"]
     assert added == []
+
+
+@pytest.mark.asyncio
+async def test_incomplete_backfill_preserves_existing_rows_and_rejects_extra_members(exports):
+    plan, *_ = exports
+    head = SimpleNamespace(download_id=plan["id"], complete=False)
+    session, added = session_for([("activity:100", 1), ("gacha:200", 2)], head, [1])
+    result = await backfill.backfill(session, plan, {"activity:100", "gacha:200"}, apply=True)
+    assert result["applied"] and head.complete
+    assert [(row.event_id, row.client_capture) for row in added] == [(2, None)]
+    assert all("DELETE" not in str(call.args[0]) for call in session.execute.await_args_list)
+    head.complete = False
+    session, _ = session_for([("activity:100", 1)], head, [1, 2])
+    with pytest.raises(ValueError, match="membership differs"):
+        await backfill.backfill(session, plan, {"activity:100"}, apply=True)

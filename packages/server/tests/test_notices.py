@@ -269,7 +269,7 @@ async def test_notice_import_preserves_partial_schedule_provenance():
     notice, *runs = added
     assert report["dated_runs"] == 3
     assert all(row.starts_at is None and row.ends_at is not None for row in runs)
-    assert all(row.source_occurrence_id == "notice:10@update" for row in runs)
+    assert all(row.source_occurrence_id == "notice:12:10@update" for row in runs)
     assert all(row.source_data["schedule_source"] == "https://feed.test" and
                row.source_data["schedule_revision"] == notice.revision for row in runs)
     assert notice.content["raw"] == raw
@@ -278,6 +278,89 @@ async def test_notice_import_preserves_partial_schedule_provenance():
     report = await store_notices(session, "https://feed.test", "https://board.test", {"game": [raw]})
     assert report["dated_runs"] == 3
     assert added == []
+
+
+@pytest.mark.asyncio
+async def test_confirmed_start_updates_only_same_notice_partial_period_and_reruns():
+    from wuwa_story.db.models.game_events import GameEventOccurrence
+
+    event = SimpleNamespace(id=7, title="Artisan's Search", event_kind="limited", banner_path=None,
+                            source_data={"client": {"download_id": "test"}})
+    old_raw = raw_notice(content="<p>✦Duration✦</p><p>Version 3.8 Update - 2026-12-21 03:59 (server time)</p><p>✦Rules✦</p>")
+    notice = GameNotice(id=12, feed="feed", locale="en", source_id="10", revision="old",
+                        content=parse_notice(old_raw, "game"), related_event_ids=[7])
+    runs = [GameEventOccurrence(event_id=7, server=server, source_occurrence_id="notice:10@update",
+             starts_at=None, ends_at=notice_period(notice.content, server)[1],
+             source_data={"notice_id": 12, "schedule_source": "feed", "start_estimate": {"basis": "old"}})
+            for server in ("asia", "europe", "america")]
+    new_raw = raw_notice(content="<p>✦Duration✦</p><p>2026-11-20 04:00 - 2026-12-21 03:59 (server time)</p><p>✦Rules✦</p>")
+    session = AsyncMock()
+    session.scalars.return_value = [event]
+    session.scalar.side_effect = [notice, *runs, notice, *runs]
+    added = []
+    session.add = added.append
+    for _ in range(2):
+        result = await store_notices(session, "feed", "board", {"game": [new_raw]})
+        assert result["dated_runs"] == 3 and not added
+        assert all(row.starts_at == notice_period(parse_notice(new_raw, "game"), row.server)[0]
+                   and "start_estimate" not in row.source_data for row in runs)
+    # Neither the unrelated matching-start row nor a different Notice is a key.
+    from sqlalchemy.dialects import postgresql
+    lookup = session.scalar.await_args_list[1].args[0].compile(dialect=postgresql.dialect())
+    assert "starts_at =" not in str(lookup)
+    assert any(value == ["notice:12:10@update", "notice:10@update"] for value in lookup.params.values())
+    assert "notice_id" in lookup.params.values() and "12" in lookup.params.values()
+
+
+@pytest.mark.asyncio
+async def test_different_notices_with_same_period_get_distinct_source_identities():
+    from wuwa_story.db.models.game_events import GameEventOccurrence
+
+    event = SimpleNamespace(id=7, title="Artisan's Search", event_kind="limited", banner_path=None,
+                            source_data={"client": {"download_id": "test"}})
+    session = AsyncMock()
+    session.scalars.return_value = [event]
+    session.scalar.return_value = None
+    added = []
+    session.add = added.append
+
+    async def flush():
+        notices = [row for row in added if isinstance(row, GameNotice)]
+        for index, notice in enumerate(notices, 1):
+            notice.id = 100 + index
+
+    session.flush.side_effect = flush
+    result = await store_notices(session, "feed", "board", {"game": [raw_notice(), raw_notice(id="11")]})
+    runs = [row for row in added if isinstance(row, GameEventOccurrence)]
+    assert result["dated_runs"] == 6 and len(runs) == 6
+    for server in ("asia", "europe", "america"):
+        pair = [row for row in runs if row.server == server]
+        assert pair[0].starts_at == pair[1].starts_at
+        assert pair[0].source_occurrence_id != pair[1].source_occurrence_id
+        assert {row.source_data["notice_id"] for row in pair} == {101, 102}
+
+
+@pytest.mark.asyncio
+async def test_changed_end_does_not_assume_unknown_start_period_is_same():
+    from sqlalchemy.dialects import postgresql
+
+    event = SimpleNamespace(id=7, title="Artisan's Search", event_kind="limited", banner_path=None,
+                            source_data={"client": {"download_id": "test"}})
+    old_raw = raw_notice(content="<p>✦Duration✦</p><p>Version 3.8 Update - 2026-12-21 03:59 (server time)</p><p>✦Rules✦</p>")
+    notice = GameNotice(id=12, feed="feed", locale="en", source_id="10", revision="old",
+                        content=parse_notice(old_raw, "game"), related_event_ids=[7])
+    new_raw = raw_notice(content="<p>✦Duration✦</p><p>2026-11-20 04:00 - 2026-12-22 03:59 (server time)</p><p>✦Rules✦</p>")
+    session = AsyncMock()
+    session.scalars.return_value = [event]
+    session.scalar.side_effect = [notice, None, None, None]
+    added = []
+    session.add = added.append
+    await store_notices(session, "feed", "board", {"game": [new_raw]})
+    lookup = session.scalar.await_args_list[1].args[0].compile(dialect=postgresql.dialect())
+    assert "starts_at =" not in str(lookup)
+    assert not any(isinstance(value, list) and any(str(item).endswith("@update") for item in value)
+                   for value in lookup.params.values())
+    assert len(added) == 3
 
 
 @pytest.mark.asyncio
