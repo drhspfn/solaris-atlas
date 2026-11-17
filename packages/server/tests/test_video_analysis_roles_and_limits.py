@@ -149,6 +149,7 @@ async def test_wipe_cutscene_analysis_deletes_db_and_orphan_s3_objects():
     scalar_values = iter([
         1,       # advisory lock
         9,       # Processor.id
+        1,       # run lock
         None,    # still_referenced for file 100
         None,    # still_variant for file 100
         123,     # still_referenced for file 200 (kept!)
@@ -186,3 +187,14 @@ async def test_wipe_cutscene_analysis_deletes_db_and_orphan_s3_objects():
         "deleted_lore_chunks": 2,
     }
     storage.delete.assert_awaited_once_with("objects/aa/bb/atlas.jpg")
+
+
+@pytest.mark.asyncio
+async def test_wipe_rejects_active_run_before_any_delete():
+    session = SimpleNamespace(scalar=AsyncMock(side_effect=[True, 9, False]),
+                              scalars=AsyncMock(return_value=[77]), execute=AsyncMock())
+    storage = SimpleNamespace(delete=AsyncMock())
+    with pytest.raises(ValueError, match="currently running"):
+        await wipe_cutscene_analysis(session, storage, asset_id=55, game_version="2.1")
+    session.execute.assert_not_awaited()
+    storage.delete.assert_not_awaited()

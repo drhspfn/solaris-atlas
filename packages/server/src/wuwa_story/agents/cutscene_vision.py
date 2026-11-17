@@ -458,7 +458,10 @@ async def wipe_cutscene_analysis(
             run_stmt = run_stmt.where(
                 ProcessingRun.metadata_json["asset_version"].astext == game_version
             )
-        run_ids = list(await session.scalars(run_stmt))
+        run_ids = sorted(await session.scalars(run_stmt))
+        for run_id in run_ids:
+            if not await session.scalar(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": -run_id}):
+                raise ValueError("Cutscene analysis is currently running; retry after it finishes")
 
     ref_stmt = select(FileReference).where(
         FileReference.owner_node_id == asset_id,
