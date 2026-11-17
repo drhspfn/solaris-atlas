@@ -117,6 +117,43 @@ def validate_event_schema(readers: Path) -> None:
                 raise ValueError(f"Unsupported {filename}.{method} client schema; update the event reader")
 
 
+def _gacha_pool_proofs(db, readers: Path | None, records: dict) -> None:
+    """Join view ID → pool ID → gacha ID, retaining all authored pool members."""
+    names = {row[0].lower() for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if not {"gachapool", "gacha"} <= names or readers is None:
+        return
+    source = (readers / "GachaPool.js").read_text(encoding="utf-8-sig")
+    getter = re.search(r"get GachaId\(\)\{return this\.(\w+)\(\)\}", source)
+    method = re.search(re.escape(getter[1]) + r"\([^)]*\)\{([^}]+)\}", source) if getter else None
+    body = method[1] if method else ""
+    offset = re.search(r"__offset\(this\.\w+,(\d+)\)", body)
+    if not offset or "readInt32" not in body or int(offset[1]) < 4 or int(offset[1]) % 2:
+        raise ValueError("Unsupported GachaPool.GachaId client schema")
+    slot = (int(offset[1]) - 4) // 2
+    parents = {}
+    for identifier, blob in db.execute("SELECT Id, BinData FROM gacha"):
+        if identifier in parents:
+            raise ValueError("Duplicate Gacha.Id")
+        parents[identifier] = sha256(blob).hexdigest()
+    groups = {}
+    seen = set()
+    for identifier, blob in db.execute("SELECT Id, BinData FROM gachapool"):
+        if identifier in seen:
+            raise ValueError("Duplicate GachaPool.Id")
+        seen.add(identifier)
+        parent = integer(table(blob), slot)
+        if parent in parents:
+            groups.setdefault(parent, []).append((identifier, sha256(blob).hexdigest()))
+    for parent, members in groups.items():
+        members.sort()
+        ids = [identifier for identifier, _ in members]
+        group_hash = sha256("\n".join(f"{identifier}:{digest}" for identifier, digest in members).encode()).hexdigest()
+        for identifier, digest in members:
+            if record := records.get(f"gacha:{identifier}"):
+                record["gacha_pool_proof"] = {"gacha_id": parent, "view_id": identifier, "members": ids,
+                    "pool_checksum": digest, "gacha_checksum": parents[parent], "group_checksum": group_hash}
+
+
 def read_event_catalog(config: Path, readers: Path | None = None) -> dict[str, dict]:
     if readers is not None:
         validate_event_schema(readers)
@@ -170,6 +207,7 @@ def read_event_catalog(config: Path, readers: Path | None = None) -> dict[str, d
                     ("weapon_prefab", text(row, 13))], "GachaViewInfo", identifier),
                 "spine_prefab_key": text(row, 14),
             }
+        _gacha_pool_proofs(db, readers, records)
     featured_ids = {identifier for record in records.values() for identifier in record.get("featured_ids", [])}
     portraits = {}
     for filename, name, key_column, fields in [

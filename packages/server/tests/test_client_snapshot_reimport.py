@@ -216,6 +216,24 @@ async def test_versioned_capture_is_idempotent_and_conflicting_payload_fails_clo
 
 
 @pytest.mark.asyncio
+async def test_pool_proof_recompile_requires_checksum_and_preserves_capture_identity(database):
+    old = {**record("First"), "source_checksum": "a" * 64, "compiler_checksum": "b" * 64}
+    proof = {"gacha_id": 100096, "view_id": 31, "members": [31, 42],
+             "pool_checksum": "c" * 64, "gacha_checksum": "d" * 64, "group_checksum": "e" * 64}
+    async with database() as session:
+        await store_client_events(session, {"100": old, "101": record("Second")}, "3.8.0", "pinned")
+        await session.commit()
+        member = await session.get(GameEventSnapshotMember, ("3.8.0", 1))
+        with pytest.raises(ValueError, match="compiler provenance"):
+            await store_client_events(session, {"100": {**old, "compiler_checksum": None,
+                                      "gacha_pool_proof": proof}, "101": record("Second")}, "3.8.0", "pinned")
+        await store_client_events(session, {"100": {**old, "compiler_checksum": "f" * 64,
+                                  "gacha_pool_proof": proof}, "101": record("Second")}, "3.8.0", "pinned")
+        assert member.client_capture["gacha_pool_proof"] == proof
+        assert member.client_capture["source_checksum"] == "a" * 64
+
+
+@pytest.mark.asyncio
 async def test_recompile_corrects_derived_resources_without_rewriting_period(database):
     old = {**record("First"), "source_checksum": "a" * 64, "compiler_checksum": "b" * 64,
            "resources": [{"path": "/Game/ShipTower"}], "artwork": [{"path": "/Game/ShipTower"}],

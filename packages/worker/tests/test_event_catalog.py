@@ -76,6 +76,51 @@ def test_missing_localization_is_reported_without_inventing_a_title(tmp_path):
     assert client_event_record(catalog, "2:102000009")["locales"] == {}
 
 
+def test_pool_proof_follows_generated_gachaid_field_and_exact_parent_join(tmp_path):
+    config = fixture_config(tmp_path)
+    readers = config / "readers/Config"
+    readers.mkdir(parents=True)
+    (readers / "Activity.js").write_text(
+        'title(){var t=this.J7.__offset(this.z7,46);return t}desc(){var t=this.J7.__offset(this.z7,50);return t}'
+        'bgresource(){var t=this.J7.__offset(this.z7,52);return t}', encoding="utf-8")
+    (readers / "GachaViewInfo.js").write_text(
+        'showidlist(t){var i=this.J7.__offset(this.z7,36);return i}'
+        'underbgtexturepath(t){var i=this.J7.__offset(this.z7,24);return i}', encoding="utf-8")
+    (readers / "GachaPool.js").write_text(
+        'get GachaId(){return this.gachaid()}gachaid(){var t=this.J7.__offset(this.z7,8);'
+        'return t?this.J7.readInt32(this.z7+t):0}', encoding="utf-8")
+
+    def numbers(*values):
+        builder = flatbuffers.Builder(128)
+        builder.StartObject(len(values))
+        for index, value in enumerate(values):
+            builder.PrependInt32Slot(index, value, 0)
+        builder.Finish(builder.EndObject())
+        return bytes(builder.Output())
+
+    with sqlite3.connect(config / "db_gacha.db") as db:
+        db.execute("CREATE TABLE gacha (Id INT, BinData BLOB)")
+        db.execute("CREATE TABLE gachapool (Id INT, BinData BLOB)")
+        db.executemany("INSERT INTO gacha VALUES (?, ?)", [(100096, numbers(100096)), (200096, numbers(200096))])
+        # Deliberately non-prefix IDs and one missing view prove membership is source-driven.
+        db.executemany("INSERT INTO gachapool VALUES (?, ?)", [
+            (31, numbers(31, 999, 100096)), (42, numbers(42, 999, 100096)),
+            (53, numbers(53, 999, 100096)), (64, numbers(64, 999, 999999)),
+        ])
+        db.executemany("INSERT INTO gachaviewinfo VALUES (?, ?)", [(31, blob({})), (42, blob({})), (64, blob({}))])
+    catalog = read_event_catalog(config, readers)
+    first, second = (catalog[f"gacha:{key}"]["gacha_pool_proof"] for key in (31, 42))
+    assert first["gacha_id"] == second["gacha_id"] == 100096
+    assert first["members"] == second["members"] == [31, 42, 53]
+    assert first["view_id"] == 31 and second["view_id"] == 42
+    assert first["group_checksum"] == second["group_checksum"]
+    assert first["pool_checksum"] != second["pool_checksum"]
+    assert "gacha_pool_proof" not in catalog["gacha:64"]
+    (readers / "GachaPool.js").write_text('get GachaId(){return this.bad()}bad(){return 0}', encoding="utf-8")
+    with pytest.raises(ValueError, match="Unsupported GachaPool.GachaId"):
+        read_event_catalog(config, readers)
+
+
 def test_ship_tower_entry_uses_authored_module_without_leaking_to_matrix(tmp_path):
     config = fixture_config(tmp_path)
     builder = flatbuffers.Builder(128)

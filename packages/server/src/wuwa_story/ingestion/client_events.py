@@ -28,7 +28,7 @@ def _version_key(value):
 
 _ENRICHMENT_FIELDS = {"prefab_artwork", "prefab_spine_resources", "missing_resources", "animation_import",
                       "_capture_provenance"}
-_DERIVED_FIELDS = {"artwork", "resources", "activity_module", "compiler_checksum"}
+_DERIVED_FIELDS = {"artwork", "resources", "activity_module", "compiler_checksum", "gacha_pool_proof"}
 
 
 def _capture_core(capture):
@@ -110,6 +110,89 @@ async def _bind_ordinary_banners(session, events, presentations, existing):
                 event.canonical_evidence = {"basis": "catalog_identity_policy", "reference": f"GachaViewInfo:type2:role:{role}"}
 
 
+def _selectable_pool(source_id, capture):
+    """Validate compiler-produced proof, never infer parent IDs from view IDs."""
+    if (not source_id.startswith("gacha:") or capture.get("table") != "GachaViewInfo"
+            or capture.get("gacha_type") not in {7, 8, 9, 10, 13, 14}):
+        return None
+    proof = capture.get("gacha_pool_proof")
+    if not isinstance(proof, dict):
+        return None
+    view = source_id.removeprefix("gacha:")
+    members = proof.get("members")
+    parent = proof.get("gacha_id")
+    if (not view.isdecimal() or type(parent) is not int or parent <= 0
+            or type(proof.get("view_id")) is not int or proof["view_id"] != int(view)
+            or not isinstance(members, list) or len(members) < 2
+            or any(type(item) is not int or item <= 0 for item in members)
+            or members != sorted(set(members)) or int(view) not in members
+            or any(not isinstance(proof.get(key), str) or not re.fullmatch(r"[0-9a-f]{64}", proof[key])
+                   for key in ("pool_checksum", "gacha_checksum", "group_checksum"))):
+        return None
+    return (parent, capture["gacha_type"], tuple(members), proof["gacha_checksum"], proof["group_checksum"])
+
+
+def _selectable_binding(event):
+    evidence = getattr(event, "canonical_evidence", None)
+    if not isinstance(evidence, dict) or evidence.get("basis") != "game_source":
+        return None
+    reference = evidence.get("reference")
+    members = evidence.get("members")
+    if (not isinstance(reference, str) or not reference.startswith("GachaPool:")
+            or not reference.removeprefix("GachaPool:").isdecimal()
+            or evidence.get("gacha_type") not in {7, 8, 9, 10, 13, 14}
+            or not isinstance(members, list) or any(type(item) is not int for item in members)):
+        return None
+    return (int(reference.removeprefix("GachaPool:")), evidence["gacha_type"], tuple(members))
+
+
+async def _bind_selectable_pools(session, events, presentations, existing):
+    groups = {}
+    for event, capture in zip(events, presentations, strict=True):
+        if proof := _selectable_pool(event.source_id, capture):
+            groups.setdefault(proof, []).append(event)
+    groups = {proof: rows for proof, rows in groups.items()
+              if {int(row.source_id.removeprefix("gacha:")) for row in rows} == set(proof[2])}
+    if not groups:
+        return
+    ids = [row.id for rows in groups.values() for row in rows]
+    members = list(await session.scalars(select(GameEventSnapshotMember).where(
+        GameEventSnapshotMember.event_id.in_(ids))))
+    history = {}
+    for member in members:
+        history.setdefault(member.event_id, []).append(member.client_capture)
+    for proof, rows in groups.items():
+        if any(not history.get(row.id) or any(
+            not isinstance(capture, dict) or not (old := _selectable_pool(row.source_id, capture))
+            or old[:3] != proof[:3]
+            for capture in history[row.id]) for row in rows):
+            continue
+        row_ids = {row.id for row in rows}
+        parents = {row.canonical_event_id for row in rows if row.canonical_event_id is not None}
+        if len(parents) > 1 or (parents and not parents <= row_ids):
+            continue
+        if any(row.canonical_event_id is not None and (
+            not isinstance(row.canonical_evidence, dict)
+            or row.canonical_evidence.get("basis") != "game_source"
+            or row.canonical_evidence.get("reference") != f"GachaPool:{proof[0]}"
+        ) for row in rows):
+            continue
+        root = next(iter(parents)) if parents else min(row_ids)
+        if any(row.canonical_event_id is not None for row in rows if row.id == root):
+            continue
+        if any(row.canonical_event_id == root and row.id not in row_ids for row in existing):
+            continue
+        candidates = {row.id for row in rows if row.id != root and row.canonical_event_id is None}
+        if any(row.canonical_event_id in candidates for row in existing):
+            continue
+        for row in rows:
+            if row.id in candidates:
+                row.canonical_event_id = root
+                row.canonical_evidence = {"basis": "game_source", "reference": f"GachaPool:{proof[0]}",
+                                          "gacha_type": proof[1], "members": list(proof[2]),
+                                          "gacha_checksum": proof[3], "group_checksum": proof[4]}
+
+
 def _covers_catalog_capture(row, presentation, version):
     snapshot = (row.source_data or {}).get("client") or {}
     scheduled = bool(getattr(row, "starts_at", None) or getattr(row, "ends_at", None))
@@ -145,9 +228,12 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
     indexed = {
         event.source_id: event for event in existing if event.source == CLIENT_SOURCE}
     automatic_children = {}
+    selectable_children = {}
     for item in existing:
         if role := _ordinary_binding_role(item):
             automatic_children.setdefault(item.canonical_event_id, set()).add(role)
+        if binding := _selectable_binding(item):
+            selectable_children.setdefault(item.canonical_event_id, set()).add(binding)
     legacy = {}
     for event in existing:
         if event.source != SOURCE:
@@ -165,6 +251,12 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
                 roles.add(role)
             if roles and roles != {_ordinary_banner_role(client_identity(key), record)}:
                 raise ValueError("Imported source conflicts with an existing canonical banner binding")
+            bindings = set(selectable_children.get(event.id, ()))
+            if binding := _selectable_binding(event):
+                bindings.add(binding)
+            proof = _selectable_pool(client_identity(key), record)
+            if bindings and (not proof or bindings != {proof[:3]}):
+                raise ValueError("Imported source conflicts with an existing selectable pool binding")
         member = members_by_id.get(event.id) if event else None
         if snapshot and snapshot.complete and member is None:
             raise ValueError("Existing complete event snapshot differs from the imported catalog")
@@ -262,6 +354,7 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
             member.client_capture = updated
     await session.flush()
     await _bind_ordinary_banners(session, events, presentations, existing)
+    await _bind_selectable_pools(session, events, presentations, existing)
     occurrences = list(await session.scalars(select(GameEventOccurrence).where(
         GameEventOccurrence.event_id.in_([e.id for e in events]),
         or_(GameEventOccurrence.game_version == version,
