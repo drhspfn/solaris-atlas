@@ -71,6 +71,7 @@ class EventService:
         event_id: int | None = None,
         occurrence_id: int | None = None,
         _include_pool_match: bool = False,
+        occurrence_ids: list[int] | None = None,
     ) -> dict[str, Any]:
         runs = await self.repository.runs(
             server=server,
@@ -80,6 +81,7 @@ class EventService:
             summary=summary,
             event_id=event_id,
             occurrence_id=occurrence_id,
+            **({"occurrence_ids": occurrence_ids} if occurrence_ids is not None else {}),
         )
         artwork = {run.key: _artwork(run.event, run.occurrence) for run in runs}
         announcements = await self._announcements(runs, event_id)
@@ -96,7 +98,7 @@ class EventService:
         }
         reward_nodes = await self.repository.reward_nodes(reward_keys)
         reward_addresses = {node.canonical_key: node_address(node, "item") for node in reward_nodes}
-        images = await self._images(runs, artwork)
+        images = await self._images(runs, artwork, per_run=occurrence_ids is not None)
         captures = {
             (run.event.source_id, client['download_id'])
             for run in runs
@@ -114,7 +116,8 @@ class EventService:
                         bundle.metadata, self.animation_enabled))
         rendered = [
             self._render(run, server, locale, summary, artwork[run.key], presentations[run.key],
-                         announcements, reward_addresses, images, spine)
+                         announcements, reward_addresses,
+                         images[run.key] if occurrence_ids is not None else images, spine)
             for run in runs
         ]
         if version and summary:
@@ -227,11 +230,12 @@ class EventService:
         self,
         runs: list[EventRun],
         artwork: dict[tuple[int, int | None], list[dict[str, Any]]],
-    ) -> dict[tuple[str, str], str]:
+        *, per_run: bool = False,
+    ) -> dict:
         paths = {asset["path"] for run in runs for asset in artwork[run.key]}
         paths.update(run.banner_path for run in runs if run.banner_path)
         if not paths:
-            return {}
+            return {run.key: {} for run in runs} if per_run else {}
         captures = {
             (_client_data(run.event, run.occurrence).get("download_id", ""), path)
             for run in runs
@@ -239,18 +243,25 @@ class EventService:
             if path
         }
         media = await self.repository.media(paths, captures=captures)
-        images: dict[tuple[str, str], str] = {}
-        for image in media:
-            if image.source_path is None:
-                continue
-            download = image.metadata.get("download_id", "")
-            if image.source_path in paths:
-                images.setdefault((download, image.source_path), self.media_url(image.object_key))
-            else:
-                for path in paths:
-                    if not path.startswith("/Game/") and image.source_path.endswith("/" + path):
-                        images.setdefault((download, path), self.media_url(image.object_key))
-        return images
+        def urls(selected_paths):
+            images: dict[tuple[str, str], str] = {}
+            for image in media:
+                if image.source_path is None:
+                    continue
+                download = image.metadata.get("download_id", "")
+                if image.source_path in selected_paths:
+                    images.setdefault((download, image.source_path), self.media_url(image.object_key))
+                else:
+                    for path in selected_paths:
+                        if not path.startswith("/Game/") and image.source_path.endswith("/" + path):
+                            images.setdefault((download, path), self.media_url(image.object_key))
+            return images
+
+        # A sibling's exact path must not suppress another period's suffix fallback.
+        if per_run:
+            return {run.key: urls({asset["path"] for asset in artwork[run.key]} |
+                                 ({run.banner_path} if run.banner_path else set())) for run in runs}
+        return urls(paths)
 
     def _render(
         self,

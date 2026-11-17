@@ -31,6 +31,7 @@ from wuwa_story.events.domain import (
     EventRun,
 )
 from wuwa_story.events.domain import PREVIEW_ROLES as _PREVIEW_ROLES
+from wuwa_story.events.repository import EVENT_RUN_BATCH_SIZE
 from wuwa_story.events.selectable_pools import proven_member_ids
 
 
@@ -46,11 +47,89 @@ def _capture_enrichment(capture, candidate):
     return case((same_source, extra), else_=cast({}, JSONB))
 
 
+def _captured_source(source, captured, *, event_source=None):
+    client = captured.op("||")(_capture_enrichment(captured, source["client"]))
+    if event_source is not None:
+        client = client.op("||")(_capture_enrichment(captured, event_source["client"]))
+    return func.jsonb_set(func.coalesce(source, cast({}, JSONB)),
+        cast(literal("{client}"), ARRAY(Text)), client, type_=JSONB)
+
+
+async def _read_occurrence_batch(session, *, server, version, event_id, occurrence_ids):
+    """Read the large event header once; transfer at most 16 period captures at a time."""
+    if event_id is None or occurrence_ids is not None and (
+        not occurrence_ids or len(occurrence_ids) > EVENT_RUN_BATCH_SIZE
+    ):
+        raise ValueError("Event occurrence batches require one event and 1..16 period IDs")
+    from wuwa_story.read_models.context import SOURCE_BUILD
+
+    cache = session.info.setdefault("story_event_batch_headers", {}) if SOURCE_BUILD.get() else {}
+    key = (event_id, version)
+    if key not in cache:
+        event = await session.get(GameEvent, event_id)
+        if event is None or event.source != CLIENT_SOURCE:
+            return []
+        if version:
+            # Only the selected client capture crosses this query, not another full header.
+            capture = GameEventSnapshotMember.client_capture
+            client = await session.scalar(select(
+                capture.op("||")(_capture_enrichment(capture, GameEvent.source_data["client"]))
+            ).select_from(GameEventSnapshotMember)
+                .join(GameEvent, GameEvent.id == GameEventSnapshotMember.event_id)
+                .join(GameEventSnapshot, GameEventSnapshot.version == GameEventSnapshotMember.version)
+                .where(GameEventSnapshotMember.event_id == event_id,
+                       GameEventSnapshotMember.version == version, GameEventSnapshot.complete.is_(True)))
+            if client is None:
+                return []
+            if not isinstance(client, dict) or not client.get("download_id"):
+                raise HTTPException(503, "The selected event snapshot capture is not ready")
+            event = SimpleNamespace(**{column.key: getattr(event, column.key)
+                                       for column in GameEvent.__table__.columns})
+            event.source_data = {**(event.source_data or {}), "client": client}
+        cache[key] = event
+    event = cache[key]
+    if occurrence_ids is None:
+        existing = await session.scalar(select(GameEventOccurrence.id).where(
+            GameEventOccurrence.event_id == event_id, GameEventOccurrence.server == server).limit(1))
+        return [(event, None)] if existing is None else []
+    fields = [column.key for column in GameEventOccurrence.__table__.columns]
+    source = GameEventOccurrence.source_data
+    statement = select(GameEventOccurrence).where(
+        GameEventOccurrence.event_id == event_id, GameEventOccurrence.server == server,
+        GameEventOccurrence.id.in_(occurrence_ids),
+    ).order_by(GameEventOccurrence.starts_at.desc().nullslast(), GameEventOccurrence.id)
+    if version:
+        statement = (statement.join(GameEvent, GameEvent.id == GameEventOccurrence.event_id)
+            .join(GameEventSnapshotMember, and_(GameEventSnapshotMember.event_id == GameEvent.id,
+                                               GameEventSnapshotMember.version == version))
+            .join(GameEventSnapshot, GameEventSnapshot.version == GameEventSnapshotMember.version)
+            .where(GameEventSnapshot.complete.is_(True)))
+        source = _captured_source(source, GameEventSnapshotMember.client_capture,
+                                  event_source=GameEvent.source_data)
+    # No joined GameEvent.* columns: its potentially huge prefab JSON is shared.
+    rows = (await session.execute(statement.with_only_columns(*[
+        source if field == "source_data" else getattr(GameEventOccurrence, field)
+        for field in fields
+    ]))).all()
+    return [(event, SimpleNamespace(**dict(zip(fields, row, strict=True)))) for row in rows]
+
+
 async def read_event_runs(
     session: AsyncSession, *, server: str, kind: str | None = None,
     version: str | None = None, locale: str = "en", summary: bool = False,
     event_id: int | None = None, occurrence_id: int | None = None,
+    occurrence_ids: list[int] | None = None,
 ) -> list[Any]:
+    if occurrence_ids is not None:
+        if kind is not None or summary or occurrence_id is not None:
+            raise ValueError("Occurrence batching is for full, exact event projection only")
+        return await _read_occurrence_batch(session, server=server, version=version,
+                                          event_id=event_id, occurrence_ids=occurrence_ids)
+    from wuwa_story.read_models.context import SOURCE_BUILD
+
+    if SOURCE_BUILD.get() and server == "" and event_id is not None and occurrence_id is None and not summary and kind is None:
+        return await _read_occurrence_batch(session, server=server, version=version,
+                                          event_id=event_id, occurrence_ids=None)
     statement = (
         select(GameEvent, GameEventOccurrence)
         .outerjoin(
@@ -92,11 +171,8 @@ async def read_event_runs(
             source = model.source_data
             if version:
                 captured = GameEventSnapshotMember.client_capture
-                client = captured.op("||")(_capture_enrichment(captured, source["client"]))
-                if model is GameEventOccurrence:
-                    client = client.op("||")(_capture_enrichment(captured, GameEvent.source_data["client"]))
-                source = func.jsonb_set(func.coalesce(source, cast({}, JSONB)),
-                    cast(literal("{client}"), ARRAY(Text)), client, type_=JSONB)
+                source = _captured_source(source, captured,
+                    event_source=GameEvent.source_data if model is GameEventOccurrence else None)
             columns.extend(
                 (_summary_source(source, locale) if summary else source) if name == "source_data"
                 else getattr(model, name) for name in fields)
@@ -352,10 +428,12 @@ class SqlAlchemyEventRepository:
     async def runs(
         self, *, server: str, kind: str | None, version: str | None, locale: str,
         summary: bool, event_id: int | None, occurrence_id: int | None,
+        occurrence_ids: list[int] | None = None,
     ) -> list[EventRun]:
         rows = await read_event_runs(
             self.session, server=server, kind=kind, version=version, locale=locale,
             summary=summary, event_id=event_id, occurrence_id=occurrence_id,
+            **({"occurrence_ids": occurrence_ids} if occurrence_ids is not None else {}),
         )
         return [
             EventRun(

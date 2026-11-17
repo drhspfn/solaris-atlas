@@ -34,6 +34,7 @@ from wuwa_story.events.catalog import is_catalog_capture
 from wuwa_story.events.catalog_duplicates import client_signature
 from wuwa_story.events.composition import browse_events
 from wuwa_story.events.domain import is_preview_artwork
+from wuwa_story.events.repository import EVENT_RUN_BATCH_SIZE
 from wuwa_story.events.selectable_pools import pool_match
 from wuwa_story.ingestion.character_artwork import character_artwork_scope
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
@@ -405,25 +406,29 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
         )
     )
     selected, unversioned = [], []
+    by_server = {}
+    for row in runs:
+        by_server.setdefault(row[1], []).append(row[0])
+    rendered = {}
+    for server, identities in by_server.items():
+        for offset in range(0, len(identities), EVENT_RUN_BATCH_SIZE):
+            batch = identities[offset:offset + EVENT_RUN_BATCH_SIZE]
+            response = await browse_events(
+                server, None, snapshot_key if selected_version is not None else None,
+                locale, session, event_id=entity_id, occurrence_ids=batch,
+            )
+            for run in response["events"]:
+                if run["id"] == entity_id and run["occurrence_id"] in batch:
+                    key = (server, run["occurrence_id"])
+                    if key in rendered:
+                        raise ValueError("Event occurrence could not be projected unambiguously")
+                    rendered[key] = run
     for occurrence_id, server, version, source_occurrence_id, starts_at, ends_at, data in runs:
         run_version = _event_version(version)
-        response = await browse_events(
-            server,
-            None,
-            snapshot_key if selected_version is not None else None,
-            locale,
-            session,
-            event_id=entity_id,
-            occurrence_id=occurrence_id,
-        )
-        matching = [
-            run
-            for run in response["events"]
-            if run["id"] == entity_id and run["occurrence_id"] == occurrence_id
-        ]
-        if len(matching) != 1:
+        matching = rendered.pop((server, occurrence_id), None)
+        if matching is None:
             raise ValueError("Event occurrence could not be projected unambiguously")
-        run = {**matching[0], "server": server, "game_version": version,
+        run = {**matching, "server": server, "game_version": version,
                "_catalog_placeholder": is_catalog_capture(source_occurrence_id, starts_at, ends_at, data),
                "_client_signature": client_signature(data)}
         if match := pool_match(data):
