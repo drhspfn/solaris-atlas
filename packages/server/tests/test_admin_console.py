@@ -168,6 +168,49 @@ async def test_native_memory_form_uses_versioned_service(console):
     assert stale.status_code == 422
 
 
+async def test_event_period_admin_requires_admin_and_preserves_partial_utc_dates(console):
+    from datetime import UTC, datetime
+
+    from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
+
+    client, factory, settings, admin, _, _, member_token, suffix, _ = console
+    async with factory() as db:
+        event = GameEvent(source="test", source_id="event-" + suffix, title="Period test " + suffix,
+                          event_kind="limited", source_url="https://example.test", source_revision="test",
+                          source_data={})
+        db.add(event)
+        await db.commit()
+        event_id = event.id
+    assert (await client.get("/console/event-periods/list")).status_code == 303
+    client.cookies.set(settings.auth_cookie_name, member_token)
+    assert (await client.get("/console/event-periods/list")).status_code == 403
+    authorize(console)
+    payload = {"event_id": str(event_id), "server": "europe", "game_version": "3.8",
+               "starts_at": "", "ends_at": "1900-01-02T03:04:00"}
+    assert (await client.post("/console/event-periods/create", data=payload)).status_code == 403
+    response = await client.post("/console/event-periods/create", data=payload,
+                                 headers={"Origin": "http://console.test"})
+    assert response.status_code == 303, response.text[-2500:]
+    async with factory() as db:
+        row = await db.scalar(select(GameEventOccurrence).where(GameEventOccurrence.event_id == event_id))
+        assert row and row.starts_at is None and row.ends_at == datetime(1900, 1, 2, 3, 4, tzinfo=UTC)
+        assert row.source_occurrence_id.startswith("manual:") and row.source_data["schedule_source"] == "manual"
+        occurrence_id = row.id
+        receipt = await db.scalar(select(AgentToolAudit).where(
+            AgentToolAudit.tool == "console.event_period.create",
+            AgentToolAudit.arguments["object_id"].as_integer() == occurrence_id,
+        ))
+        assert receipt and receipt.arguments["actor_user_id"] == admin.id
+    listing = await client.get("/console/api/event-periods")
+    assert listing.status_code == 200 and "Period test " + suffix in listing.text
+    invalid = {"game_version": "3.8", "starts_at": "1900-01-03T00:00:00", "ends_at": "1900-01-02T00:00:00"}
+    assert (await client.post(f"/console/event-periods/edit/{occurrence_id}", data=invalid,
+                              headers={"Origin": "http://console.test"})).status_code == 422
+    valid = {**invalid, "starts_at": ""}
+    assert (await client.post(f"/console/event-periods/edit/{occurrence_id}", data=valid,
+                              headers={"Origin": "http://console.test"})).status_code == 303
+
+
 async def test_revocation_is_immediate_and_get_actions_require_same_origin(console):
     client = authorize(console)
     _, factory, _, admin, *_ = console

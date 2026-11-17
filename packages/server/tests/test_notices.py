@@ -281,6 +281,38 @@ async def test_notice_import_preserves_partial_schedule_provenance():
 
 
 @pytest.mark.asyncio
+async def test_notice_reimport_keeps_manual_unknown_start_and_end():
+    event = SimpleNamespace(id=7, title="Artisan's Search", event_kind="limited",
+                            banner_path="/Game/Art", source_data={"client": {"download_id": "test"}})
+    session = AsyncMock()
+    session.scalars.side_effect = [[event], [], [], [], [event]]
+    session.scalar.return_value = None
+    added = []
+    session.add = added.append
+    async def flush():
+        for row in added:
+            if isinstance(row, GameNotice):
+                row.id = 12
+    session.flush.side_effect = flush
+    raw = raw_notice(content="<p>✦Duration✦</p><p>Version 3.8 Update - 2026-12-21 03:59 (server time)</p><p>✦Rules✦</p>")
+    await store_notices(session, "https://feed.test", "https://board.test", {"game": [raw]})
+    notice, *runs = added
+    manual_end = datetime(1900, 1, 1, tzinfo=UTC)
+    for row in runs:
+        row.starts_at = None
+        row.ends_at = manual_end
+        row.game_version = "manual-version"
+        row.source_data = {**row.source_data, "schedule_source": "manual"}
+    session.scalar.side_effect = [notice, *runs]
+    added.clear()
+    await store_notices(session, "https://feed.test", "https://board.test", {"game": [raw]})
+    assert not added
+    assert all(row.starts_at is None and row.ends_at == manual_end and row.game_version == "manual-version"
+               and row.source_data["schedule_source"] == "manual" and row.source_data["notice_id"] == 12
+               for row in runs)
+
+
+@pytest.mark.asyncio
 async def test_version_anchor_uses_latest_previous_banner_and_rejects_ambiguous_boundaries():
     from sqlalchemy.dialects import postgresql
 
