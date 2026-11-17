@@ -208,7 +208,7 @@ async def _prepare_sequence_audio(root, bundle, fmodel, converter, voice_root, s
                     for bank in value.get('SoundBanks', []):
                         path = bank['SoundBankPathName']
                         _safe(path)
-                        if not path.startswith('Event/') or PurePosixPath(path).name != stem + '.bnk':
+                        if not path.startswith('Event/') or PurePosixPath(path).name.casefold() != (stem + '.bnk').casefold():
                             raise ValueError(
                                 'Unsupported cooked sequence bank path')
                         expected_banks.add(
