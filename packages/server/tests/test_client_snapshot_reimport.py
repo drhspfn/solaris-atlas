@@ -335,6 +335,27 @@ async def test_import_preserves_manual_period_with_unknown_dates(database):
         assert period.banner_path == "/Game/Reviewed"
 
 
+@pytest.mark.asyncio
+async def test_new_patch_without_old_view_keeps_existing_event_identity(database):
+    banner = {**record("Ordinary banner"), "table": "GachaViewInfo", "gacha_type": 2,
+              "featured_ids": [1210], "event_kind": "banner"}
+    async with database() as session:
+        head = await session.get(GameEventSnapshot, "3.8.0")
+        head.complete = False
+        (await session.get(GameEvent, 1)).source_id = "gacha:739"
+        await session.flush()
+        await store_client_events(session, {"gacha:739": banner, "101": record("Second")}, "3.8.0", "pinned")
+        await session.commit()
+        original = await session.scalar(select(GameEvent).where(GameEvent.source_id == "gacha:739"))
+        await store_client_events(session, {"gacha:1893": banner}, "3.9.0", "next-download")
+        await session.commit()
+        added = await session.scalar(select(GameEvent).where(GameEvent.source_id == "gacha:1893"))
+        assert added.canonical_event_id == original.id
+        assert added.canonical_evidence["basis"] == "catalog_identity_policy"
+        assert (await session.get(GameEventSnapshotMember, ("3.8.0", original.id))).client_capture
+        assert await session.get(GameEventSnapshotMember, ("3.9.0", original.id)) is None
+
+
 async def retained_capture(session):
     capture = {**record("First"), "table": "Activity", "asset_version": "3.8.0", "download_id": "pinned",
                "schedule_status": "server_controlled", "title_key": "Activity_100_Title"}

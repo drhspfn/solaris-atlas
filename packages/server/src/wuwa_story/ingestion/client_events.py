@@ -61,7 +61,7 @@ def _ordinary_binding_role(event):
         return None
     reference = evidence.get("reference", "")
     prefix = "GachaViewInfo:type2:role:"
-    if evidence.get("basis") == "game_source" and isinstance(reference, str) and reference.startswith(prefix):
+    if evidence.get("basis") in {"game_source", "catalog_identity_policy"} and isinstance(reference, str) and reference.startswith(prefix):
         suffix = reference.removeprefix(prefix)
         return int(suffix) if suffix.isdecimal() else None
     return None
@@ -69,9 +69,17 @@ def _ordinary_binding_role(event):
 
 async def _bind_ordinary_banners(session, events, presentations, existing):
     groups = {}
+    imported = {event.id for event in events}
     for event, capture in zip(events, presentations, strict=True):
         if role := _ordinary_banner_role(event.source_id, capture):
             groups.setdefault(role, []).append(event)
+    # A new patch need not retain the previous view ID. Its historical event is
+    # still the canonical catalog subject; the new view is another source record.
+    for event in existing:
+        if event.id not in imported and event.source == CLIENT_SOURCE:
+            capture = (event.source_data or {}).get("client") or {}
+            if role := _ordinary_banner_role(event.source_id, capture):
+                groups.setdefault(role, []).append(event)
     groups = {role: rows for role, rows in groups.items() if len(rows) > 1}
     if not groups:
         return
@@ -99,7 +107,7 @@ async def _bind_ordinary_banners(session, events, presentations, existing):
         for event in rows:
             if event.id in candidates:
                 event.canonical_event_id = root
-                event.canonical_evidence = {"basis": "game_source", "reference": f"GachaViewInfo:type2:role:{role}"}
+                event.canonical_evidence = {"basis": "catalog_identity_policy", "reference": f"GachaViewInfo:type2:role:{role}"}
 
 
 def _covers_catalog_capture(row, presentation, version):
