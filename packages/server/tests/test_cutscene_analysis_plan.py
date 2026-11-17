@@ -120,5 +120,5 @@ async def test_legacy_in_progress_blocks_duplicate_cost(monkeypatch):
     db = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(sha256=b"source")),
                          scalar=AsyncMock(return_value=42))
     refs = {1: SimpleNamespace(file_id=101, metadata_json={"asset_version": "3.8.0"})}
-    with pytest.raises(ValueError, match="already in progress"):
+    with pytest.raises(ValueError, match="already exists"):
         await api._existing_whole_scene_job(db, {"selection": {"reusable_whole_scene_asset_ids": [1]}}, refs)

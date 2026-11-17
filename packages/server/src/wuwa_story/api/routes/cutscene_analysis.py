@@ -279,14 +279,13 @@ async def _existing_whole_scene_job(session, plan, references):
             continue
         if (report is None or report.metadata_json.get("source_file_id") != ref.file_id
                 or report.metadata_json.get("source_sha256") != source.sha256.hex()):
-            active = await session.scalar(select(ProcessingRun.id).join(Processor).where(
+            previous = await session.scalar(select(ProcessingRun.id).join(Processor).where(
                 Processor.key == "cutscene_vision", ProcessingRun.target_node_id == asset_id,
-                ProcessingRun.status.in_(("pending", "running")),
                 ProcessingRun.metadata_json["asset_version"].astext == ref.metadata_json["asset_version"],
                 ProcessingRun.metadata_json["source_sha256"].astext == source.sha256.hex(),
             ).limit(1))
-            if active:
-                raise ValueError("A legacy analysis of this whole-scene alternative is already in progress")
+            if previous:
+                raise ValueError("A legacy analysis of this whole-scene alternative already exists; reconcile it first")
             continue
         digest = report.metadata_json.get("source_sha256")
         run = await session.scalar(select(ProcessingRun).join(Processor).where(
