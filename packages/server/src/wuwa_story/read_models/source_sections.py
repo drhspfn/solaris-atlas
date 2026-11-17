@@ -372,6 +372,12 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
     event = await session.get(GameEvent, entity_id)
     if event is None or event.source != CLIENT_SOURCE:
         raise HTTPException(404, "Event not found")
+    if selected_version is not None:
+        member = await session.get(GameEventSnapshotMember, (snapshot_key, entity_id))
+        if member is None:
+            raise HTTPException(404, "Event is not in the selected catalog snapshot")
+        if not isinstance(member.client_capture, dict):
+            raise HTTPException(503, "The selected event snapshot capture is not ready")
     runs = list(
         await session.execute(
             select(
@@ -401,8 +407,6 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
     selected, unversioned = [], []
     for occurrence_id, server, version, source_occurrence_id, starts_at, ends_at, data in runs:
         run_version = _event_version(version)
-        if snapshot_key != "current" and run_version not in (selected_version, None):
-            continue
         response = await browse_events(
             server,
             None,
@@ -428,10 +432,6 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
             unversioned.append(run)
         else:
             selected.append(run)
-    if selected_version is not None and not selected:
-        member = await session.get(GameEventSnapshotMember, (snapshot_key, entity_id))
-        if member is None:
-            raise HTTPException(404, "Event is not in the selected catalog snapshot")
     # A catalog member exists independently of whether a period was recorded.
     summary = {
         "id": event.id,
