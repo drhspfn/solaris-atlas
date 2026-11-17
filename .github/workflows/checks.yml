@@ -55,6 +55,17 @@ jobs:
   worker:
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'Run checks'
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: event_snapshot_ci_verification
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d event_snapshot_ci_verification"
+          --health-interval 5s --health-timeout 3s --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -68,6 +79,7 @@ jobs:
         env:
           WUWA_WORKER_WORKSPACE: ${{ runner.temp }}/wuwa-worker
           WUWA_ASSET_WORKSPACE: ${{ runner.temp }}/wuwa-worker/client-assets
+          WUWA_EVENT_SNAPSHOT_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/event_snapshot_ci_verification
         run: uv run pytest -q
 
   server-and-visual-memory:
