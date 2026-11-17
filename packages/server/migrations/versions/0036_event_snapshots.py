@@ -30,3 +30,5 @@ def upgrade():
 def downgrade():
     op.drop_table("game_event_snapshot_member", schema="core")
     op.drop_table("game_event_snapshot", schema="core")
+    op.execute("DELETE FROM ops.public_cache_revision WHERE table_name IN "
+               "('core.game_event_snapshot', 'core.game_event_snapshot_member')")
