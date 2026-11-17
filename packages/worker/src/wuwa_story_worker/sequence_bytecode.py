@@ -50,7 +50,9 @@ def resolve_event_calls(exports, function_ref):
     package-local export indices and also retain the combined input index.
     Unbound entry parameters are named symbols, not guessed runtime values.
     Diagnostics are dictionaries with code, message and source; fatal diagnostics
-    discard partial calls. Input exports and their nested values are never changed.
+    discard partial calls. Runtime assignment calls retain their unevaluated
+    operands under source.runtime_operation; no branch or effect is inferred.
+    Input exports and their nested values are never changed.
     """
     functions = {i: e for i, e in enumerate(exports)
                  if isinstance(e, dict) and e.get('Type') == 'Function'}
@@ -236,6 +238,13 @@ def resolve_event_calls(exports, function_ref):
                 allowed = ('EX_True', 'EX_False', 'EX_LocalVariable') if token == 'EX_LetBool' else (
                     'EX_ObjectConst', 'EX_LocalVariable')
                 if not isinstance(expression, dict) or expression.get('Token') not in allowed:
+                    if isinstance(expression, dict) and expression.get('Token') in ('EX_CallMath', 'EX_Context'):
+                        diagnostics.append({'code': 'assignment_expression',
+                            'message': 'Assignment requires runtime execution; return value and effects are unknown',
+                            'source': {'trace': list(trace), 'runtime_operation': {
+                                'destination': deepcopy(destination), 'expression': deepcopy(expression),
+                                'executed': False, 'return_value': 'unknown', 'effects': 'unknown'}}})
+                        raise _Unsupported
                     fail('assignment_expression', 'Assignment expression may require runtime execution', trace)
                 if expression['Token'] == 'EX_LocalVariable':
                     source = field(expression.get('Variable'), trace)
