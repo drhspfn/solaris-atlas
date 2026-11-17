@@ -204,6 +204,15 @@ actual segment source file and processing run. Atlas manifests include the logic
 run identity; physical content-addressed files can still be shared. Status/readers
 and deletion must use the same scene identity while retaining legacy asset jobs.
 
+Analysis deletion requires an explicit asset version. It serializes with enqueueing
+and refuses active runs with HTTP 409. Root-owned reports are removed through the
+root owner; legacy asset-owned reports retain their existing owner. Only references,
+inferred edges, lore and atlas/preview variant associations belonging to the selected
+analysis are removed. Content-addressed files, locations and physical R2 objects are
+retained to avoid deleting shared data during concurrent publication. No automatic
+garbage collector for these retained objects is currently configured. Update all
+analysis producers before relying on the shared admission locks.
+
 ## Source failures and variant alignment
 
 Preparation normalizes authored Windows separators and records rejected movie
