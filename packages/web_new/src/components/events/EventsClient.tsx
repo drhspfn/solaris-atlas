@@ -599,6 +599,11 @@ export function EventsPage({
                         <strong>
                           <PlayerText value={event.title} display={display} />
                         </strong>
+                        {!!event.selectable_pool_id && !!event.featured_names?.length && (
+                          <small>{event.featured_names.map((name, index) => (
+                            <span key={name}>{index > 0 && " · "}<PlayerText value={name} display={display} /></span>
+                          ))}</small>
+                        )}
                         <small>
                           {kindLabels[event.kind]}
                           {runs.filter(run => run.occurrence_id != null).length > 1

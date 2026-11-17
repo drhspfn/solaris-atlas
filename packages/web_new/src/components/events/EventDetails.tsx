@@ -35,7 +35,12 @@ export function EventDetails({
   const [failure, setFailure] = useState<{ url: string; message: string } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const detailUrl = selection.detail_url;
-  const event = detailUrl && detail?.url === detailUrl ? detail.event : selection;
+  const loaded = detailUrl && detail?.url === detailUrl ? detail.event : selection;
+  // The gallery belongs to one source option; the catalog header describes the
+  // whole selectable pool assembled from its proven members.
+  const event = selection.occurrence_id === null && selection.selectable_pool_id
+    ? { ...loaded, title: selection.title, featured_names: selection.featured_names }
+    : loaded;
   const detailError = failure?.url === detailUrl ? failure?.message : null;
   const loadingDetail = !!detailUrl && detail?.url !== detailUrl && !detailError;
   useEffect(() => {

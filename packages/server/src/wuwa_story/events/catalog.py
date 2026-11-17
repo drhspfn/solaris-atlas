@@ -28,6 +28,15 @@ def catalog_rows(rows):
             public = {**row, "id": identity, "source_event_id": row.get("source_event_id", row["id"])}
             if row in captures:
                 public["occurrence_id"] = None
+                if row.get("selectable_pool_id"):
+                    options = [option for option in captures
+                               if option.get("selectable_pool_id") == row["selectable_pool_id"]
+                               and option.get("catalog_version") == row.get("catalog_version")]
+                    expected = {f"gacha:{member}" for member in row.get("selectable_pool_members", [])}
+                    if expected and expected == {option.get("source_id") for option in options}:
+                        public["featured_names"] = list(dict.fromkeys(
+                            name for option in options for name in option.get("featured_names", [])))
+                        public["title"] = "Selectable " + (row.get("convene_type") or "Convene")
             public.pop("_catalog_placeholder", None)
             result.append(public)
     return result

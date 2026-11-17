@@ -46,6 +46,7 @@ export type GameEvent = {
     | null;
   featured_names?: string[];
   up_names?: string[];
+  selectable_pool_id?: number;
   banner_path: string | null;
   banner_url?: string | null;
   preview_url?: string | null;

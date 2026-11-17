@@ -31,6 +31,17 @@ def test_catalog_without_periods_has_one_presentation_and_no_invented_period():
     assert result[0]["occurrence_id"] is None
 
 
+def test_selectable_catalog_header_describes_all_proven_options_not_one_participant():
+    rows = [{"id": identity, "canonical_event_id": 7, "occurrence_id": identity + 10,
+             "_catalog_placeholder": True, "catalog_version": "3.8.0", "source_id": f"gacha:{identity}",
+             "selectable_pool_id": 100, "selectable_pool_members": [7, 8],
+             "convene_type": "Resonator Convene", "featured_names": [name], "title": name}
+            for identity, name in [(7, "First"), (8, "Second")]]
+    row, = catalog_rows(rows)
+    assert row["title"] == "Selectable Resonator Convene"
+    assert row["featured_names"] == ["First", "Second"]
+
+
 def test_equal_names_never_bind_unrelated_events():
     assert [row["id"] for row in catalog_rows([
         {"id": 1, "occurrence_id": 10, "title": "Same"},

@@ -145,6 +145,18 @@ test('catalog shows one card and keeps independent undated periods selectable in
   detail.close();
 });
 
+test('pool gallery retains the canonical catalog header instead of a single option title', async () => {
+  const h = harness();
+  h.props.event = { ...summary, occurrence_id: null, selectable_pool_id: 100,
+    title: 'Selectable Resonator Convene', featured_names: ['First', 'Second'] };
+  h.render();
+  h.requests[0].resolve({ ...summary, title: 'First', featured_names: ['First'], artwork: [] });
+  await flush();
+  const heading = nodes(h.render()).find(node => node.type === 'h2');
+  assert.equal(heading.props.children.props.value, 'Selectable Resonator Convene');
+  h.close();
+});
+
 test('selection loads full gallery, retains image selection and cancels on close', async () => {
   const h = harness();
   assert(nodes(h.render()).some((n) => n.type?.name === 'EventDetailsSkeleton'));

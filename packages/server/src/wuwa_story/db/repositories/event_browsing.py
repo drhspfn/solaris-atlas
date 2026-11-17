@@ -134,6 +134,8 @@ def _summary_source(source: Any, locale: str) -> Any:
         "asset_version", field("client", "asset_version"),
         "hidden", func.coalesce(field("client", "hidden"), func.to_jsonb(False)),
         "convene_type", field("client", "convene_type"),
+        "gacha_type", field("client", "gacha_type"),
+        "gacha_pool_proof", field("client", "gacha_pool_proof"),
         "table", field("client", "table"),
         "title_key", field("client", "title_key"),
         "description_key", field("client", "description_key"),
