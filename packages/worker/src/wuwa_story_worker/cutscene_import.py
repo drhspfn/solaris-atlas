@@ -280,6 +280,12 @@ async def decode_soundtrack(track, assets, audio, work, decoder, decoded, music_
     return decoded[key]
 
 
+def audio_trim(length, source_offset=0):
+    """Trim source time before placing audio on the movie timeline."""
+    start = f'start={source_offset}:' if source_offset else ''
+    return f'atrim={start}duration={length}'
+
+
 async def localized_audio_recipe(video, movie, assets, audio, work, decoder, ffmpeg, duration, embedded_audio, asset_version, decoded=None, frame_stems=None):
     """Keep localized event voices separate from the original movie audio mix."""
     if not frame_stems and not any(track.language or getattr(track, "rover", None) for track in video.soundtrack):
@@ -308,6 +314,7 @@ async def localized_audio_recipe(video, movie, assets, audio, work, decoder, ffm
             evidence.append(destination.name)
         timing = SimpleNamespace(start_seconds=stem['start_seconds'],
                                  end_seconds=stem['end_seconds'], gain_db=0,
+                                 source_offset_seconds=stem.get('source_offset_seconds', 0),
                                  loop=stem.get('fixed_start', False))
         groups.setdefault((stem['role'], stem['language'], stem['rover']), []).append(
             (Path(stem['path']), timing, evidence))
@@ -334,7 +341,8 @@ async def localized_audio_recipe(video, movie, assets, audio, work, decoder, ffm
             length = min(track.end_seconds or duration, duration) - track.start_seconds
             if length <= 0:
                 raise ValueError("Soundtrack timing exceeds video duration")
-            filters.append(f"[{input_index}:a]atrim=duration={length},asetpts=PTS-STARTPTS,volume={track.gain_db}dB,adelay={round(track.start_seconds * 1000)}:all=1[t{input_index}]")
+            trim = audio_trim(length, getattr(track, 'source_offset_seconds', 0))
+            filters.append(f"[{input_index}:a]{trim},asetpts=PTS-STARTPTS,volume={track.gain_db}dB,adelay={round(track.start_seconds * 1000)}:all=1[t{input_index}]")
             streams.append(f"[t{input_index}]")
             evidence.extend(sources)
             input_index += 1
@@ -529,7 +537,8 @@ async def import_cutscene_recipe(
                 length = min(stem['end_seconds'] or duration, duration) - stem['start_seconds']
                 if length <= 0:
                     raise ValueError('Frame audio timing exceeds video duration')
-                filters.append(f"[{input_index}:a]atrim=duration={length},asetpts=PTS-STARTPTS,adelay={round(stem['start_seconds'] * 1000)}:all=1[nativeout{input_index}]")
+                trim = audio_trim(length, stem.get('source_offset_seconds', 0))
+                filters.append(f"[{input_index}:a]{trim},asetpts=PTS-STARTPTS,adelay={round(stem['start_seconds'] * 1000)}:all=1[nativeout{input_index}]")
                 streams.append(f'[nativeout{input_index}]')
             playable = work / f"{index}.mp4"
             has_audio = bool(streams)

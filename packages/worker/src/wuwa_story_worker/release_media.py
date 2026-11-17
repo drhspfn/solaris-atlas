@@ -567,6 +567,7 @@ async def frame_audio_inputs(root, assets, config, name, fmodel, work, voice_roo
     for binding in renderable:
         signatures.add(json.dumps({'events': [{key: event.get(key) for key in
             ('reference', 'start_seconds', 'end_seconds', 'mode', 'operation', 'event_config')}
+            | {'source_offset_seconds': event.get('source_offset_seconds', 0)}
             for event in binding['events']],
             'unresolved': binding['unresolved']}, sort_keys=True))
     if len(signatures) != 1:

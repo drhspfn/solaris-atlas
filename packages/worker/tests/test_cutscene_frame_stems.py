@@ -40,3 +40,18 @@ async def test_unsupported_source_still_keeps_video_and_reports_missing_audio(tm
     assert await cutscene_frame_stems.prepare_frame_stems(
         video, tmp_path, tmp_path, tmp_path / 'decoder', set(), missing) == []
     assert missing == ['/Game/Event.Event: unknown native role']
+
+
+@pytest.mark.asyncio
+async def test_frame_stem_preserves_source_offset(tmp_path, monkeypatch):
+    from wuwa_story.ingestion.cutscenes import FrameAudioInput
+
+    (tmp_path / 'audio').mkdir()
+    event = FrameAudioInput(bank='event.bnk', audio_directory='audio', language='en',
+                            reference='/Game/Aki/WwiseAudio/Events/example.example',
+                            start_seconds=1, source_offset_seconds=3.25, mode='Global')
+    monkeypatch.setattr(cutscene_frame_stems, 'render_role_stems', AsyncMock(return_value=[
+        {'path': tmp_path / 'stem.wav', 'role': 'voice'}]))
+    stems = await cutscene_frame_stems.prepare_frame_stems(
+        SimpleNamespace(frame_audio=[event]), tmp_path, tmp_path, tmp_path / 'decoder', set(), [])
+    assert stems[0]['source_offset_seconds'] == 3.25

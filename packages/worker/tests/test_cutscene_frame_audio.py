@@ -78,10 +78,20 @@ async def test_exact_localized_inputs_preserve_clock_proof_and_partial_languages
 
 
 @pytest.mark.asyncio
+async def test_source_offset_is_carried_to_each_localized_bank(prepared):
+    root, assets, event, fmodel, work = prepared
+    event['source_offset_seconds'] = 3.25
+    result = await audio.event_soundtracks(root, assets, 'Movie', {'events': [event]}, fmodel, work)
+    assert {track['source_offset_seconds'] for track in result['soundtracks']} == {3.25}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('changes', [
     {'start_seconds': float('nan')}, {'start_seconds': True}, {'start_seconds': -1},
     {'mode': 'Target'}, {'resolved': False}, {'reference': '/Game/Aki/WwiseAudio/Events/example.other'},
     {'end_seconds': float('nan')}, {'end_seconds': True}, {'end_seconds': 12.5},
+    {'source_offset_seconds': -1}, {'source_offset_seconds': float('inf')},
+    {'source_offset_seconds': float('nan')}, {'source_offset_seconds': True},
 ])
 async def test_unresolved_bindings_never_export_or_guess(prepared, changes):
     root, assets, event, fmodel, work = prepared

@@ -219,6 +219,9 @@ async def event_soundtracks(root, assets, movie_name, bindings, fmodel, work, vo
             end = event.get('end_seconds')
             if end is not None and (type(end) not in (int, float) or not math.isfinite(end) or end <= start):
                 raise ValueError('Invalid authored movie-clock event endpoint')
+            offset = event.get('source_offset_seconds', 0)
+            if type(offset) not in (int, float) or not math.isfinite(offset) or offset < 0:
+                raise ValueError('Invalid frame audio source offset')
             cooked = await prefetch_events(root, [reference], cached, fmodel, converter, tool, verified_voice_export)
             if reference not in cooked:
                 raise ValueError('Exact frame audio event is unavailable')
@@ -286,6 +289,7 @@ async def event_soundtracks(root, assets, movie_name, bindings, fmodel, work, vo
                 result['soundtracks'].append({'bank': (destination / bank.name).relative_to(assets).as_posix(),
                     'audio_directory': destination.relative_to(assets).as_posix(), 'language': None if language == 'SFX' else language,
                     'rover': None, 'start_seconds': start, 'end_seconds': event.get('end_seconds'),
+                    **({'source_offset_seconds': offset} if offset else {}),
                     'reference': reference, 'source': event.get('source'), 'mode': event['mode'],
                     'stop_policy': event.get('stop_policy', 'not_inferred'), 'source_media': source_media,
                     'event_json': str(cooked_path), 'event_json_sha256': sha256(cooked_path),
@@ -356,6 +360,8 @@ async def prepare_frame_audio(root, assets, movie_name, bindings, fmodel, decode
                         'playable': preview.relative_to(assets).as_posix(), 'role': role,
                         'language': language, 'rover': rover, 'duration_seconds': stem['duration_seconds'],
                         'start_seconds': track['start_seconds'], 'end_seconds': track['end_seconds'],
+                        **({'source_offset_seconds': track['source_offset_seconds']}
+                           if track.get('source_offset_seconds') else {}),
                         'stop_policy': track['stop_policy'], 'source': track['source'],
                         'source_media': [p for p in track['source_media'] if not p['package_path'].endswith('.wem')
                                          or int(PurePosixPath(p['package_path']).stem) in stem['media_ids']],

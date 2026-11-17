@@ -277,6 +277,7 @@ def _catalog(fingerprint):
             if binding['complete'] and not binding.get('development_only'):
                 timelines.add(json.dumps([{key: event[key] for key in (
                     'reference', 'start_seconds', 'end_seconds', 'mode', 'operation', 'event_config')}
+                    | {'source_offset_seconds': event.get('source_offset_seconds', 0)}
                     for event in binding['events']], sort_keys=True))
         if len(timelines) > 1:
             sources = [binding['source'] for binding in bindings]

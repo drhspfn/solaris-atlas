@@ -32,6 +32,7 @@ async def prepare_frame_stems(video, assets, work, decoder, rovers, missing_asse
                     results.append({**stem, 'language': event.language, 'rover': rover,
                                     'start_seconds': event.start_seconds,
                                     'end_seconds': event.end_seconds,
+                                    'source_offset_seconds': event.source_offset_seconds,
                                     'sources': [*sources, Path(stem['path'])],
                                     'reference': event.reference, 'source': event.source})
             except ValueError as error:
