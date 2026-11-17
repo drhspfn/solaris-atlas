@@ -53,18 +53,26 @@ async def test_import_dry_run_does_not_write_and_apply_uses_conflict_guard(monke
     document = {"list": [{"id": 3, "child": [{"id": 10077000207, "sourceId": 100770002,
         "ver": ["3.8"], "time": [["2026-11-18T20:00:00Z", "2026-12-21T19:59:59.999Z"]]}]}]}
     client = AsyncMock()
-    client.get.side_effect = [httpx.Response(200, json=body, request=httpx.Request("GET", "https://example.test"))
-                              for body in ({"sha": "a" * 40}, document) * 2]
+    responses = iter([httpx.Response(200, json=body, request=httpx.Request("GET", "https://example.test"))
+                      for body in ({"sha": "a" * 40}, document) * 2])
+    session = AsyncMock()
+
+    async def get(*args, **kwargs):
+        session.execute.assert_not_awaited()  # HTTP finishes before either apply lock.
+        return next(responses)
+
+    client.get.side_effect = get
     context = AsyncMock()
     context.__aenter__.return_value = client
     monkeypatch.setattr(recurring_events.httpx, "AsyncClient", Mock(return_value=context))
-    session = AsyncMock()
     session.scalars.side_effect = [[event], [], [event], [], []]
     dry = await recurring_events.import_recurring_schedules(session)
     assert len(dry["occurrences"]) == 1
     session.execute.assert_not_awaited()
     applied = await recurring_events.import_recurring_schedules(session, apply=True)
     assert len(applied["occurrences"]) == 1
+    assert str(session.execute.await_args_list[0].args[0]) == "SELECT pg_advisory_xact_lock(705, 1)"
+    assert str(session.execute.await_args_list[1].args[0]) == "SELECT pg_advisory_xact_lock(705, 25)"
     assert "ON CONFLICT" in str(session.execute.await_args_list[-1].args[0])
     assert "manual_schedule" in session.execute.await_args_list[-1].args[0].compile().params.values()
 

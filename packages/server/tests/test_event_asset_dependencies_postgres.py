@@ -114,6 +114,47 @@ async def enable(assets):
 
 
 @pytest.mark.asyncio
+async def test_recurring_preclaims_busy_asset_gate_before_row_locks(assets):
+    from wuwa_story.ingestion.recurring_events import _lock_recurring_writes
+
+    factory, engine, _ = assets
+    entered = asyncio.Event()
+    async with factory() as publisher:
+        await publisher.begin()
+        await publisher.execute(text("SELECT pg_advisory_xact_lock(705,25)"))
+        async with factory() as ungated:
+            with pytest.raises(DBAPIError, match="Event asset ordering conflict") as error:
+                await ungated.execute(text("INSERT INTO core.game_event_occurrence(id,event_id,source_data) VALUES(204,100,'{}')"))
+            assert error.value.orig.sqlstate == "40001"
+            await ungated.rollback()
+
+        async def writer():
+            async with factory() as session, session.begin():
+                entered.set()
+                await _lock_recurring_writes(session)
+                await _lock_recurring_writes(session)  # Reentrant when caller already holds both gates.
+                await session.execute(text("SELECT id FROM core.game_event_occurrence WHERE id=200 FOR UPDATE"))
+                await session.execute(text("INSERT INTO core.game_event_occurrence(id,event_id,source_data) VALUES(202,100,'{}')"))
+                await session.execute(text("INSERT INTO core.game_event_occurrence(id,event_id,source_data) VALUES(203,101,'{}')"))
+
+        task = asyncio.create_task(writer())
+        try:
+            await entered.wait()
+            await asyncio.sleep(0.1)
+            assert not task.done()
+            # The publisher can take a source row while the importer waits for
+            # the gate: the importer has not locked it in the opposite order.
+            await asyncio.wait_for(publisher.execute(text(
+                "UPDATE core.game_event_occurrence SET source_data='{}' WHERE id=200"
+            )), timeout=2)
+        finally:
+            await publisher.commit()
+        await asyncio.wait_for(task, timeout=5)
+    async with engine.connect() as connection:
+        assert await connection.scalar(text("SELECT count(*) FROM core.game_event_occurrence WHERE id IN (202,203)")) == 2
+
+
+@pytest.mark.asyncio
 async def test_staged_backfill_activation_and_effective_historical_banner(assets):
     factory, engine, _ = assets
     async with engine.connect() as connection:

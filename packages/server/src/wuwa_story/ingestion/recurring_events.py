@@ -215,7 +215,7 @@ async def import_recurring_schedules(session, *, apply=False):
         response.raise_for_status()
         document = response.json()
     if apply:
-        await session.execute(text("SELECT pg_advisory_xact_lock(705, 1)"))
+        await _lock_recurring_writes(session)
     events = list(await session.scalars(select(GameEvent).where(
         GameEvent.source == CLIENT_SOURCE, GameEvent.event_kind == "recurring")))
     query = select(GameEventOccurrence).where(GameEventOccurrence.event_id.in_([event.id for event in events]))
@@ -252,6 +252,13 @@ async def import_recurring_schedules(session, *, apply=False):
             constraint="uq_game_event_occurrence"))
     return {"source": SOURCE, "revision": revision, "applied": apply, "occurrences": rows,
             "calculated_cycles": calculated, "superseded_cycle_ids": obsolete}
+
+
+async def _lock_recurring_writes(session):
+    # Match the catalog importer's lock order. Wait for the global asset gate
+    # before locking any source rows; statement triggers then acquire it reentrantly.
+    await session.execute(text("SELECT pg_advisory_xact_lock(705, 1)"))
+    await session.execute(text("SELECT pg_advisory_xact_lock(705, 25)"))
 
 
 async def _main():
