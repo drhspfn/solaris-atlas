@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { encounterSequenceRecordings, sequenceVideoUrls, updateSequenceRecording } from "../src/components/story/sequenceVideo.ts";
+import { encounterSequenceEvents, encounterSequenceRecordings, sequenceVideoUrls, updateSequenceRecording } from "../src/components/story/sequenceVideo.ts";
 
 test("builds a bounded YouTube embed from a validated video ID", () => {
   assert.deepEqual(sequenceVideoUrls({ video_id: "abcdefghijk", start_seconds: 12, end_seconds: 40 }), {
@@ -21,6 +21,9 @@ test("encounter recording requires one matching action occurrence", () => {
   assert.deepEqual(encounterSequenceRecordings([event], { ...flow, cinematics: [scene, { ...scene }] }, [scene]), []);
   assert.deepEqual(encounterSequenceRecordings([event], flow, []), []);
   assert.deepEqual(encounterSequenceRecordings([{ ...event, action_index: 3 }], flow, [scene]), []);
+  const unsaved = { ...event, youtube_fallback: undefined };
+  assert.deepEqual(encounterSequenceEvents([unsaved], flow, [scene]), [unsaved]);
+  assert.deepEqual(encounterSequenceEvents([unsaved, { ...unsaved }], flow, [scene]), []);
 });
 
 test("a late save cannot update a different snapshot or another occurrence", () => {

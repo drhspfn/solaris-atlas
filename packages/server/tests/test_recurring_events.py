@@ -93,6 +93,9 @@ def test_corrected_phase_updates_existing_identity_and_keeps_other_phases(suffix
     persisted.source_data["notice_id"] = 12
     assert recurring_schedule_rows(document, [event], [persisted, earlier], "c" * 40) == []
     persisted.source_data.pop("notice_id")
+    persisted.source_data["schedule_source"] = "manual"
+    assert recurring_schedule_rows(document, [event], [persisted, earlier], "c" * 40) == []
+    persisted.source_data.pop("schedule_source")
     duplicate = SimpleNamespace(**{**persisted.__dict__, "source_occurrence_id": "10077000207@different"})
     assert recurring_schedule_rows(document, [event], [persisted, duplicate], "c" * 40) == []
 

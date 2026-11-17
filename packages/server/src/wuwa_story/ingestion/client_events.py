@@ -92,7 +92,7 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
         ])
     occurrences = list(await session.scalars(select(GameEventOccurrence).where(
         GameEventOccurrence.event_id.in_([e.id for e in events]),
-        GameEventOccurrence.game_version == version)))
+        GameEventOccurrence.game_version == version).order_by(GameEventOccurrence.id).with_for_update()))
     by_event = {}
     for occurrence in occurrences:
         by_event.setdefault(occurrence.event_id, []).append(occurrence)

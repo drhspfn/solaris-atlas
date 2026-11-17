@@ -1622,6 +1622,15 @@ button {
   border: 1px solid #2c3831;
   background: #151d19;
 }
+.transcript-unmapped-heading {
+  margin: 0;
+  padding: 18px 24px 12px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.transcript-unmapped-heading span { color: var(--text-secondary); font-weight: 400; }
 .transcript-line {
   display: grid;
   grid-template-columns: 52px 1fr;

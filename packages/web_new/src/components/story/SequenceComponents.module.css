@@ -20,6 +20,7 @@
 .source pre { max-height: 16rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
 
 .sceneHeader { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.sceneActions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .sceneHeader h3 { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 16px; }
 .infoButton { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; flex: 0 0 auto; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-1); color: var(--text-secondary); cursor: pointer; }
 .infoButton:hover { color: var(--accent-mint); border-color: var(--accent-mint); }

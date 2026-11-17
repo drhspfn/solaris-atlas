@@ -38,7 +38,7 @@ function loadUi(name) {
     target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
   } }).outputText;
   const exports = {}; cache.set(key, exports);
-  vm.runInNewContext(code, { exports, URL, require: id => {
+  vm.runInNewContext(code, { exports, URL, URLSearchParams, require: id => {
     if (id.endsWith('.css')) return {};
     if (id === 'lucide-react') return new Proxy({}, { get: () => () => null });
     if (id.startsWith('./')) return loadUi(id.slice(2));
@@ -54,13 +54,14 @@ function loadStory(name) {
     target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
   } }).outputText;
   const exports = {}; cache.set(name, exports);
-  vm.runInNewContext(code, { exports, URL, require: id => {
+  vm.runInNewContext(code, { exports, URL, URLSearchParams, require: id => {
     if (id.endsWith('.module.css')) return { __esModule: true, default: new Proxy({}, { get: (_, key) => String(key) }) };
     if (id === 'lucide-react') return new Proxy({}, { get: () => () => null });
     if (id === '../dialogue/PlayerText') return { PlayerText: ({ value, fallback }) => typeof value === 'string' ? value : value?.content || fallback };
     if (id === '../ui/Button') return { Button: ({ children, onClick }) => React.createElement('button', { onClick }, children) };
     if (id === '../ui/MediaViewerProvider') return { useMediaViewer: () => ({ open: (...args) => opened.push(args) }) };
     if (id === '../ui/mediaViewerUtils') return { mediaViewerUrl };
+    if (id === './SequenceVideoAdmin') return { SequenceVideoAdmin: () => null };
     if (id === '../ui/AudioPlayer' || id === '../ui/Select') return loadUi(id.split('/').at(-1));
     if (id.startsWith('./')) return loadStory(id.slice(2));
     return require(id);
@@ -87,6 +88,15 @@ test('unplaced activities retain their identities outside chronological slots', 
 });
 const render = (data, props = {}) => renderToStaticMarkup(React.createElement(QuestEncounter,
   { encounter: data, display, stateAnchors: new Map(), ...props }));
+test('saved scene recording is displayed once within the cinematic card', () => {
+  const markup = renderToStaticMarkup(React.createElement(QuestSceneDetails, {
+    event: { kind: 'sequence', reference: 'asset:scene', source,
+      youtube_fallback: { video_id: 'abcdefghijk', start_seconds: 5, end_seconds: 12 } }, display,
+  }));
+  assert.equal((markup.match(/<iframe\b/g) || []).length, 1);
+  assert.match(markup, /youtube-nocookie\.com\/embed\/abcdefghijk\?start=5&amp;end=12/);
+  assert.match(markup, /Scene playback is unavailable here/);
+});
 const renderBlock = (block, props = {}) => renderToStaticMarkup(React.createElement(QuestRuntimeBlock,
   { block: { position: null, title: 'Story activity', branches: [], flow_states: [], source, ...block },
     display, stateAnchors: new Map(), ...props }));
@@ -448,6 +458,7 @@ test('open scene information describes available media and retains source detail
     if (id === '../dialogue/PlayerText') return { PlayerText: ({ value, fallback }) => value || fallback };
     if (id === '../ui/Button') return { Button: ({ children }) => React.createElement('button', null, children) };
     if (id === '../ui/mediaViewerUtils') return { mediaViewerUrl };
+    if (id === './SequenceVideoAdmin') return { SequenceVideoAdmin: () => null };
     if (id.startsWith('./')) return loadStory(id.slice(2));
     return require(id);
   } });
@@ -640,6 +651,8 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
     '@/components/story/encounterTransitions': { encounterFlows },
     '@/components/story/sequenceVideo': loadStory('sequenceVideo'),
     '@/components/story/SequenceVideoAdmin': { SequenceVideoAdmin: () => null },
+    '@/components/story/SequenceVideoContext': { SequenceVideoContext: React.createContext(null) },
+    '@/components/story/SequenceRecording': { SequenceRecording: () => null },
     '@/components/story/cutsceneAnchor': loadStory('cutsceneAnchor'),
 
     '@/components/story/questReading': loadStory('questReading'),

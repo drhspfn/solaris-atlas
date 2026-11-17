@@ -1,13 +1,23 @@
-.panel {
-  margin-block: 1rem;
-  padding: 1rem;
+.dialog {
+  box-sizing: border-box;
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 24px;
+  overflow: auto;
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: var(--surface-1);
+  color: var(--text-primary);
 }
-.panel summary { cursor: pointer; }
-.panel p, .source { overflow-wrap: anywhere; }
-.form { display: grid; gap: .5rem; padding-block: 1rem; border-top: 1px solid var(--border-default); }
+.dialog::backdrop { background: #000b; }
+.header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.header h2 { font-size: 20px; margin: 0; }
+.hint { color: var(--text-secondary); font-size: 14px; line-height: 1.5; }
+.trigger { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 12px; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-1); color: var(--text-primary); cursor: pointer; }
+.trigger:hover { border-color: var(--mint); color: var(--mint); }
+.trigger:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
+.form { display: grid; gap: .5rem; padding-top: .5rem; }
 .form p { margin: 0; }
 .source { color: var(--text-secondary); }
 .form input {

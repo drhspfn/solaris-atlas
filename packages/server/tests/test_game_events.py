@@ -87,6 +87,13 @@ async def test_timetable_reimport_preserves_client_titles_and_occurrence_artwork
     assert event_insert["title_m0"] == "Actual title"
     assert event_insert["banner_path_m0"] == "/Game/RealBanner"
     occurrence_insert = session.execute.await_args_list[-1].args[0].compile().params
+    from sqlalchemy.dialects import postgresql
+    event_sql = str(session.execute.await_args_list[0].args[0].compile(dialect=postgresql.dialect()))
+    occurrence_sql = str(session.execute.await_args_list[-1].args[0].compile(dialect=postgresql.dialect()))
+    assert "game_event_occurrence" not in event_sql
+    assert "CASE WHEN" in occurrence_sql and "schedule_source" in str(
+        session.execute.await_args_list[-1].args[0].compile(dialect=postgresql.dialect()).params
+    )
     assert occurrence_insert["source_data_m0"]["client"] == client_data
     assert occurrence_insert["banner_path_m0"] == "/Game/RealBanner"
     assert occurrence_insert["source_occurrence_id_m0"] == "102000009"

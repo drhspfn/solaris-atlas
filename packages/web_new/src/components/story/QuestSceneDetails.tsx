@@ -17,6 +17,9 @@ import {
 } from "./sequenceIllustrations";
 import { mediaViewerUrl } from "../ui/mediaViewerUtils";
 import styles from "./SequenceComponents.module.css";
+import { SequenceVideoAdmin } from "./SequenceVideoAdmin";
+import { SequenceRecording } from "./SequenceRecording";
+import { sequenceVideoUrls } from "./sequenceVideo";
 
 type SceneType = "illustrated" | "video" | "engine" | "audio" | "unknown";
 const sceneContent: Record<
@@ -116,6 +119,8 @@ export function QuestSceneDetails({
             display={display}
           />
         </h3>
+        <div className={styles.sceneActions}>
+        <SequenceVideoAdmin event={event} />
         <button
           ref={trigger}
           type="button"
@@ -125,9 +130,11 @@ export function QuestSceneDetails({
         >
           <CircleHelp size={20} />
         </button>
+        </div>
       </header>
-      <p className={styles.status}>{confirmed3d && !hasIllustrations && !hasVideo
-        ? "3D scene playback is not supported on this site." : status}</p>
+      {!sequenceVideoUrls(event.youtube_fallback) && <p className={styles.status}>{confirmed3d && !hasIllustrations && !hasVideo
+        ? "3D scene playback is not supported on this site." : status}</p>}
+      <SequenceRecording event={event} />
       {open && (
         <dialog
           ref={dialog}

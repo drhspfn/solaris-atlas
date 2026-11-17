@@ -70,6 +70,7 @@ function questHarness({
       "@/components/story/QuestMediaReferences",
       "@/components/story/sequenceVideo",
       "@/components/story/SequenceVideoAdmin",
+      "@/components/story/SequenceRecording",
       "@/components/ui/Feedback",
       "@/components/ui/Breadcrumbs",
       "@/data/entities",
@@ -81,6 +82,7 @@ function questHarness({
     ].map((id) => [id, dummy]),
   );
   Object.assign(mocks, {
+    "@/components/story/SequenceVideoContext": { SequenceVideoContext: { Provider: ({ children }) => children } },
     "./questSidebarModel": load(
       "../src/components/quest/questSidebarModel.ts",
       {},
@@ -240,7 +242,7 @@ test("failed initial quest read retries the same selection instead of remaining 
   await h.render();
   const recoveredTree = await h.render();
   assert.equal(h.calls.length, 8);
-  assert.equal(recoveredTree.props.className, "page-container quest-container");
+  assert.equal(recoveredTree.props.children.props.className, "page-container quest-container");
 });
 
 test("matching version, locale and focus reuse SSR; changed selections fetch and returning restores SSR", async () => {

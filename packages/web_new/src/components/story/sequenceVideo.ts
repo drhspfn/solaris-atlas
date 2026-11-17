@@ -27,8 +27,14 @@ export function updateSequenceRecording(
 export function encounterSequenceRecordings(
   events: QuestMediaEvent[], flow: EncounterFlow, part: EncounterCinematic[],
 ) {
+  return encounterSequenceEvents(events, flow, part).filter((event) => sequenceVideoUrls(event.youtube_fallback));
+}
+
+export function encounterSequenceEvents(
+  events: QuestMediaEvent[], flow: EncounterFlow, part: EncounterCinematic[],
+) {
   return events.filter((event) => {
-    if (event.kind !== "sequence" || !sequenceVideoUrls(event.youtube_fallback) ||
+    if (event.kind !== "sequence" ||
         event.flow_state !== flow.state) return false;
     const matches = flow.cinematics.filter((scene) =>
       scene.kind === "sequence" && scene.reference === event.reference &&

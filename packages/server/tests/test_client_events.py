@@ -58,6 +58,22 @@ async def test_client_import_adds_unlisted_events_and_preserves_exact_historical
 
 
 @pytest.mark.asyncio
+async def test_client_import_preserves_manual_unknown_start_and_locks_occurrences():
+    event = SimpleNamespace(id=7, source=CLIENT_SOURCE, source_id="activity:100", source_data={})
+    manual = SimpleNamespace(event_id=7, server="europe", starts_at=None, ends_at="manual end",
+                             game_version="3.7", source_data={"schedule_source": "manual"})
+    session = AsyncMock()
+    session.get.return_value = None
+    session.scalars.side_effect = [[event], [manual]]
+    session.add = lambda row: None
+    session.add_all = lambda rows: None
+    await store_client_events(session, {"100": record()}, "3.7.0", "a" * 64)
+    assert manual.starts_at is None and manual.ends_at == "manual end"
+    assert manual.source_data["schedule_source"] == "manual"
+    assert "FOR UPDATE" in str(session.scalars.await_args_list[1].args[0])
+
+
+@pytest.mark.asyncio
 async def test_reimport_reuses_client_identity_and_retains_discovered_prefab_images():
     image = {"path": "/Game/FromPrefab", "role": "prefab_texture"}
     event = SimpleNamespace(id=7, source=CLIENT_SOURCE, source_id="activity:100",

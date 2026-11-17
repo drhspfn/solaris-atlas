@@ -4,38 +4,48 @@ import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { api, ApiError } from "@/api/client";
 import { useAuth } from "@/auth/AuthProvider";
 import { Button } from "@/components/ui/Button";
-import type { QuestMediaEvent, QuestMediaManifest } from "./QuestMediaReferences";
+import { Film, X } from "lucide-react";
+import type { QuestMediaEvent } from "./QuestMediaReferences";
+import { useSequenceVideoContext } from "./SequenceVideoContext";
 import styles from "./SequenceVideoAdmin.module.css";
 
 type Recording = NonNullable<QuestMediaEvent["youtube_fallback"]>;
 
-export function SequenceVideoAdmin({ questKey, manifest, onChange }: {
-  questKey: string;
-  manifest: QuestMediaManifest | null;
-  onChange: (occurrence: string, version: string, recording: Recording | null) => void;
-}) {
+export function SequenceVideoAdmin({ event }: { event: QuestMediaEvent }) {
   const { user } = useAuth();
-  if (user?.role !== "admin" || !manifest?.game_version) return null;
-  const scenes = manifest.events.filter((event) => event.kind === "sequence");
-  if (!scenes.length) return null;
+  const context = useSequenceVideoContext();
+  const [open, setOpen] = useState(false);
+  const titleId = useId();
+  const dialog = useRef<HTMLDialogElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const element = dialog.current;
+    element?.showModal();
+    return () => { element?.close(); trigger.current?.focus({ preventScroll: true }); };
+  }, [open]);
+  if (user?.role !== "admin" || !context?.version || !event.occurrence_id) return null;
   return (
-    <section className={styles.panel} aria-label="Manage scene recordings">
-      <details>
-        <summary>Manage scene recordings</summary>
-        <p>Choose a scene occurrence in snapshot {manifest.game_version}.</p>
-        {scenes.map((event, index) => event.occurrence_id ? (
+    <>
+      <button ref={trigger} type="button" className={styles.trigger} onClick={() => setOpen(true)}
+        aria-label={event.youtube_fallback ? "Edit YouTube recording" : "Add YouTube recording"}>
+        <Film size={18} aria-hidden="true" /> <span>{event.youtube_fallback ? "Edit recording" : "Add recording"}</span>
+      </button>
+      {open && <dialog ref={dialog} className={styles.dialog} aria-labelledby={titleId}
+        onCancel={(e) => { e.preventDefault(); setOpen(false); }}>
+        <header className={styles.header}><h2 id={titleId}>YouTube recording</h2>
+          <Button variant="ghost" size="icon" icon={<X size={20} />} aria-label="Close recording editor" onClick={() => setOpen(false)} />
+        </header>
+        <p className={styles.hint}>Add a recording for this scene and choose the time range.</p>
           <SequenceVideoForm
-            key={`${manifest.game_version}:${event.occurrence_id}`}
-            questKey={questKey}
-            version={manifest.game_version!}
+            key={`${context.version}:${event.occurrence_id}`}
+            questKey={context.questKey}
+            version={context.version}
             event={event}
-            onChange={onChange}
+            onChange={context.onChange}
           />
-        ) : (
-          <p key={`unmatched-${index}`}>A scene could not be uniquely identified and cannot be edited.</p>
-        ))}
-      </details>
-    </section>
+      </dialog>}
+    </>
   );
 }
 
@@ -54,6 +64,7 @@ export function SequenceVideoForm({ questKey, version, event, onChange }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
+  const urlInput = useRef<HTMLInputElement>(null);
   const pending = useRef(false);
   const request = useRef<AbortController | null>(null);
   useEffect(() => () => request.current?.abort(), []);
@@ -67,6 +78,7 @@ export function SequenceVideoForm({ questKey, version, event, onChange }: {
         || !Number.isSafeInteger(endValue) || endValue > 2147483647 || endValue <= startValue)))) {
       setError("Enter a YouTube URL and whole seconds; the end must be later than the start.");
       setStatus("");
+      urlInput.current?.focus();
       return;
     }
     pending.current = true;
@@ -113,11 +125,9 @@ export function SequenceVideoForm({ questKey, version, event, onChange }: {
   };
   return (
     <form className={styles.form} onSubmit={submit} noValidate>
-      <p><strong>{event.title || "In-game scene"}</strong>
-        {" · "}{event.flow_state || "Unmapped flow"} · action {event.action_index}</p>
-      <small className={styles.source}>{event.engine_path || event.reference} · {event.source?.raw_path}</small>
       <label htmlFor={`${id}-url`}>YouTube URL</label>
-      <input id={`${id}-url`} type="url" value={url} disabled={busy}
+      <input ref={urlInput} id={`${id}-url`} type="url" value={url} disabled={busy}
+        aria-invalid={!!error} aria-describedby={error ? `${id}-error` : undefined}
         onChange={(e) => { setUrl(e.target.value); setStatus(""); setError(""); }}
         placeholder="https://www.youtube.com/watch?v=…" />
       <div className={styles.times}>
@@ -135,7 +145,7 @@ export function SequenceVideoForm({ questKey, version, event, onChange }: {
         {current && <Button variant="secondary" size="sm" disabled={busy}
           onClick={() => void saveOrDelete(true)}>Remove recording</Button>}
       </div>
-      {error && <p role="alert">{error}</p>}
+      {error && <p id={`${id}-error`} role="alert">{error}</p>}
       {status && <p role="status">{status}</p>}
     </form>
   );

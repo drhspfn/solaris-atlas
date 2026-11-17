@@ -16,6 +16,7 @@ from starlette_admin.contrib.sqla import Admin
 from wuwa_story.admin.auth import ConsoleProtection, InternalAuth
 from wuwa_story.admin.cutscene_analysis import CutsceneAnalysisView
 from wuwa_story.admin.cutscenes import CutsceneData
+from wuwa_story.admin.event_periods import EventPeriods
 from wuwa_story.admin.operations import DataOperationsView
 from wuwa_story.admin.story_agent import StoryAgentView
 from wuwa_story.admin.views import (
@@ -48,7 +49,7 @@ from wuwa_story.db.models.core import (
     Speaker,
     SpeakerEntityLink,
 )
-from wuwa_story.db.models.game_events import GameEvent
+from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision, NodeType
 from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.models.notices import GameNotice
@@ -136,6 +137,7 @@ def install_admin(app: Starlette, engine: AsyncEngine, settings: Settings | None
                  "id node_id document_type title revision plain_text", "documents", ["title"]),
         readonly(GameEvent, "Events", "id title source event_kind",
                  "events", ["title"]),
+        EventPeriods(GameEventOccurrence, label="Event periods", identity="event-periods"),
         readonly(GameNotice, "Notices",
                  "id title feed locale category", "notices", ["title"]),
         readonly(Locale, "Locales", "id code name",
