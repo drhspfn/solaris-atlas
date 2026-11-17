@@ -245,6 +245,21 @@ def _presentation(
     return result
 
 
+def _notice_schedule_evidence(occurrence: ClientSource | None) -> dict[str, Any] | None:
+    data = (occurrence.source_data or {}) if occurrence else {}
+    notice_id, revision = data.get("notice_id"), data.get("notice_revision")
+    if not notice_id or not revision or data.get("schedule_revision") != revision:
+        return None
+    notice = (data.get("notice_presentation") or {}).get("en") or {}
+    text = notice.get("description")
+    section = re.search(r"Duration[✦\s]*(.*?)(?:✦|$)", text, re.S) if isinstance(text, str) else None
+    version = re.match(r"(?:After\s+the\s+)?Version\s+(\d+\.\d+)\s+update\s*[-–]",
+                       section[1].strip(), re.I) if section else None
+    if not version:
+        return None
+    return {"notice_id": notice_id, "notice_revision": revision, "update_version": version[1]}
+
+
 def _official_announcement(event: ClientSource, occurrence: ClientSource | None) -> str | None:
     """Only expose verified official links, never a guessed event/article match."""
     import re

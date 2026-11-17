@@ -38,6 +38,19 @@ client-signature mismatch. Its notice run has `notice_snapshot` artwork while
 the catalog occurrence has `game_client` art. Refresh is an operator action,
 not performed here.
 
+The 3.8 label in `catalog_version` is not a schedule version. A bounded source
+check found that Europe occurrences 2439/2448/2451/2454 (Fantasies) and
+2457/2460 (Hazard Revisited) have no captured client data and no game version;
+their 3.8 catalog presentation comes from the current event fallback despite
+dates in 2024–2026. Lily 6288 has a stored 3.8 client snapshot and a separately
+pinned notice. `catalog_provenance` now distinguishes `occurrence_snapshot`,
+`current_catalog_fallback` and `unavailable`; none asserts which game version
+ran the schedule. Where the exact pinned schedule notice explicitly says
+“Version 3.8 update” in its Duration section, `schedule_evidence` exposes the
+notice ID, revision and `update_version` as evidence. It does not set
+`game_version`, establish an actual update completion time, or relabel other
+unversioned historical occurrences.
+
 The official roster slice in this branch reads an explicitly stated rate-up
 roster only from a pinned notice presentation, returns it as `up_names`, and
 exposes the untouched client roster separately as `client_up_names` with

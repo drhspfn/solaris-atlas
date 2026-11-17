@@ -16,6 +16,7 @@ from wuwa_story.events.domain import (
     _client_data,
     _client_preview,
     _notice_overlaps,
+    _notice_schedule_evidence,
     _official_announcement,
     _presentation,
 )
@@ -311,6 +312,14 @@ class EventService:
         }
         if occurrence and (match := pool_match(occurrence.source_data)):
             result["_pool_match"] = match
+        if occurrence:
+            captured_client = (occurrence.source_data or {}).get("client")
+            result["catalog_provenance"] = (
+                "occurrence_snapshot" if captured_client else
+                "current_catalog_fallback" if client else "unavailable"
+            )
+            if evidence := _notice_schedule_evidence(occurrence):
+                result["schedule_evidence"] = evidence
         if presentation.get("up_names_source") == "notice":
             result["up_names_source"] = "notice"
             result["client_up_names"] = presentation["client_up_names"]
