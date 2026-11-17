@@ -25,6 +25,8 @@ def test_video_analysis_role_and_tools_are_separated():
     video_prompt = analysis_prompt("video_analysis")
     assert quest_prompt != video_prompt
     assert "Video Analysis" in video_prompt
+    assert "identification is unavailable" in video_prompt
+    assert "`unknown` and `unresolved` are not identifications" in video_prompt
 
     tool_names = {tool["name"] for tool in video_analysis_definitions()}
     assert tool_names == set(VIDEO_ANALYSIS_TOOLS)

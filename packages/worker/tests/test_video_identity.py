@@ -63,3 +63,15 @@ async def test_unavailable_models_and_invalid_selection_do_not_invent_results(tm
     invalid = await video_identity.identify_atlas_characters(object(), frames, global_frame_indices=[999])
     assert invalid["reason"] == "no_matching_frames" and invalid["missing_frames"] == [999]
     assert service.identify.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_unknown_detection_is_available_and_keeps_its_status(tmp_path, monkeypatch):
+    detection = {"bbox": [0, 0, 2, 2], "identification": {"status": "unknown", "candidates": []}}
+    service = SimpleNamespace(identify=AsyncMock(return_value={"detections": [detection]}))
+    monkeypatch.setattr(video_identity, "VisualMemoryService", lambda db: service)
+    result = await video_identity.identify_atlas_characters(object(), workspace(tmp_path),
+                                                            global_frame_indices=[1])
+    assert result["available"] is True
+    assert result["matches"][0]["detections"][0]["identification"]["status"] == "unknown"
+    assert "reason" not in result

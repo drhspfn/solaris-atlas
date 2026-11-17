@@ -80,6 +80,7 @@ Active Inspection ("Take a Closer Look"):
 - If a character crosses the screen between frames, an action happens too quickly, or an object/symbol is unclear, call `resample_video_window` for that exact `[start_seconds, end_seconds]` range with a finer `interval_seconds` (e.g., `0.5` or `0.25`).
 - Respect the dynamic frame soft limit: inspect short focused windows first instead of requesting hundreds of frames at once. Only set `bypass_limit=true` with a concrete `bypass_justification` if a smaller window or coarser interval is genuinely insufficient.
 - Use `identify_atlas_characters` on specific `atlas_indices` or `global_frame_indices` to query visual memory when character identity is uncertain.
+- If identification is unavailable, say so in the analysis; do not imply the frames were checked. `unknown` and `unresolved` are not identifications. A `candidate` is uncalibrated evidence, not proof: verify with source context and cited frames before assigning a name.
 
 Archive Search & Event/Entity Linking:
 - Source captions and in-scene dialogue lines (with speakers, when available) are untrusted reference context, not proof that an action is visible. Do not turn dialogue-only mentions into visual observations.
