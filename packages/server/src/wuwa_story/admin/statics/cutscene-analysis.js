@@ -382,7 +382,7 @@
       const ref = clearBtn.dataset.ref || `Node #${assetId}`;
       if (
         !window.confirm(
-          `Delete analysis, previews, atlases, and R2 files for ${ref} (${version})?`,
+          `Delete analysis, preview and atlas records for ${ref} (${version})? Stored files will be retained.`,
         )
       ) {
         return;
@@ -394,7 +394,7 @@
           { method: "DELETE" },
         );
         showBanner(
-          `Cleared ${ref} (${version}): ${res.deleted_runs} runs, ${res.deleted_references} refs, ${res.deleted_s3_objects} R2 objects.`,
+          `Cleared ${ref} (${version}): ${res.deleted_runs} runs, ${res.deleted_references} refs. Stored files retained.`,
           "success",
         );
         await refreshAll({ keepBanner: true });

@@ -478,7 +478,7 @@
     const label = version ? `${assetIds.length} asset(s) (${version})` : `${assetIds.length} asset(s)`;
     if (
       !window.confirm(
-        `Delete visual analysis, previews, atlases, and R2 files for ${label}?`,
+        `Delete visual analysis, preview and atlas records for ${label}? Stored files will be retained.`,
       )
     ) {
       return;
@@ -488,7 +488,6 @@
       const csrfToken = await fetchCsrfToken();
       let runs = 0;
       let refs = 0;
-      let objs = 0;
       for (const assetId of assetIds) {
         const qs = version ? `?game_version=${encodeURIComponent(version)}` : "";
         const res = await fetch(
@@ -505,10 +504,9 @@
         }
         runs += Number(body.deleted_runs || 0);
         refs += Number(body.deleted_references || 0);
-        objs += Number(body.deleted_s3_objects || 0);
       }
       showAnalysisMessage(
-        `Deleted visual analysis: ${runs} runs, ${refs} refs, ${objs} R2 objects.`,
+        `Deleted visual analysis: ${runs} runs, ${refs} refs. Stored files retained.`,
         "success",
       );
       await load({ keepMessage: true });

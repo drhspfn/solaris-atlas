@@ -19,7 +19,7 @@ from wuwa_story.db.models.agents import AgentCall
 from wuwa_story.db.models.graph import Edge
 from wuwa_story.db.models.lore import LoreChunk
 from wuwa_story.db.models.ops import ProcessingRun, Processor
-from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference, FileVariant
+from wuwa_story.db.models.storage import FileObject, FileReference, FileVariant
 from wuwa_story.story.cutscene_publications import publication_order, publication_types
 
 VISION_VERSION = "video-analysis-v5"
@@ -441,7 +441,7 @@ async def wipe_cutscene_analysis(
     asset_id: int,
     game_version: str | None = None,
 ) -> dict[str, int | str | None]:
-    """Delete cutscene analysis reports, runs, generated edges/lore, previews, atlases, and orphan S3 objects."""
+    """Remove analysis records while retaining content-addressed storage objects."""
     if not game_version:
         raise ValueError("Select a specific asset version before deleting analysis")
     await lock_visual_sources(session, [asset_id], game_version)
@@ -491,8 +491,9 @@ async def wipe_cutscene_analysis(
         ref_stmt = ref_stmt.where(or_(*version_clauses))
     refs = list(await session.scalars(ref_stmt))
     ref_ids = [r.id for r in refs]
-    candidate_file_ids = {r.file_id for r in refs}
+    candidate_file_ids = {r.file_id for r in refs if r.file_id is not None}
 
+    deleted_edges = 0
     if run_ids:
         variant_file_ids = list(
             await session.scalars(
@@ -503,28 +504,16 @@ async def wipe_cutscene_analysis(
             )
         )
         candidate_file_ids.update(variant_file_ids)
-        await session.execute(
-            delete(FileVariant).where(
-                FileVariant.processor_run_id.in_(run_ids),
-                FileVariant.variant_type.in_(("cutscene_preview", "video_frame_atlas")),
-            )
-        )
+        edge_res = await session.execute(delete(Edge).where(
+            Edge.from_node_id == asset_id, Edge.processor_run_id.in_(run_ids),
+            Edge.layer == "semantic", Edge.basis == "inference"))
+        deleted_edges = int(edge_res.rowcount or 0)
         await session.execute(delete(AgentCall).where(AgentCall.run_id.in_(run_ids)))
         await session.execute(delete(ProcessingRun).where(ProcessingRun.id.in_(run_ids)))
 
-    if candidate_file_ids:
-        await session.execute(
-            delete(FileVariant).where(
-                FileVariant.child_file_id.in_(candidate_file_ids),
-                FileVariant.variant_type.in_(("cutscene_preview", "video_frame_atlas")),
-            )
-        )
     if ref_ids:
         await session.execute(delete(FileReference).where(FileReference.id.in_(ref_ids)))
 
-    edge_res = await session.execute(
-        delete(Edge).where(Edge.from_node_id == asset_id, Edge.layer == "agent")
-    )
     lore_stmt = delete(LoreChunk).where(
         LoreChunk.source_type == "cutscene_vision",
         LoreChunk.source_id == str(asset_id),
@@ -534,40 +523,14 @@ async def wipe_cutscene_analysis(
     lore_res = await session.execute(lore_stmt)
     await session.flush()
 
-    deleted_files = 0
-    deleted_s3 = 0
-    for fid in sorted(candidate_file_ids):
-        still_referenced = await session.scalar(
-            select(FileReference.id).where(FileReference.file_id == fid).limit(1)
-        )
-        still_variant = await session.scalar(
-            select(FileVariant.child_file_id)
-            .where(or_(FileVariant.child_file_id == fid, FileVariant.parent_file_id == fid))
-            .limit(1)
-        )
-        if still_referenced is not None or still_variant is not None:
-            continue
-        locations = list(
-            await session.scalars(select(FileLocation).where(FileLocation.file_id == fid))
-        )
-        for loc in locations:
-            if loc.backend == "s3" and getattr(storage, "delete", None):
-                try:
-                    await storage.delete(loc.object_key)
-                    deleted_s3 += 1
-                except Exception:
-                    pass
-        await session.execute(delete(FileLocation).where(FileLocation.file_id == fid))
-        await session.execute(delete(FileObject).where(FileObject.id == fid))
-        deleted_files += 1
-
     return {
         "asset_node_id": asset_id,
         "game_version": game_version,
         "deleted_runs": len(run_ids),
         "deleted_references": len(ref_ids),
-        "deleted_files": deleted_files,
-        "deleted_s3_objects": deleted_s3,
-        "deleted_edges": int(edge_res.rowcount or 0),
+        "deleted_files": 0,
+        "deleted_s3_objects": 0,
+        "retained_files": len(candidate_file_ids),
+        "deleted_edges": deleted_edges,
         "deleted_lore_chunks": int(lore_res.rowcount or 0),
     }
