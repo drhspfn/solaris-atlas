@@ -103,28 +103,30 @@ def parse_notice(raw, category):
 
 
 def notice_period(content, server):
-    """Only explicit full timestamps in the Duration section define a dated run."""
+    """Extract stated timestamps without guessing the time of a version update."""
     section = re.search(r"Duration[✦\s]*(.*?)(?:✦|$)", content["text"], re.S)
     if not section:
         return None
     match = re.search(
-        r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\s*[-–]\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\s*\((server time|UTC[+-]\d{1,2})\)",
+        r"(?:(\d{4}-\d{2}-\d{2} \d{2}:\d{2})|(?:After\s+the\s+)?Version\s+\d+\.\d+\s+update)\s*[-–]\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\s*\((server time|UTC[+-]\d{1,2})\)",
         section[1],
+        re.I,
     )
     if not match:
         return None
-    offset = SERVER_OFFSETS[server] if match[3] == "server time" else int(match[3][3:])
+    offset = SERVER_OFFSETS[server] if match[3].lower() == "server time" else int(match[3][3:])
     if not -12 <= offset <= 14:
         return None
     zone = timezone(timedelta(hours=offset))
     try:
         start, end = [
-            datetime.strptime(match[i], "%Y-%m-%d %H:%M").replace(tzinfo=zone).astimezone(UTC)
-            for i in (1, 2)
+            datetime.strptime(value, "%Y-%m-%d %H:%M").replace(tzinfo=zone).astimezone(UTC)
+            if value else None
+            for value in (match[1], match[2])
         ]
     except ValueError:
         return None
-    return (start, end) if end > start else None
+    return (start, end) if start is None or end > start else None
 
 
 async def fetch_notice_feed(launcher_define):
@@ -258,13 +260,17 @@ async def store_notices(session, feed, page, document):
                         row = candidates[0]
                     else:
                         start, end = period
-                        identity = f"notice:{notice.source_id}@{start.isoformat()}"
+                        identity = (
+                            f"notice:{notice.source_id}@{start.isoformat()}" if start
+                            else f"notice:{notice.source_id}@update"
+                        )
                         row = await session.scalar(
                             select(GameEventOccurrence)
                             .where(
                                 GameEventOccurrence.event_id == event.id,
                                 GameEventOccurrence.server == server,
-                                GameEventOccurrence.starts_at == start,
+                                (GameEventOccurrence.starts_at == start if start else
+                                 GameEventOccurrence.source_occurrence_id == identity),
                             )
                             .with_for_update()
                         )

@@ -72,6 +72,13 @@ OpenType 1/2 identifies permanent/transition content; known cyclic tower/matrix
 activity types are grouped as recurring. Runtime phase/availability remains
 server-controlled.
 
+Official Notice durations can state an end timestamp while describing the start
+as a version update. Such runs retain a null start and the stated server-specific
+end, with the feed and Notice revision recorded as schedule provenance. For
+example, the [Second Coming of Solaris notice](https://wutheringwaves.kurogames.com/en/main/news/detail/5741)
+uses “After the Version 3.8 update”; the [maintenance notice](https://wutheringwaves.kurogames.com/m/en/main/news/detail/5705)
+gives a scheduled window, not a verified actual completion time.
+
 ## Verification against downloaded client 3.7.0 (2026-10-19)
 
 - 378 Activity rows and 254 GachaViewInfo rows; all 632 resolve English names.

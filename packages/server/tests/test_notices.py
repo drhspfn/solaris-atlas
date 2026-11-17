@@ -48,9 +48,22 @@ def test_duration_uses_explicit_timezone_not_notice_display_window():
     assert asia[0].isoformat() == "2026-10-07T20:00:00+00:00"
     assert europe[0].isoformat() == "2026-10-08T03:00:00+00:00"
     content["text"] = "✦Duration✦\nVersion 3.7 update - 2026-10-22 09:59 (server time)\n✦Rules✦"
-    assert notice_period(content, "asia") is None
+    assert notice_period(content, "asia")[0] is None
     content["text"] = "✦Duration✦\n2026-10-08 04:00 - 2026-10-26 03:59 (UTC+8)\n✦Rules✦"
     assert notice_period(content, "europe") == asia
+
+
+def test_version_update_period_preserves_unknown_start_and_server_end():
+    # https://wutheringwaves.kurogames.com/en/main/news/detail/5741
+    content = {"text": "✦Event Duration✦\nAfter the Version 3.8 update - 2026-12-21 11:59 (Server Time)\n✦Rewards✦"}
+    assert tuple(value.isoformat() if value else None for value in notice_period(content, "asia")) == (
+        None, "2026-12-21T03:59:00+00:00"
+    )
+    assert notice_period(content, "america")[1].isoformat() == "2026-12-21T16:59:00+00:00"
+    content["text"] = "✦Duration✦\nVersion 3.8 update - 2026-02-30 11:59 (server time)\n✦Rules✦"
+    assert notice_period(content, "asia") is None
+    content["text"] = "✦Duration✦\nAfter a future update - 2026-12-21 11:59 (server time)\n✦Rules✦"
+    assert notice_period(content, "asia") is None
 
 
 def test_ambiguous_client_names_do_not_create_guessed_links():
@@ -178,6 +191,38 @@ async def test_notice_import_archives_revision_and_adds_server_specific_runs():
     assert added[1].starts_at != added[2].starts_at
     assert added[1].source_data["notice_id"] == 12
     assert all("DELETE" not in str(call.args[0]) for call in session.execute.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_notice_import_preserves_partial_schedule_provenance():
+    event = SimpleNamespace(id=7, title="Artisan's Search", event_kind="limited",
+                            banner_path=None, source_data={"client": {"download_id": "test"}})
+    session = AsyncMock()
+    session.scalars.return_value = [event]
+    session.scalar.return_value = None
+    added = []
+    session.add = added.append
+
+    async def flush():
+        for row in added:
+            if isinstance(row, GameNotice):
+                row.id = 12
+
+    session.flush.side_effect = flush
+    raw = raw_notice(content="<p>✦Duration✦</p><p>Version 3.8 Update - 2026-12-21 03:59 (server time)</p><p>✦Rules✦</p>")
+    report = await store_notices(session, "https://feed.test", "https://board.test", {"game": [raw]})
+    notice, *runs = added
+    assert report["dated_runs"] == 3
+    assert all(row.starts_at is None and row.ends_at is not None for row in runs)
+    assert all(row.source_occurrence_id == "notice:10@update" for row in runs)
+    assert all(row.source_data["schedule_source"] == "https://feed.test" and
+               row.source_data["schedule_revision"] == notice.revision for row in runs)
+    assert notice.content["raw"] == raw
+    session.scalar.side_effect = [notice, *runs]
+    added.clear()
+    report = await store_notices(session, "https://feed.test", "https://board.test", {"game": [raw]})
+    assert report["dated_runs"] == 3
+    assert added == []
 
 
 @pytest.mark.asyncio
