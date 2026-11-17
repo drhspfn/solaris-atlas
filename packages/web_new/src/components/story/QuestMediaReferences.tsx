@@ -100,6 +100,12 @@ export interface QuestMediaEvent {
   transition?: boolean;
   title?: string;
   kind: "cutscene" | "sequence" | "audio_event";
+  occurrence_id?: string;
+  youtube_fallback?: {
+    video_id: string;
+    start_seconds: number;
+    end_seconds: number | null;
+  };
   sequence_media?: SequenceMedia;
   playback?: CutsceneFlow | null;
   action: string;

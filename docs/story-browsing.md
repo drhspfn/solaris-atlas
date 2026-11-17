@@ -5,6 +5,37 @@ intended to support a character page, quest page, category filters, and dialogue
 search. It does not infer relationships or claim that authored order is a single
 runtime playthrough.
 
+## Administrator video fallback for quest sequences
+
+An authenticated administrator can open **Manage scene recordings** on a
+quest page to edit or remove the recording for each distinguishable sequence
+occurrence in the displayed snapshot. Changes update the current reader without
+reloading it.
+
+`GET /quests/{game_quest_id}/media?game_version=3.7.0` returns an
+`occurrence_id` on each unambiguous sequence occurrence. Use its exact quest,
+snapshot and identifier to save or replace a recording:
+
+```http
+PUT /admin/quests/{game_quest_id}/media/{occurrence_id}/youtube?game_version=3.7.0
+Content-Type: application/json
+X-CSRF-Token: <csrf token>
+
+{"url":"https://youtu.be/abcdefghijk","start_seconds":12,"end_seconds":45}
+```
+
+The request requires an administrator session and matching CSRF cookie/header.
+Start is a nonnegative integer (default 0); end is optional and must be greater
+than start. Standard HTTPS YouTube watch, short, embed and live links are
+accepted. The server stores only the video ID, strips tracking parameters, and
+does not check that YouTube permits embedding. A matching `DELETE` removes the
+recording. Occurrences that cannot be distinguished do not receive an ID.
+The association is snapshot-specific; source identity changes can leave an
+earlier association unused. Cache revision updates may take a few seconds.
+
+Migration `0035_sequence_video_fallback` creates the independent admin table;
+downgrading drops it and deletes its recordings.
+
 ## Search and categories
 
 ```bash

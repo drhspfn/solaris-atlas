@@ -35,6 +35,8 @@ import {
   runtimeBlockSlots,
 } from "@/components/story/QuestRuntimeBlock";
 import { encounterFlows } from "@/components/story/encounterTransitions";
+import { encounterSequenceRecordings, updateSequenceRecording } from "@/components/story/sequenceVideo";
+import { SequenceVideoAdmin } from "@/components/story/SequenceVideoAdmin";
 import { QuestIllustration } from "@/components/story/QuestIllustration";
 import { QuestIllustratedScene } from "@/components/story/QuestIllustratedScene";
 import { QuestFork } from "@/components/story/QuestFork";
@@ -772,6 +774,7 @@ export function QuestPageClient({
       flow.sequence_media,
     ).length;
     const rendered = parts.map((part, index) => {
+      const recordings = encounterSequenceRecordings(pageMediaEvents, flow, part.cinematics);
       const events = pageMediaEvents.filter(
         (event) =>
           event.kind === "cutscene" &&
@@ -794,12 +797,15 @@ export function QuestPageClient({
           key={`${flow.id}-${index}`}
           media={part.cinematics}
           unplaced={!part.lines.length}
-          playbackResolved={events.some((event) => !!event.playback)}
-          componentCount={index === componentPart ? componentCount : 0}
+          playbackResolved={recordings.length > 0 || events.some((event) => !!event.playback)}
+          componentCount={index === componentPart && !recordings.length ? componentCount : 0}
           engineRendered={componentCount === 0 &&
             !flow.sequence_media?.sections.some((section) => section.kind === "illustration") &&
             hasEngineCinematicTracks(flow.sequence_media)}
         >
+          {recordings.map((event) => (
+            <Cutscene key={event.occurrence_id} event={event} display={playerDisplay} />
+          ))}
           {index === componentPart && (
             <QuestSequenceFragments media={flow.sequence_media} />
           )}
@@ -1184,6 +1190,9 @@ export function QuestPageClient({
           </div>
         </div>
       </section>
+      <SequenceVideoAdmin questKey={questKey} manifest={loading ? null : media} onChange={(occurrence, version, recording) => {
+        setMedia((previous) => updateSequenceRecording(previous, occurrence, version, recording));
+      }} />
       <QuestClassification value={classification} />
       {profile?.item_requirements?.length > 0 && (
         <section className="subsection" aria-label="Item requirements">

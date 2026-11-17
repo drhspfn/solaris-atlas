@@ -102,6 +102,7 @@ from wuwa_story.db.models.story import (
     ClaimEvidence,
     Event,
     Scene,
+    SequenceVideoFallback,
     StoryContainer,
     StoryMembership,
 )
@@ -186,6 +187,7 @@ __all__ = [
     "ClaimEvidence",
     "Event",
     "Scene",
+    "SequenceVideoFallback",
     "StoryContainer",
     "StoryMembership",
 ]
