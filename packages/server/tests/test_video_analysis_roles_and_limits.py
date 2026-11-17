@@ -187,7 +187,10 @@ async def test_wipe_retains_shared_content_without_network_io(owner_id):
     }
     storage.delete.assert_not_awaited()
     statements = [str(call.args[0]) for call in session.execute.await_args_list]
-    assert not any(statement.startswith("DELETE FROM storage.file_variant") for statement in statements)
+    variants = [statement for statement in statements if statement.startswith("DELETE FROM storage.file_variant")]
+    assert len(variants) == 1
+    assert "processor_run_id" in variants[0]
+    assert "child_file_id" not in variants[0]
     assert not any(statement.startswith("DELETE FROM storage.file_object") for statement in statements)
     assert not any(statement.startswith("DELETE FROM storage.file_location") for statement in statements)
 

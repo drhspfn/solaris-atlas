@@ -98,7 +98,7 @@
     if (clearAnalysisBtn) {
       const canClear = Boolean(
         currentAnalysis?.has_artifacts &&
-          currentAnalysis?.asset_node_ids?.length,
+          currentAnalysis?.cleanup_owner_ids?.length && currentAnalysis?.asset_version,
       );
       clearAnalysisBtn.hidden = !canClear;
       clearAnalysisBtn.disabled = false;
@@ -472,7 +472,7 @@
   });
 
   clearAnalysisBtn?.addEventListener("click", async () => {
-    const assetIds = currentAnalysis?.asset_node_ids || [];
+    const assetIds = currentAnalysis?.cleanup_owner_ids || [];
     const version = currentAnalysis?.asset_version || "";
     if (!assetIds.length) return;
     const label = version ? `${assetIds.length} asset(s) (${version})` : `${assetIds.length} asset(s)`;
@@ -484,11 +484,14 @@
       return;
     }
     clearAnalysisBtn.disabled = true;
+    let completed = 0;
+    let failedAsset = null;
     try {
       const csrfToken = await fetchCsrfToken();
       let runs = 0;
       let refs = 0;
       for (const assetId of assetIds) {
+        failedAsset = assetId;
         const qs = version ? `?game_version=${encodeURIComponent(version)}` : "";
         const res = await fetch(
           `${apiPrefix()}/admin/story-agent/cutscenes/assets/${assetId}/analysis${qs}`,
@@ -504,6 +507,7 @@
         }
         runs += Number(body.deleted_runs || 0);
         refs += Number(body.deleted_references || 0);
+        completed += 1;
       }
       showAnalysisMessage(
         `Deleted visual analysis: ${runs} runs, ${refs} refs. Stored files retained.`,
@@ -511,7 +515,9 @@
       );
       await load({ keepMessage: true });
     } catch (error) {
-      showAnalysisMessage(error.message || "Delete failed", "danger");
+      const message = `Deletion incomplete${failedAsset === null ? "" : ` for owner ${failedAsset}`}: ${error.message || "request failed"}. ${completed} of ${assetIds.length} owners completed. Refresh the status and retry if needed.`;
+      await load({ keepMessage: true });
+      showAnalysisMessage(message, "danger");
       clearAnalysisBtn.disabled = false;
     }
   });

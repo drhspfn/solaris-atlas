@@ -504,6 +504,9 @@ async def wipe_cutscene_analysis(
             )
         )
         candidate_file_ids.update(variant_file_ids)
+        await session.execute(delete(FileVariant).where(
+            FileVariant.processor_run_id.in_(run_ids),
+            FileVariant.variant_type.in_(("cutscene_preview", "video_frame_atlas"))))
         edge_res = await session.execute(delete(Edge).where(
             Edge.from_node_id == asset_id, Edge.processor_run_id.in_(run_ids),
             Edge.layer == "semantic", Edge.basis == "inference"))
@@ -523,6 +526,8 @@ async def wipe_cutscene_analysis(
     lore_res = await session.execute(lore_stmt)
     await session.flush()
 
+    # There is no content-addressed object GC; retained files remain until a
+    # separately coordinated cleanup can safely handle concurrent registration.
     return {
         "asset_node_id": asset_id,
         "game_version": game_version,

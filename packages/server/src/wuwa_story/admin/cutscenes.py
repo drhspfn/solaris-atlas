@@ -116,14 +116,15 @@ class CutsceneData(CustomView):
 
         previews_count = len(result["previews"])
         has_analysis = bool(reports or runs_count > 0 or atlases_count > 0)
-        # Existing delete UI addresses assets only; do not present root-owned
-        # artifacts as deletable until the scene cleanup path is integrated.
-        has_artifacts = bool(not scene_report and not scene_runs and asset_ids
+        # A scene-owned analysis may share its source assets with other scenes.
+        cleanup_owner_ids = [scene.node_id] if scene_report or scene_runs else list(asset_ids)
+        has_artifacts = bool(cleanup_owner_ids and asset_version
                              and (runs_count > 0 or previews_count > 0 or reports or atlases_count))
         result["analysis"] = {
             "cutscene_node_id": scene.node_id,
             "scene_report_id": scene_report.id if scene_report else None,
             "asset_node_ids": asset_ids,
+            "cleanup_owner_ids": cleanup_owner_ids,
             "asset_version": asset_version,
             "vision_enabled": get_agent_settings().vision_enabled,
             "has_analysis": has_analysis,

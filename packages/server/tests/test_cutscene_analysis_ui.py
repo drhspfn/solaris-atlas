@@ -213,6 +213,7 @@ async def test_cutscene_data_reports_previews_without_ai_analysis(monkeypatch):
         "cutscene_node_id": 15536,
         "scene_report_id": None,
         "asset_node_ids": [4801],
+        "cleanup_owner_ids": [4801],
         "asset_version": "3.7.1",
         "vision_enabled": True,
         "has_analysis": False,
@@ -226,7 +227,7 @@ async def test_cutscene_data_reports_previews_without_ai_analysis(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_scene_status_uses_current_plan_and_keeps_root_delete_disabled(monkeypatch):
+async def test_scene_status_exposes_root_and_asset_cleanup_owners(monkeypatch):
     from wuwa_story.admin import cutscenes
 
     plan = {"version": 1, "cutscene_node_id": 15536, "segments": [{"file_id": 9}]}
@@ -257,5 +258,6 @@ async def test_scene_status_uses_current_plan_and_keeps_root_delete_disabled(mon
     assert body["analysis"]["runs_count"] == 1
     assert body["analysis"]["atlases_count"] == 2
     assert body["analysis"]["has_analysis"] is True
-    assert body["analysis"]["has_artifacts"] is False
+    assert body["analysis"]["has_artifacts"] is True
+    assert body["analysis"]["cleanup_owner_ids"] == [15536]
     assert body["system_reports"][0]["title"] == "Current"
