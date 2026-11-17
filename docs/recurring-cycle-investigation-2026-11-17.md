@@ -59,14 +59,20 @@ catalog occurrence. Both source and projection paths use this policy. Any fix
 must preserve old runs and handle historical version filtering; simply relabeling
 phase 6 as 3.8 would be incorrect.
 
-## Safe next step
+## Targeted import
 
-Use an explicitly approved, revision-pinned schedule source with a documented
-trust policy, or an official server schedule, to import a new 3.8 phase against
-the existing `activity:100770002` identity. Preserve the schedule source,
-revision, per-server times and old occurrences, and invalidate affected
-projections. Do not derive Matrix phase dates from its multi-version season,
-or infer a live ShipTower phase from the highest client season ID. For
-Whimpering Wastes, confirm a current server cadence before extrapolating the
-2025 schedule. Without that evidence, keep an undated 3.8 catalog record and
-make the reader distinguish it from the old dated occurrence.
+`python -m wuwa_story.ingestion.recurring_events` reports missing schedules for
+existing recurring client events, using the existing community timetable source
+and a pinned commit. Add `--apply` to insert them. It does not create events or
+rewrite dated history; its rows retain the community source, commit, source URL,
+original times and version. Existing recurrence definitions, including the
+Whimpering Wastes four-week cadence, are retained. The operator must refresh the
+affected event projections after applying. The standard client catalog import
+continues to use client data only.
+
+The calendar retains a newer undated recurring client version when the matching
+dated run belongs to another version. Banner placeholders retain their existing
+cross-version deduplication. Do not derive Matrix phase dates from its
+multi-version season or infer a live ShipTower phase from the highest client
+season ID; confirm a current server cadence before extrapolating the 2025
+Whimpering Wastes schedule.
