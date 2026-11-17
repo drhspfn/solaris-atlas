@@ -6,6 +6,7 @@ COPY --from=uv /uv /uvx /bin/
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv PATH="/opt/venv/bin:$PATH" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app/packages/server
 COPY packages/server/pyproject.toml packages/server/uv.lock ./
+RUN uv sync --frozen --no-dev --extra visual-memory --no-install-project
 COPY packages/server/alembic.ini ./
 COPY packages/server/migrations ./migrations
 COPY packages/server/src ./src
