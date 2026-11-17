@@ -183,3 +183,30 @@ An exact featured subject may link multiple client banner configurations to a
 current Notice for presentation. Its poster can replace client layers only for an
 overlapping Notice display window; historical pinned Notice artwork still wins.
 This does not assign an ambiguous banner's schedule or replace its featured roster.
+
+# Versioned event captures
+
+Migration 0038 adds nullable client presentation data to each snapshot member.
+Deploy the migration before the importer. Existing readers and rows remain valid;
+imports preserve captured versions and reject conflicting imports for the same
+version and download. A dated occurrence is not rewritten by catalog import.
+An identical, dated capture can cover its catalog entry without creating another
+unknown-date occurrence. Existing placeholders and conflicting captures remain.
+
+The bounded `packages/server/scripts/backfill_event_captures.py` defaults to a
+read-only dry run. It requires a complete exact-version/download snapshot, accepts
+at most 100 members per batch, and returns an `after-event-id` cursor. `--apply`
+fills only empty captures with consistent retained event and occurrence evidence;
+it records the source identity and occurrence IDs and skips ambiguous text keys
+and conflicting downloads. Agreement between retained copies is not independent
+verification against the original client export. No dates or memberships are
+created by this backfill.
+
+The current API contract is unchanged. A subsequent projection transition must
+read the versioned member capture, select current or period-specific presentation,
+and suppress an old catalog-only placeholder only when its relationship to a
+recorded period is proven. Conflicting captures and actual recurring periods must
+remain visible. Rebuild projections incrementally and verify list, calendar and
+detail parity before relying on the new source. Rolling back application code is
+compatible with the additive column; dropping it would discard captures written
+since deployment and requires a backup or export first.

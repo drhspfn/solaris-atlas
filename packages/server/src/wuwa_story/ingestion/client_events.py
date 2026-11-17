@@ -2,7 +2,7 @@
 
 import re
 
-from sqlalchemy import select, text
+from sqlalchemy import and_, or_, select, text
 
 from wuwa_story.db.models.game_events import (
     GameEvent,
@@ -26,11 +26,25 @@ def _version_key(value):
     return tuple(parts)
 
 
-_ENRICHMENT_FIELDS = {"prefab_artwork", "prefab_spine_resources", "missing_resources", "animation_import"}
+_ENRICHMENT_FIELDS = {"prefab_artwork", "prefab_spine_resources", "missing_resources", "animation_import",
+                      "_capture_provenance"}
 
 
 def _capture_core(capture):
     return {key: value for key, value in capture.items() if key not in _ENRICHMENT_FIELDS}
+
+
+def _covers_catalog_capture(row, presentation, version):
+    snapshot = (row.source_data or {}).get("client") or {}
+    scheduled = bool(getattr(row, "starts_at", None) or getattr(row, "ends_at", None))
+    if scheduled:
+        return bool(snapshot) and _capture_core(snapshot) == _capture_core(presentation)
+    source_id = getattr(row, "source_occurrence_id", "")
+    if source_id.startswith("client:"):
+        return (source_id == f"client:{presentation['asset_version']}" and
+                (not snapshot or _capture_core(snapshot) == _capture_core(presentation)))
+    return (getattr(row, "game_version", version) == version and
+            (not snapshot or _capture_core(snapshot) == _capture_core(presentation)))
 
 
 async def store_client_events(session, records: dict, asset_version: str, download_id: str) -> dict:
@@ -69,6 +83,10 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
         if snapshot and snapshot.complete and member is None:
             raise ValueError("Existing complete event snapshot differs from the imported catalog")
         if member and member.client_capture is not None:
+            provenance = member.client_capture.get("_capture_provenance") or {}
+            if provenance and (not isinstance(provenance, dict)
+                               or provenance.get("source_id") != client_identity(key)):
+                raise ValueError("Existing event capture belongs to a different source identity")
             incoming = {**record, "asset_version": asset_version, "download_id": download_id,
                         "schedule_status": "server_controlled"}
             if _capture_core(member.client_capture) != _capture_core(incoming):
@@ -130,20 +148,26 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
         snapshot.complete = True
     for event, presentation in zip(events, presentations, strict=True):
         member = members_by_id.get(event.id)
+        capture = {**presentation, "_capture_provenance": {
+            "basis": "client_catalog_import", "source_id": event.source_id}}
         if member is None:
             session.add(GameEventSnapshotMember(version=asset_version, event_id=event.id,
-                                                client_capture=presentation))
+                                                client_capture=capture))
         elif member.client_capture is None:
-            member.client_capture = presentation
+            member.client_capture = capture
     occurrences = list(await session.scalars(select(GameEventOccurrence).where(
         GameEventOccurrence.event_id.in_([e.id for e in events]),
-        GameEventOccurrence.game_version == version).order_by(GameEventOccurrence.id).with_for_update()))
+        or_(GameEventOccurrence.game_version == version,
+            and_(or_(GameEventOccurrence.starts_at.is_not(None), GameEventOccurrence.ends_at.is_not(None)),
+                 GameEventOccurrence.source_data["client"]["asset_version"].as_string() == asset_version,
+                 GameEventOccurrence.source_data["client"]["download_id"].as_string() == download_id)))
+        .order_by(GameEventOccurrence.id).with_for_update()))
     by_event = {}
     for occurrence in occurrences:
         by_event.setdefault(occurrence.event_id, []).append(occurrence)
     for event, presentation in zip(events, presentations, strict=True):
         rows = by_event.get(event.id, [])
-        servers = {row.server for row in rows}
+        servers = {row.server for row in rows if _covers_catalog_capture(row, presentation, version)}
         for server in SERVER_KEYS:
             if server not in servers:
                 row = GameEventOccurrence(event_id=event.id, server=server,
@@ -155,7 +179,10 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
             snapshot = (row.source_data or {}).get("client", {})
             # A dated run keeps the client presentation captured for that run.
             # Media discovered later for the same download remains visible via the API.
-            if getattr(row, "starts_at", None) and snapshot:
+            if getattr(row, "starts_at", None) or getattr(row, "ends_at", None):
+                continue
+            if snapshot and (snapshot.get("download_id") != download_id or
+                             snapshot.get("asset_version") != asset_version):
                 continue
             row.banner_path = presentation.get("banner_path")
             row.source_data = {**(row.source_data or {}),

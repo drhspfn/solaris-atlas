@@ -1,12 +1,20 @@
 """Exercise snapshot preservation with real transactions on an isolated database."""
 
+from datetime import UTC, datetime
+
 import pytest
 import pytest_asyncio
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from wuwa_story.db.models.game_events import GameEvent, GameEventSnapshot, GameEventSnapshotMember
+from wuwa_story.db.models.game_events import (
+    GameEvent,
+    GameEventOccurrence,
+    GameEventSnapshot,
+    GameEventSnapshotMember,
+)
 from wuwa_story.ingestion.client_events import store_client_events
+from wuwa_story.ingestion.event_capture_backfill import backfill_event_captures
 
 
 class LocalSession(AsyncSession):
@@ -173,3 +181,110 @@ async def test_older_import_retains_newer_current_and_separate_captures(database
         assert "prefab_artwork" not in old.client_capture
         assert new.client_capture["locales"]["en"]["title"] == "New"
         assert new.client_capture["download_id"] == "pinned"
+
+
+@pytest.mark.asyncio
+async def test_lily_catalog_capture_preserves_one_existing_notice_period_and_art(database):
+    async with database() as session:
+        event = await session.get(GameEvent, 1)
+        event.source_id = "gacha:100090"
+        lily = {**record("Lily · Resonator Convene"), "event_kind": "banner",
+                "table": "GachaViewInfo", "featured_ids": [1512], "up_ids": [1102, 1103, 1202],
+                "banner_path": "/Game/Lily", "artwork": [{"path": "/Game/Lily", "role": "background"}]}
+        recorded_capture = {**lily, "asset_version": "3.8.0", "download_id": "pinned",
+                            "schedule_status": "server_controlled"}
+        period = await session.scalar(select(GameEventOccurrence).where(
+            GameEventOccurrence.event_id == 1, GameEventOccurrence.server == "europe"))
+        period.source_occurrence_id = "notice:50623@update"
+        period.game_version = None  # The notice states the update, not a recorded schedule version.
+        period.starts_at = datetime(2026, 11, 11, tzinfo=UTC)
+        period.ends_at = datetime(2026, 12, 3, tzinfo=UTC)
+        period.banner_path = "/Game/Lily"
+        period.source_data = {"client": recorded_capture, "notice_id": 36, "notice_revision": "notice-rev"}
+        await session.commit()
+        for _ in range(2):
+            await store_client_events(session, {"gacha:100090": lily, "101": record("Second")},
+                                      "3.8.0", "pinned")
+            await session.commit()
+        capture = (await session.get(GameEventSnapshotMember, ("3.8.0", 1))).client_capture
+        rows = list(await session.scalars(select(GameEventOccurrence).where(
+            GameEventOccurrence.event_id == 1, GameEventOccurrence.server == "europe")))
+        assert len(rows) == 1 and rows[0].id == period.id
+        assert rows[0].source_occurrence_id == "notice:50623@update"
+        assert rows[0].source_data["notice_id"] == 36 and rows[0].banner_path == "/Game/Lily"
+        assert capture["download_id"] == rows[0].source_data["client"]["download_id"] == "pinned"
+        assert capture["artwork"] == rows[0].source_data["client"]["artwork"]
+
+
+@pytest.mark.asyncio
+async def test_end_only_period_capture_is_not_overwritten(database):
+    async with database() as session:
+        period = await session.scalar(select(GameEventOccurrence).where(
+            GameEventOccurrence.event_id == 1, GameEventOccurrence.server == "europe"))
+        period.ends_at = datetime(2026, 12, 3, tzinfo=UTC)
+        period.source_data = {"client": {"download_id": "old", "locales": {"en": {"title": "Old"}}}}
+        period.banner_path = "/Game/Old"
+        await session.commit()
+        await store_client_events(session, {"100": record("New"), "101": record("Second")}, "3.8.0", "pinned")
+        await session.commit()
+        assert period.source_data["client"]["download_id"] == "old" and period.banner_path == "/Game/Old"
+        rows = list(await session.scalars(select(GameEventOccurrence).where(
+            GameEventOccurrence.event_id == 1, GameEventOccurrence.server == "europe")))
+        assert len(rows) == 2  # A conflicting capture is not treated as the same period.
+
+
+async def retained_capture(session):
+    capture = {**record("First"), "table": "Activity", "asset_version": "3.8.0", "download_id": "pinned",
+               "schedule_status": "server_controlled", "title_key": "Activity_100_Title"}
+    event = await session.get(GameEvent, 1)
+    event.source_data = {"client": capture}
+    occurrences = list(await session.scalars(select(GameEventOccurrence).where(GameEventOccurrence.event_id == 1)))
+    for row in occurrences:
+        row.source_data = {"client": dict(capture)}
+    await session.commit()
+    return capture, occurrences
+
+
+@pytest.mark.asyncio
+async def test_capture_backfill_dry_run_exact_proof_and_idempotence(database):
+    async with database() as session:
+        capture, occurrences = await retained_capture(session)
+        preview = await backfill_event_captures(session, "3.8.0", "pinned")
+        assert preview["ready"] == [1] and preview["applied"] == 0
+        assert (await session.get(GameEventSnapshotMember, ("3.8.0", 1))).client_capture is None
+        result = await backfill_event_captures(session, "3.8.0", "pinned", apply=True)
+        await session.commit()
+        assert result["applied"] == 1
+        saved = (await session.get(GameEventSnapshotMember, ("3.8.0", 1))).client_capture
+        assert {key: value for key, value in saved.items() if key != "_capture_provenance"} == capture
+        assert saved["_capture_provenance"] == {"basis": "consistent_retained_captures",
+                                               "source_id": "activity:100",
+                                               "occurrence_ids": sorted(row.id for row in occurrences)}
+        assert (await backfill_event_captures(session, "3.8.0", "pinned", apply=True))["applied"] == 0
+        assert (await backfill_event_captures(session, "3.8.0", "pinned", after_event_id=1))["last_event_id"] == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("conflict", ["different_payload", "different_download", "shared_key"])
+async def test_capture_backfill_skips_ambiguous_retained_data(database, conflict):
+    async with database() as session:
+        capture, occurrences = await retained_capture(session)
+        if conflict == "shared_key":
+            capture["title_key"] = "Activity_999_Title"
+            (await session.get(GameEvent, 1)).source_data = {"client": dict(capture)}
+            for row in occurrences:
+                row.source_data = {"client": dict(capture)}
+        else:
+            changed = dict(capture)
+            if conflict == "different_payload":
+                changed["title_key"] = "Activity_101_Title"
+            else:
+                changed["download_id"] = "other"
+            occurrences[0].source_data = {"client": changed}
+        await session.commit()
+        result = await backfill_event_captures(session, "3.8.0", "pinned", apply=True)
+        assert 1 not in result["ready"]
+        assert any(row == {"event_id": 1, "reason": "conflicting_or_shared_evidence"} for row in result["skipped"])
+        assert (await session.get(GameEventSnapshotMember, ("3.8.0", 1))).client_capture is None
+        with pytest.raises(ValueError, match="exact version and download"):
+            await backfill_event_captures(session, "3.8.0", "other")

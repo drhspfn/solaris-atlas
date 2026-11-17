@@ -45,11 +45,12 @@ async def test_client_import_adds_unlisted_events_and_preserves_exact_historical
     assert old.source == CLIENT_SOURCE and old.source_id == "activity:100"
     assert occurrence.starts_at == "preserved date"
     assert occurrence.source_data["time"] == ["preserved date"]
+    assert "client" not in occurrence.source_data
     assert old.title == "Client title" and old.banner_path == "/Game/Actual"
     created = [row for row in added if isinstance(row, GameEvent)]
     assert created[0].source_id == "activity:101"
     assert len([row for row in added if isinstance(
-        row, GameEventOccurrence)]) == 5
+        row, GameEventOccurrence)]) == 6  # The dated row has no matching client capture.
     assert result["artwork_paths"] == ["/Game/Actual"]
     assert [(row.version, row.download_id, row.complete) for row in added if isinstance(row, GameEventSnapshot)] == [
         ("3.7.0", "a" * 64, True)
@@ -112,7 +113,8 @@ async def test_new_download_does_not_overwrite_dated_run_snapshots():
     for row in rows:
         assert row.banner_path == "/Game/FirstRun"
         assert row.source_data["client"] == old_client
-    assert not any(isinstance(row, (GameEvent, GameEventOccurrence)) for row in added)
+    assert not any(isinstance(row, GameEvent) for row in added)
+    assert len([row for row in added if isinstance(row, GameEventOccurrence)]) == 3
 
 
 @pytest.mark.asyncio
