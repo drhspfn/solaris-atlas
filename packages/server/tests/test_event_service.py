@@ -133,6 +133,42 @@ async def test_undated_calendar_and_detail_keep_public_contract(event, repositor
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("summary", [True, False])
+async def test_activity_background_precedes_tab_icon(event, repository, service, summary):
+    background = "/Game/Aki/UI/UIResources/Common/Image/BgCgBig/T_CircumfluenceStarBg"
+    tab = "/Game/Aki/UI/UIResources/UiActivity/Image/Activity33/CatapultStory/T_ActivityTab_CatapultStory"
+    client = {"download_id": "current", "artwork": [
+        {"path": background, "role": "background", "table": "Activity"},
+        {"path": tab, "role": "tab", "table": "Activity"},
+    ]}
+    record = replace(event, event_kind="permanent", banner_path=background,
+                     source_data={"client": client})
+    repository.runs.return_value = [EventRun(record, None)]
+    repository.media.return_value = [
+        EventMedia(background, "background.png", {"download_id": "current"}),
+        EventMedia(tab, "tab.png", {"download_id": "current"}),
+    ]
+    result = await service.browse("asia", summary=summary)
+    assert result["events"][0]["preview_url"] == "https://cdn/background.png"
+
+
+def test_preview_preserves_content_and_falls_back_for_missing_or_placeholder_background():
+    from wuwa_story.events.domain import _client_preview
+
+    background = {"path": "/Game/Background", "role": "background", "table": "Activity"}
+    tab = {"path": "/Game/Tab", "role": "tab", "table": "Activity"}
+    content = {"path": "/Game/Content", "role": "content", "table": "GachaViewInfo"}
+    def resolve(path):
+        return path if path != "/Game/Background" else None
+    assert _client_preview([background, tab], resolve) == "/Game/Tab"
+    assert _client_preview([background, tab, content], lambda path: path) == "/Game/Content"
+    black = {**background, "path": "/Game/T_CommonBlack_UI"}
+    assert _client_preview([black, tab], lambda path: path) == "/Game/Tab"
+    gacha = {**background, "table": "GachaViewInfo"}
+    assert _client_preview([gacha, tab], lambda path: path) == "/Game/Tab"
+
+
+@pytest.mark.asyncio
 async def test_start_estimate_survives_source_and_projected_calendar_and_detail(event, repository, service, monkeypatch):
     from datetime import UTC, datetime
     from types import SimpleNamespace

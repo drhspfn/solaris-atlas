@@ -70,7 +70,12 @@ class _Reader:
 
 def _parse(reader, prune):
     try:
-        for item in ijson.items(reader, 'item', use_float=True):
+        # use_float=True rejects valid integers above the backend's integer limit.
+        # Parse arbitrary-size integers, while preserving the float values expected
+        # by downstream consumers and the streaming, one-export-at-a-time bound.
+        events = ((prefix, event, float(value) if event == 'number' and not isinstance(value, int) else value)
+                  for prefix, event, value in ijson.parse(reader))
+        for item in ijson.items(events, 'item'):
             if prune and isinstance(item, dict) and item.get('Type') in DERIVED_TYPES:
                 item = stub(item)
             yield item
