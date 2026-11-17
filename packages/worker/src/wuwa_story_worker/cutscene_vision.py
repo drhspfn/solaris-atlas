@@ -335,6 +335,24 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
         return
     config = get_settings()
     storage = S3Storage(config)
+    if "analysis_plan" in run.metadata_json:
+        from wuwa_story_worker.logical_video_workspace import load_logical_workspace
+
+        if run.prompt_version != VISION_VERSION:
+            raise ValueError("Logical scene plans require the video analysis protocol")
+        ffmpeg_name = os.getenv("WUWA_FFMPEG_BIN") or shutil.which("ffmpeg")
+        if not ffmpeg_name:
+            raise ValueError("Configure WUWA_FFMPEG_BIN")
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = await load_logical_workspace(
+                db, run, settings, storage, config, Path(temporary), Path(ffmpeg_name).resolve())
+            run.status = "running"
+            await db.commit()
+            await run_video_analysis_agent(
+                db, run, settings, workspace, storage, run.metadata_json.get("text_context"))
+            run.finished_at = datetime.now(UTC)
+            await db.commit()
+        return
     location = await db.scalar(
         select(FileLocation)
         .where(
