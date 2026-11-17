@@ -13,6 +13,7 @@ from wuwa_story.db.models.game_events import (
     GameEventSnapshot,
     GameEventSnapshotMember,
 )
+from wuwa_story.events.canonical import bind_event_alias, event_family_ids
 from wuwa_story.ingestion.client_events import store_client_events
 from wuwa_story.ingestion.event_capture_backfill import backfill_event_captures
 
@@ -31,7 +32,8 @@ async def database():
         await connection.execute(text("PRAGMA foreign_keys=ON"))
         await connection.execute(text("ATTACH DATABASE ':memory:' AS core"))
         await connection.execute(text("""CREATE TABLE core.game_event (
-            id INTEGER PRIMARY KEY, source TEXT NOT NULL, source_id TEXT NOT NULL, title TEXT NOT NULL,
+            id INTEGER PRIMARY KEY, canonical_event_id INTEGER REFERENCES game_event(id), canonical_evidence JSON,
+            source TEXT NOT NULL, source_id TEXT NOT NULL, title TEXT NOT NULL,
             slug TEXT, description TEXT, event_kind TEXT NOT NULL, group_label_key TEXT, game_path TEXT,
             banner_path TEXT, rewards JSON, source_url TEXT NOT NULL, source_revision TEXT NOT NULL,
             source_data JSON NOT NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)"""))
@@ -68,6 +70,23 @@ async def snapshot(session):
     head = await session.get(GameEventSnapshot, "3.8.0")
     members = set(await session.scalars(select(GameEventSnapshotMember.event_id)))
     return head.download_id, head.complete, members
+
+
+@pytest.mark.asyncio
+async def test_canonical_binding_retains_original_sources_members_and_periods(database):
+    evidence = {"basis": "game_source", "reference": "release:22/pool:100096"}
+    async with database() as session:
+        await bind_event_alias(session, 2, 1, evidence)
+        await bind_event_alias(session, 2, 1, evidence)
+        assert await event_family_ids(session, 2) == (1, [1, 2])
+        assert (await session.get(GameEvent, 2)).source_id == "activity:101"
+        assert len(list(await session.scalars(select(GameEventOccurrence)))) == 6
+        assert await snapshot(session) == ("pinned", True, {1, 2})
+        with pytest.raises(ValueError, match="root"):
+            await bind_event_alias(session, 1, 2, evidence)
+        with pytest.raises(ValueError, match="changed"):
+            await bind_event_alias(session, 2, 1, {"basis": "manual", "reference": "review"})
+        await session.commit()
 
 
 @pytest.mark.asyncio
