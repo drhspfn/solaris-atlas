@@ -62,6 +62,7 @@ class Event:
     game_path: str | None
     source_url: str
     source_data: dict[str, Any]
+    canonical_event_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,7 @@ class EventOccurrence:
     season: dict[str, Any] | None
     banner_path: str | None
     source_data: dict[str, Any]
+    source_occurrence_id: str | None = None
 
 
 @dataclass(frozen=True)

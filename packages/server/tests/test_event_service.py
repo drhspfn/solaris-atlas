@@ -85,6 +85,8 @@ async def test_undated_calendar_and_detail_keep_public_contract(event, repositor
         "events": [
             {
                 "id": 7,
+                "canonical_event_id": 7,
+                "source_event_id": 7,
                 "slug": "event",
                 "href": "/events?event=event",
                 "source_id": "client:7",

@@ -331,12 +331,14 @@ class SqlAlchemyEventRepository:
                     title=event.title, description=event.description, event_kind=event.event_kind,
                     banner_path=event.banner_path, rewards=event.rewards, game_path=event.game_path,
                     source_url=event.source_url, source_data=event.source_data,
+                    canonical_event_id=getattr(event, "canonical_event_id", None),
                 ),
                 EventOccurrence(
                     id=occurrence.id, game_version=occurrence.game_version,
                     starts_at=occurrence.starts_at, ends_at=occurrence.ends_at,
                     season=occurrence.season, banner_path=occurrence.banner_path,
                     source_data=occurrence.source_data,
+                    source_occurrence_id=getattr(occurrence, "source_occurrence_id", None),
                 ) if occurrence else None,
             )
             for event, occurrence in rows

@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from wuwa_story.events.catalog import catalog_rows
 from wuwa_story.events.domain import (
     CLIENT_SOURCE,
     SHARED_ACTIVITY_BACKGROUNDS,
@@ -113,6 +114,7 @@ class EventService:
         ]
         if event_id is None:
             rendered = group_selectable_pools(rendered, server, locale)
+            rendered = catalog_rows(rendered)
         if not _include_pool_match:
             for row in rendered:
                 row.pop("_pool_match", None)
@@ -160,6 +162,9 @@ class EventService:
                     result["selectable_members"] = row["selectable_members"]
                     break
         result.pop("_pool_match", None)
+        result["id"] = result.get("canonical_event_id") or result["id"]
+        if result.pop("_catalog_placeholder", False):
+            result["occurrence_id"] = None
         return result
 
     async def _announcements(self, runs: list[EventRun], event_id: int | None) -> _Announcements:
@@ -274,6 +279,8 @@ class EventService:
         )
         result = {
             "id": event.id,
+            "canonical_event_id": getattr(event, "canonical_event_id", None) or event.id,
+            "source_event_id": event.id,
             "slug": event.slug,
             "href": record_url(event, "events"),
             "source_id": event.source_id,
@@ -313,6 +320,10 @@ class EventService:
         if occurrence and (match := pool_match(occurrence.source_data)):
             result["_pool_match"] = match
         if occurrence:
+            result["_catalog_placeholder"] = bool(
+                (getattr(occurrence, "source_occurrence_id", None) or "").startswith("client:")
+                and occurrence.starts_at is None and occurrence.ends_at is None
+            )
             captured_client = (occurrence.source_data or {}).get("client")
             result["catalog_provenance"] = (
                 "occurrence_snapshot" if captured_client else
