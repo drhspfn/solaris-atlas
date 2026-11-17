@@ -50,8 +50,8 @@ async def test_client_import_adds_unlisted_events_and_preserves_exact_historical
     assert len([row for row in added if isinstance(
         row, GameEventOccurrence)]) == 5
     assert result["artwork_paths"] == ["/Game/Actual"]
-    assert [(row.version, row.download_id) for row in added if isinstance(row, GameEventSnapshot)] == [
-        ("3.7.0", "a" * 64)
+    assert [(row.version, row.download_id, row.complete) for row in added if isinstance(row, GameEventSnapshot)] == [
+        ("3.7.0", "a" * 64, True)
     ]
     assert {row.event_id for row in added if isinstance(row, GameEventSnapshotMember)} == {7, created[0].id}
 
@@ -108,5 +108,6 @@ async def test_partial_import_does_not_publish_an_incomplete_snapshot():
     session.add_all = added.extend
     result = await store_client_events(session, {"100": record(), "101": {"locales": {}}}, "3.8.0", "new")
     assert result["unresolved"]
-    assert not any(isinstance(row, (GameEventSnapshot, GameEventSnapshotMember)) for row in added)
+    assert [row.complete for row in added if isinstance(row, GameEventSnapshot)] == [False]
+    assert [row.event_id for row in added if isinstance(row, GameEventSnapshotMember)] == [7]
     assert "DELETE FROM core.game_event_snapshot" in str(session.execute.call_args.args[0])

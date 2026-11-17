@@ -14,6 +14,7 @@ def upgrade():
         "game_event_snapshot",
         sa.Column("version", sa.String(32), primary_key=True),
         sa.Column("download_id", sa.String(64), nullable=False),
+        sa.Column("complete", sa.Boolean(), nullable=False),
         schema="core",
     )
     op.create_table(

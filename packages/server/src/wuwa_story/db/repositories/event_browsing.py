@@ -7,7 +7,12 @@ from sqlalchemy import and_, case, cast, func, or_, select, tuple_
 from sqlalchemy.dialects.postgresql import JSONB, JSONPATH
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence, GameEventSnapshotMember
+from wuwa_story.db.models.game_events import (
+    GameEvent,
+    GameEventOccurrence,
+    GameEventSnapshot,
+    GameEventSnapshotMember,
+)
 from wuwa_story.db.models.graph import Node
 from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
@@ -46,7 +51,9 @@ async def read_event_runs(
         statement = statement.where(GameEvent.event_kind == kind)
     if version:
         statement = statement.where(GameEvent.id.in_(
-            select(GameEventSnapshotMember.event_id).where(GameEventSnapshotMember.version == version)
+            select(GameEventSnapshotMember.event_id)
+            .join(GameEventSnapshot, GameEventSnapshot.version == GameEventSnapshotMember.version)
+            .where(GameEventSnapshotMember.version == version, GameEventSnapshot.complete.is_(True))
         ))
     if event_id is not None:
         statement = statement.where(GameEvent.id == event_id)

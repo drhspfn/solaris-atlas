@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     ForeignKey,
     Identity,
@@ -78,6 +79,7 @@ class GameEventSnapshot(Base):
 
     version: Mapped[str] = mapped_column(String(32), primary_key=True)
     download_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    complete: Mapped[bool] = mapped_column(Boolean, nullable=False)
 
 
 class GameEventSnapshotMember(Base):

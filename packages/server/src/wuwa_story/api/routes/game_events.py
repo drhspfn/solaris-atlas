@@ -56,14 +56,16 @@ async def list_game_events(
     if version:
         if version.count(".") == 1:
             candidates = list(await session.scalars(select(GameEventSnapshot.version).where(
-                GameEventSnapshot.version.startswith(version + ".", autoescape=True)
+                GameEventSnapshot.version.startswith(version + ".", autoescape=True),
+                GameEventSnapshot.complete.is_(True),
             )))
             if len(candidates) > 1:
                 raise HTTPException(status_code=409, detail="Multiple event snapshots match; specify the full version")
             if not candidates:
                 raise HTTPException(status_code=404, detail="Event catalog snapshot not available")
             version = candidates[0]
-        if await session.get(GameEventSnapshot, version) is None:
+        snapshot = await session.get(GameEventSnapshot, version)
+        if snapshot is None or not snapshot.complete:
             raise HTTPException(status_code=404, detail="Event catalog snapshot not available")
         return await service.browse(server, kind, version, locale, summary=summary)
     if read_projections.should_route_to_projection("game_event", None, locale=locale):
@@ -73,7 +75,7 @@ async def list_game_events(
 
 @router.get("/events/snapshots")
 async def list_event_snapshots(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
-    versions = list(await session.scalars(select(GameEventSnapshot.version)))
+    versions = list(await session.scalars(select(GameEventSnapshot.version).where(GameEventSnapshot.complete.is_(True))))
     return {"versions": sorted(versions, key=lambda value: tuple(map(int, value.split("."))), reverse=True)}
 
 

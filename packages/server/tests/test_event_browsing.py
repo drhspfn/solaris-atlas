@@ -22,7 +22,7 @@ async def test_snapshot_routes_only_complete_membership_to_source(monkeypatch):
     app = FastAPI()
     app.include_router(game_events.router)
     session = AsyncMock()
-    session.get.return_value = object()
+    session.get.return_value = SimpleNamespace(complete=True)
     session.scalars.return_value = ["3.7.1", "3.10.0", "3.8.0"]
     service = SimpleNamespace(browse=AsyncMock(return_value={"events": []}))
     app.dependency_overrides[game_events.get_session] = lambda: session
@@ -39,6 +39,8 @@ async def test_snapshot_routes_only_complete_membership_to_source(monkeypatch):
         session.scalars.return_value = ["3.8.0", "3.8.1"]
         assert (await client.get("/events?version=3.8")).status_code == 409
         session.get.return_value = None
+        assert (await client.get("/events?version=3.7.0")).status_code == 404
+        session.get.return_value = SimpleNamespace(complete=False)
         assert (await client.get("/events?version=3.7.0")).status_code == 404
     projection.assert_not_called()
 

@@ -73,12 +73,11 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
     # Replace membership atomically under the existing catalog import lock.
     # An incomplete extraction is not an authoritative snapshot.
     await session.execute(delete(GameEventSnapshot).where(GameEventSnapshot.version == asset_version))
-    if not missing:
-        session.add(GameEventSnapshot(version=asset_version, download_id=download_id))
-        await session.flush()
-        session.add_all([
-            GameEventSnapshotMember(version=asset_version, event_id=event.id) for event in events
-        ])
+    session.add(GameEventSnapshot(version=asset_version, download_id=download_id, complete=not missing))
+    await session.flush()
+    session.add_all([
+        GameEventSnapshotMember(version=asset_version, event_id=event.id) for event in events
+    ])
     occurrences = list(await session.scalars(select(GameEventOccurrence).where(
         GameEventOccurrence.event_id.in_([e.id for e in events]),
         GameEventOccurrence.game_version == version)))
