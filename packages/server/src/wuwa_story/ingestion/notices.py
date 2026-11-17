@@ -16,6 +16,7 @@ from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
+from wuwa_story.ingestion.notice_trials import embedded_notice_activities, notice_trial_matches
 from wuwa_story.notices.matching import notice_candidates as notice_candidates
 from wuwa_story.notices.matching import notice_matches as notice_matches
 from wuwa_story.storage.notice_images import public_notice_image as public_notice_image
@@ -106,7 +107,7 @@ def parse_notice(raw, category):
 
 def notice_period(content, server):
     """Extract stated timestamps without guessing the time of a version update."""
-    section = re.search(r"Duration[✦\s]*(.*?)(?:✦|$)", content["text"], re.S)
+    section = re.search(r"Duration[:✦\s]*(.*?)(?:✦|$)", content["text"], re.S)
     if not section:
         return None
     match = re.search(
@@ -273,6 +274,12 @@ async def store_notices(session, feed, page, document):
     events = list(await session.scalars(select(GameEvent).where(GameEvent.source == CLIENT_SOURCE)))
     report = {"notices": 0, "linked": 0, "dated_runs": 0}
     anchors = {}
+    direct_titles = {
+        re.sub(r"[^\w]+", "", title[1].casefold())
+        for category in ("recommend", "game", "activity")
+        for raw in document.get(category, []) if not raw.get("whiteList")
+        if (title := re.search(r"\[([^]]+)\]", str(raw.get("tabTitle", ""))))
+    }
     for category in ("recommend", "game", "activity"):
         for raw in document.get(category, []):
             if raw.get("whiteList"):
@@ -298,6 +305,16 @@ async def store_notices(session, feed, page, document):
             if (notice.revision == revision and notice.related_event_ids
                 and "selectable 5-Star" not in content["text"]):
                 matched = [event for event in events if event.id in notice.related_event_ids]
+            sections = embedded_notice_activities(content, events)
+            sections = [section for section in sections if re.sub(r"[^\w]+", "", section[0].title.casefold()) not in direct_titles]
+            if re.search(r"Patch Notes for Version\s+\d+\.\d+", content["title"], re.I):
+                matched = []
+            trials = [*sections, *(await notice_trial_matches(session, content, events))]
+            trial_details = {event.id: (trial_content, evidence) for event, trial_content, evidence in trials}
+            if ("will become available in Ascendant Aces as Trial Resonators" in content["text"]
+                or "[Glamour Couture] Outfit Tryout" in content["text"]):
+                matched = [event for event in matched if (event.source_data or {}).get("client", {}).get("activity_type") not in (8, 35) or event.id in trial_details]
+            matched = list({event.id: event for event in [*matched, *(trial[0] for trial in trials)]}.values())
             notice.title, notice.category = content["title"], category
             if notice.revision != revision:
                 notice.content = {
@@ -321,7 +338,10 @@ async def store_notices(session, feed, page, document):
             )
             for event in matched:
                 for server in SERVER_OFFSETS:
-                    period = notice_period(content, server)
+                    trial = trial_details.get(event.id)
+                    period = notice_period(trial[0] if trial else content, server)
+                    if trial and not period:
+                        continue
                     if not period:
                         # A display window can disambiguate an existing run, but
                         # must never create or replace that run's schedule.
@@ -346,7 +366,16 @@ async def store_notices(session, feed, page, document):
                         row = candidates[0]
                     else:
                         start, end = period
+                        if trial and trial[1]["basis"] == "notice_section":
+                            existing = await session.scalar(select(GameEventOccurrence.id).where(
+                                GameEventOccurrence.event_id == event.id,
+                                GameEventOccurrence.server == server,
+                                GameEventOccurrence.ends_at == end,
+                            ).limit(1))
+                            if existing is not None:
+                                continue
                         identity = (
+                            f"trial:{end.isoformat()}" if trial else
                             f"notice:{notice.source_id}@{start.isoformat()}" if start
                             else f"notice:{notice.source_id}@update"
                         )
@@ -355,7 +384,7 @@ async def store_notices(session, feed, page, document):
                             .where(
                                 GameEventOccurrence.event_id == event.id,
                                 GameEventOccurrence.server == server,
-                                (GameEventOccurrence.starts_at == start if start else
+                                (GameEventOccurrence.starts_at == start if start and not trial else
                                  GameEventOccurrence.source_occurrence_id == identity),
                             )
                             .with_for_update()
@@ -371,7 +400,12 @@ async def store_notices(session, feed, page, document):
                             )
                             session.add(row)
                         row.ends_at = end
-                        if start is None:
+                        if trial:
+                            version = (re.search(r"Version\s+(\d+\.\d+)\s+update", trial[0]["text"], re.I)
+                                       or re.search(r"Patch Notes for Version\s+(\d+\.\d+)", content["title"], re.I))
+                            if version:
+                                row.game_version = version[1]
+                        if start is None and not trial:
                             version = re.search(r"Version\s+(\d+\.\d+)\s+update", content["text"], re.I)
                             key = (version[1], server) if version else None
                             if key and key not in anchors:
@@ -398,9 +432,10 @@ async def store_notices(session, feed, page, document):
                         "notice_id": notice.id,
                         "notice_revision": revision,
                         **({"notice_match": match_evidence} if match_evidence else {}),
-                        "notice_presentation": {
+                        **({"schedule_match": trial[1]} if trial else {}),
+                        **({"notice_presentation": {
                             "en": {"title": content["title"], "description": content["text"]}
-                        },
+                        }} if not trial else {}),
                         **(
                             {"schedule_source": feed, "schedule_revision": revision}
                             if period
