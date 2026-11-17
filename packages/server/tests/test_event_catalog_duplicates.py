@@ -77,9 +77,10 @@ async def test_source_calendar_suppresses_matching_placeholders_in_snapshots():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
 
+    from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
     from wuwa_story.db.repositories.event_browsing import read_event_runs
 
-    event = SimpleNamespace(id=716)
+    event = SimpleNamespace(id=716, source_data={"client": {"download_id": "pinned"}})
     dated = SimpleNamespace(id=1, source_occurrence_id="100087", starts_at="date",
                             ends_at="date", game_version="3.7", source_data=sample_client("same"))
     stub = SimpleNamespace(id=2, source_occurrence_id="client:3.8.0", starts_at=None,
@@ -87,7 +88,13 @@ async def test_source_calendar_suppresses_matching_placeholders_in_snapshots():
     session = AsyncMock()
     session.execute.return_value = Mock(all=Mock(return_value=[(event, dated), (event, stub)]))
     assert await read_event_runs(session, server="europe") == [(event, dated)]
-    assert await read_event_runs(session, server="europe", version="3.8") == [(event, dated)]
+    def flat(occurrence):
+        return tuple(getattr(event, column.key, None) for column in GameEvent.__table__.columns) + tuple(
+            getattr(occurrence, column.key, None) for column in GameEventOccurrence.__table__.columns)
+    session.execute.return_value = Mock(all=Mock(return_value=[flat(dated), flat(stub)]))
+    selected = await read_event_runs(session, server="europe", version="3.8")
+    assert [(event.id, period.id) for event, period in selected] == [(716, 1)]
+    session.execute.return_value = Mock(all=Mock(return_value=[(event, dated), (event, stub)]))
     dated.source_data = sample_client("Blooms for the Shadow")
     stub.source_data = sample_client("Gifts of Singing Drizzle")
     assert await read_event_runs(session, server="europe") == [(event, dated), (event, stub)]
