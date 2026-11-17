@@ -70,7 +70,7 @@ export default async function QuestTranscriptPage({ params, searchParams }: Prop
       { cache: 'no-store' },
     ),
     serverApi<QuestContinuityData>(`/quests/${encodeURIComponent(key)}/continuity?${selection}`),
-    serverApi<QuestMediaManifest>(`/quests/${encodeURIComponent(key)}/media?${selection}`),
+    serverApi<QuestMediaManifest>(`/quests/${encodeURIComponent(key)}/media?${selection}`, { cache: 'no-store' }),
   ]);
 
   await canonicalRoute("quests", key, profile?.quest, searchParams);

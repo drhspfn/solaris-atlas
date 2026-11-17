@@ -35,6 +35,7 @@ import {
   runtimeBlockSlots,
 } from "@/components/story/QuestRuntimeBlock";
 import { encounterFlows } from "@/components/story/encounterTransitions";
+import { encounterSequenceRecordings } from "@/components/story/sequenceVideo";
 import { QuestIllustration } from "@/components/story/QuestIllustration";
 import { QuestIllustratedScene } from "@/components/story/QuestIllustratedScene";
 import { QuestFork } from "@/components/story/QuestFork";
@@ -772,6 +773,7 @@ export function QuestPageClient({
       flow.sequence_media,
     ).length;
     const rendered = parts.map((part, index) => {
+      const recordings = encounterSequenceRecordings(pageMediaEvents, flow, part.cinematics);
       const events = pageMediaEvents.filter(
         (event) =>
           event.kind === "cutscene" &&
@@ -794,12 +796,15 @@ export function QuestPageClient({
           key={`${flow.id}-${index}`}
           media={part.cinematics}
           unplaced={!part.lines.length}
-          playbackResolved={events.some((event) => !!event.playback)}
-          componentCount={index === componentPart ? componentCount : 0}
+          playbackResolved={recordings.length > 0 || events.some((event) => !!event.playback)}
+          componentCount={index === componentPart && !recordings.length ? componentCount : 0}
           engineRendered={componentCount === 0 &&
             !flow.sequence_media?.sections.some((section) => section.kind === "illustration") &&
             hasEngineCinematicTracks(flow.sequence_media)}
         >
+          {recordings.map((event) => (
+            <Cutscene key={event.occurrence_id} event={event} display={playerDisplay} />
+          ))}
           {index === componentPart && (
             <QuestSequenceFragments media={flow.sequence_media} />
           )}

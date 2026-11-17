@@ -1,5 +1,6 @@
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     ForeignKey,
     Identity,
     Integer,
@@ -25,6 +26,22 @@ class Scene(MetadataMixin, Base):
     title: Mapped[str | None] = mapped_column(String(512))
     authored_order: Mapped[int | None] = mapped_column(Integer)
     source_basis: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class SequenceVideoFallback(Base):
+    """Administrator-selected recording for one quest occurrence and snapshot."""
+
+    __tablename__ = "sequence_video_fallback"
+    __table_args__ = (
+        CheckConstraint("start_seconds >= 0", name="ck_sequence_video_start"),
+        CheckConstraint("end_seconds IS NULL OR end_seconds > start_seconds",
+                        name="ck_sequence_video_end"),
+        {"schema": "ops"},
+    )
+    occurrence_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    video_id: Mapped[str] = mapped_column(String(11), nullable=False)
+    start_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_seconds: Mapped[int | None] = mapped_column(Integer)
 
 
 class Event(MetadataMixin, Base):

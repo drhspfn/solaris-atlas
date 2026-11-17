@@ -59,7 +59,7 @@ _STORY_MAP_REVISION_LOCK = asyncio.Lock()
 PROJECTION_TABLES = tuple(f"core.{kind}_read" for kind in (
     "character", "item", "location", "quest", "game_event", "game_notice",
     "speaker", "dialogue", "cutscene", "story_map",
-)) + ("core.entity_read_relation", "i18n.locale")
+)) + ("core.entity_read_relation", "i18n.locale", "ops.sequence_video_fallback")
 _PROJECTION_REVISION_CACHE = {"value": "", "expires": 0.0}
 _PROJECTION_REVISION_LOCK = asyncio.Lock()
 

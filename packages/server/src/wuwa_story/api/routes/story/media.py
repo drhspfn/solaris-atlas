@@ -5,7 +5,9 @@ from collections import defaultdict
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import or_, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.agents.cutscene_vision import visual_reference
@@ -14,6 +16,7 @@ from wuwa_story.api import read_projections
 from wuwa_story.api.routes.story.captions import caption_texts, caption_tracks
 from wuwa_story.api.routes.story.cutscene_audio import audio_bundles
 from wuwa_story.api.routes.story.shared import _release_id
+from wuwa_story.auth.dependencies import require_admin, require_csrf
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.content import Document, DocumentHead
 from wuwa_story.db.models.core import QuestAction, QuestState
@@ -23,6 +26,7 @@ from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceRecord
 from wuwa_story.db.models.storage import FileLocation, FileReference
+from wuwa_story.db.models.story import SequenceVideoFallback
 from wuwa_story.db.repositories.nodes import get_quest
 from wuwa_story.db.session import get_session
 from wuwa_story.ingestion.cutscenes import Clip, PlaybackFlow
@@ -34,6 +38,7 @@ from wuwa_story.story.cutscene_descriptions import attach_public_descriptions
 from wuwa_story.story.cutscene_occurrences import group_cutscene_occurrences
 from wuwa_story.story.cutscene_publications import publication_order, publication_types
 from wuwa_story.story.scene_continuations import scene_continuations
+from wuwa_story.story.sequence_video import attach_sequence_videos, youtube_id
 from wuwa_story.story.service import _quest_page_state_ids
 from wuwa_story.story.tree_order import authored_order
 from wuwa_story.version import is_caption_supported
@@ -282,7 +287,7 @@ async def quest_media(
         flows = {i: event.get('playback') for i, event in enumerate(manifest.get('events', []))}
         flows.update({f'related-{i}': item.get('playback') for i, item in enumerate(manifest.get('related_cutscenes', []))})
         await attach_public_descriptions(session, flows, release_id, locale)
-        return manifest
+        return await attach_sequence_videos(session, manifest)
     quest = await get_quest(session, game_quest_id)
     if quest is None:
         raise HTTPException(status_code=404, detail="quest not found")
@@ -563,7 +568,7 @@ async def quest_media(
         : link for link in package_scenes.get(quest.node_id, [])}
     package_flows = await cutscene_flows(session, list(related)) if related else {}
     continuations = await scene_continuations(session, list(related), quest.node_id, release_id, locale)
-    return group_cutscene_occurrences({
+    manifest = group_cutscene_occurrences({
         "quest": f"quest:{game_quest_id}",
         "game_version": (await session.get(GameRelease, release_id)).game_version,
         "availability": "partial" if playable else "references_only",
@@ -585,3 +590,56 @@ async def quest_media(
             for link in package_links.get(quest.node_id, [])
         ],
     })
+    return await attach_sequence_videos(session, manifest)
+
+
+class SequenceVideoInput(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+    start_seconds: int = Field(default=0, ge=0, le=2147483647, strict=True)
+    end_seconds: int | None = Field(default=None, ge=0, le=2147483647, strict=True)
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value):
+        youtube_id(value)
+        return value
+
+    @model_validator(mode="after")
+    def validate_range(self):
+        if self.end_seconds is not None and self.end_seconds <= self.start_seconds:
+            raise ValueError("End must be later than start")
+        return self
+
+
+async def require_sequence_occurrence(session, quest_id, version, occurrence):
+    manifest = await quest_media(quest_id, version, "en", session)
+    if sum(event.get("occurrence_id") == occurrence
+           for event in manifest.get("events", [])) != 1:
+        raise HTTPException(404, "Sequence occurrence not found in this snapshot")
+
+
+@router.put("/admin/quests/{game_quest_id}/media/{occurrence}/youtube",
+            dependencies=[Depends(require_admin), Depends(require_csrf)])
+async def save_sequence_video(game_quest_id: str, occurrence: str, body: SequenceVideoInput,
+                              game_version: str, session: AsyncSession = Depends(get_session)):
+    await require_sequence_occurrence(session, game_quest_id, game_version, occurrence)
+    values = {"occurrence_id": occurrence, "video_id": youtube_id(body.url),
+              "start_seconds": body.start_seconds, "end_seconds": body.end_seconds}
+    statement = insert(SequenceVideoFallback).values(**values)
+    await session.execute(statement.on_conflict_do_update(
+        index_elements=[SequenceVideoFallback.occurrence_id],
+        set_={key: value for key, value in values.items() if key != "occurrence_id"}))
+    await session.commit()
+    return {"occurrence_id": occurrence, **{k: v for k, v in values.items() if k != "occurrence_id"}}
+
+
+@router.delete("/admin/quests/{game_quest_id}/media/{occurrence}/youtube",
+               dependencies=[Depends(require_admin), Depends(require_csrf)])
+async def delete_sequence_video(game_quest_id: str, occurrence: str, game_version: str,
+                                session: AsyncSession = Depends(get_session)):
+    await require_sequence_occurrence(session, game_quest_id, game_version, occurrence)
+    row = await session.get(SequenceVideoFallback, occurrence)
+    if row:
+        await session.delete(row)
+        await session.commit()
+    return {"occurrence_id": occurrence, "deleted": bool(row)}

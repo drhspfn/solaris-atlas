@@ -68,6 +68,7 @@ function questHarness({
       "@/components/story/QuestCutscenes",
       "@/components/story/QuestExplanation",
       "@/components/story/QuestMediaReferences",
+      "@/components/story/sequenceVideo",
       "@/components/ui/Feedback",
       "@/components/ui/Breadcrumbs",
       "@/data/entities",
