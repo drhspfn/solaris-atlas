@@ -85,6 +85,18 @@ class WorkerConfigurationTests(unittest.TestCase):
                 if key.startswith("WUWA_"):
                     self.assertIn(f"{key}: ${{{{ vars.{key} }}}}", workflow)
 
+    def test_vision_image_reuses_same_revision_cpu_dependencies(self):
+        dockerfile = (ROOT / "packages/worker/Dockerfile.vision").read_text()
+        images = (ROOT / ".github/workflows/images.yml").read_text()
+        self.assertIn("FROM ${API_IMAGE} AS visual", dockerfile)
+        self.assertIn("FROM ${WORKER_IMAGE}", dockerfile)
+        self.assertIn("COPY --from=visual /opt/venv /opt/visual-venv", dockerfile)
+        self.assertIn("PYTHONPATH=/opt/visual-venv/lib/python3.12/site-packages", dockerfile)
+        self.assertIn("RUN --network=none python -c", dockerfile)
+        self.assertIn("-worker:$GITHUB_SHA", images)
+        self.assertIn("-api:$GITHUB_SHA", images)
+        self.assertIn("file: packages/worker/Dockerfile.vision", images)
+
     @unittest.skipUnless(shutil.which("docker"), "Docker Compose CLI is required")
     def test_compose_resolves_independent_bounded_pools_without_starting_services(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -115,6 +127,16 @@ class WorkerConfigurationTests(unittest.TestCase):
                         if variant != "prod":
                             self.assertEqual(services[name]["environment"]["REDIS_URL"], "redis://redis:6379/0")
                     if variant == "prod":
+                        vision = services["cutscene-vision"]
+                        self.assertIn("solaris-atlas-vision:", vision["image"])
+                        self.assertEqual(vision["environment"]["VISUAL_MEMORY_EMBEDDER"], "ccip")
+                        self.assertEqual(vision["environment"]["VISUAL_MEMORY_CCIP_PATH"],
+                                         "/models/ccip-24-4ea118d1")
+                        self.assertEqual(vision["environment"]["VISUAL_MEMORY_DETECTOR_PATH"],
+                                         "/models/anime-character-detector/character.onnx")
+                        self.assertTrue(any(mount.get("target") == "/models" and mount.get("read_only")
+                                            for mount in vision["volumes"]))
+                        self.assertIn("solaris-atlas-worker:", services["story-agent"]["image"])
                         pooler = services["pgbouncer"]
                         self.assertNotIn("ports", pooler)
                         self.assertTrue(pooler["read_only"])

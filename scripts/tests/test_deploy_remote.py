@@ -172,7 +172,8 @@ compose=(record_compose)
         startup = [line for line in result.stdout.splitlines() if line.startswith('up -d')]
         self.assertEqual(startup, ['up -d cutscene-assembly-worker'])
         workflow = (ROOT / '.github/workflows/production-deploy.yml').read_text()
-        self.assertIn('story-agent|cutscene-vision|cutscene-assembly-worker) components=(worker)', workflow)
+        self.assertIn('story-agent|cutscene-assembly-worker) components=(worker)', workflow)
+        self.assertIn('cutscene-vision) components=(vision)', workflow)
 
     def test_cutscene_v2_timeout_policy_is_exact_scoped_and_before_consumer(self):
         for component in ('cutscene-assembly-worker', 'all', 'infrastructure', 'api', 'snapshot-worker'):
@@ -433,7 +434,7 @@ class ModelWorkerConfigurationTests(unittest.TestCase):
     def test_production_validates_model_image_for_both_worker_deployment_groups(self):
         workflow = (ROOT / ".github/workflows/production-deploy.yml").read_text()
         self.assertIn("snapshot-worker) components=(worker models)", workflow)
-        self.assertIn("all) components=(api web worker models)", workflow)
+        self.assertIn("all) components=(api web worker models vision)", workflow)
         self.assertIn("MODEL_WORKER_IMAGE: ${{ vars.MODEL_WORKER_IMAGE }}", workflow)
         self.assertIn("WUWA_MODEL_REPLICAS: ${{ vars.WUWA_MODEL_REPLICAS }}", workflow)
 

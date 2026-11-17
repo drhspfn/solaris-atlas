@@ -256,6 +256,16 @@ proposals through `visual_read_video_scan`; they cannot approve their own labels
 
 ## Production video worker
 
+Cutscene analysis uses a separate `solaris-atlas-vision` image built from the
+worker and API images at the same commit. It reuses the API's CPU inference
+packages so the model fingerprint matches the indexed references; other worker
+images are unchanged. The production `cutscene-vision` service mounts
+`models/visual-memory` read-only and defaults to the indexed CCIP model at
+`ccip-24-4ea118d1` and the existing character detector. Build the `vision`
+component for the desired immutable revision before replacing that worker.
+The app-only rollout does not replace workers. Missing models are reported as
+unavailable; an `unknown` or `unresolved` match is not an identification.
+
 The API image installs the `visual-memory` extra with CPU-only PyTorch on Linux,
 plus FFmpeg. Place model files beneath `models/visual-memory` beside production
 Compose: DINOv2 config/preprocessor/model.safetensors in `dinov2-small`, and

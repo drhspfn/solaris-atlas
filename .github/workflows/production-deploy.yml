@@ -201,8 +201,9 @@ jobs:
             api) components=(api) ;;
             web) components=(web) ;;
             snapshot-worker) components=(worker models) ;;
-            story-agent|cutscene-vision|cutscene-assembly-worker) components=(worker) ;;
-            all) components=(api web worker models) ;;
+            story-agent|cutscene-assembly-worker) components=(worker) ;;
+            cutscene-vision) components=(vision) ;;
+            all) components=(api web worker models vision) ;;
             *) echo "Unsupported image component: $COMPONENT" >&2; exit 2 ;;
           esac
           for component in "${components[@]}"; do
