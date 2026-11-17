@@ -363,6 +363,7 @@ export function EventsPage({
             </button>
             <Select
               label="Calendar month"
+              width="auto"
               value={month}
               onChange={changeMonth}
               options={availableMonths.map((value) => ({
