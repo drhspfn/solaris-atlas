@@ -8,7 +8,7 @@ from html.parser import HTMLParser
 from urllib.parse import urlencode, urlparse
 
 import httpx
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
@@ -384,9 +384,12 @@ async def store_notices(session, feed, page, document):
                             .where(
                                 GameEventOccurrence.event_id == event.id,
                                 GameEventOccurrence.server == server,
-                                (GameEventOccurrence.starts_at == start if start and not trial else
+                                (or_(GameEventOccurrence.starts_at == start,
+                                     GameEventOccurrence.source_occurrence_id == identity) if start and not trial else
                                  GameEventOccurrence.source_occurrence_id == identity),
                             )
+                            .order_by((GameEventOccurrence.source_occurrence_id == identity).desc())
+                            .limit(1)
                             .with_for_update()
                         )
                         if row is None:
@@ -399,13 +402,15 @@ async def store_notices(session, feed, page, document):
                                 source_data={},
                             )
                             session.add(row)
-                        row.ends_at = end
-                        if trial:
+                        manual = (row.source_data or {}).get("schedule_source") == "manual"
+                        if not manual:
+                            row.ends_at = end
+                        if trial and not manual:
                             version = (re.search(r"Version\s+(\d+\.\d+)\s+update", trial[0]["text"], re.I)
                                        or re.search(r"Patch Notes for Version\s+(\d+\.\d+)", content["title"], re.I))
                             if version:
                                 row.game_version = version[1]
-                        if start is None and not trial:
+                        if start is None and not trial and not manual:
                             version = re.search(r"Version\s+(\d+\.\d+)\s+update", content["text"], re.I)
                             key = (version[1], server) if version else None
                             if key and key not in anchors:
@@ -438,7 +443,7 @@ async def store_notices(session, feed, page, document):
                         }} if not trial else {}),
                         **(
                             {"schedule_source": feed, "schedule_revision": revision}
-                            if period
+                            if period and (row.source_data or {}).get("schedule_source") != "manual"
                             else {}
                         ),
                     }

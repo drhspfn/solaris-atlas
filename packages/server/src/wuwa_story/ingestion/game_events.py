@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -171,7 +171,12 @@ async def import_game_events(session: AsyncSession) -> dict[str, Any]:
         statement = statement.on_conflict_do_update(
             constraint="uq_game_event_occurrence",
             set_={
-                key: getattr(statement.excluded, key)
+                key: (case(
+                    (GameEventOccurrence.source_data["schedule_source"].astext == "manual",
+                     getattr(GameEventOccurrence, key)),
+                    else_=getattr(statement.excluded, key),
+                ) if key in {"game_version", "starts_at", "ends_at", "source_data"}
+                    else getattr(statement.excluded, key))
                 for key in (
                     "game_version",
                     "starts_at",
