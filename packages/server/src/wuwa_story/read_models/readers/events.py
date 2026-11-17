@@ -128,8 +128,8 @@ async def events_page(session, server, kind=None, version=None, locale="en", sum
     placeholders = {event["occurrence_id"] for event in events
                     if event.get("_catalog_placeholder") is True}
     keep = visible_occurrences(
-        [(event["id"], event.get("occurrence_id"), event.get("catalog_version"),
-          event.get("_client_signature"))
+        [(event["id"], event.get("occurrence_id"), event.get("game_version") if event.get("kind") == "recurring" else event.get("catalog_version"),
+          event.get("_client_signature"), event.get("kind"))
          for event in events], placeholders,
     )
     events = [event for event in events if event.get("occurrence_id") not in placeholders

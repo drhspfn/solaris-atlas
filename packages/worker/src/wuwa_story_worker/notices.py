@@ -10,11 +10,25 @@ from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.db.models.storage import FileLocation, FileReference
 from wuwa_story.ingestion.notices import fetch_notice_feed, safe_notice_url, store_notices
+from wuwa_story.ingestion.recurring_events import import_recurring_schedules
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
 from wuwa_story_worker.asset_export import export_assets
 from wuwa_story_worker.tooling import tool_path
+
+
+async def refresh_recurring_schedules(session):
+    """The community schedule is independent of the committed official feed."""
+    try:
+        result = await import_recurring_schedules(session, apply=True)
+        await session.commit()
+        return {"source": result["source"], "revision": result["revision"],
+                "updated": len(result["occurrences"])}, None
+    except Exception as error:
+        await session.rollback()
+        return None, {"expected": "recurring_schedule", "status": "recurring_schedule_failed",
+                      "error": type(error).__name__}
 
 
 async def import_notices(root, session):
@@ -129,8 +143,12 @@ async def import_notices(root, session):
             if snapshot:
                 snapshot.content = content
         await session.commit()
+    recurring, recurring_failure = await refresh_recurring_schedules(session)
+    if recurring_failure:
+        failures.append(recurring_failure)
     return {
         **report,
+        "recurring_schedule": recurring,
         "images": len(published),
         "missing": len(failures),
         "media_report": {"entries": failures},
