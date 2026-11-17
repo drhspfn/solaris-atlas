@@ -20,7 +20,9 @@ export function EncounterCinematicBoundary({
   playbackResolved = false,
   componentCount = 0,
   engineRendered = false,
+  actions,
 }: {
+  actions?: ReactNode;
   engineRendered?: boolean;
   componentCount?: number;
   unplaced?: boolean;
@@ -30,10 +32,10 @@ export function EncounterCinematicBoundary({
 }) {
   return (
     <section className={styles.cinematic} aria-label="Scene">
-      <div className={styles.marker}>
+      <div className={styles.cinematicHeader}><div className={styles.marker}>
         <Film size={15} aria-hidden="true" />
         {engineRendered ? "In-game cinematic" : media.every((item) => item.kind === "cutscene") ? "Cutscene" : "Scripted scene"}
-      </div>
+      </div>{actions}</div>
       <p className={styles.note}>
         {componentCount > 0
           ? `Scene · ${componentCount} video components available`

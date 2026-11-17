@@ -20,7 +20,6 @@ import {
 } from "./cutsceneTimeline";
 import { preferredRoverTarget } from "./preferredRover";
 import { QuestSceneDetails } from "./QuestSceneDetails";
-import { sequenceVideoUrls } from "./sequenceVideo";
 import styles from "./QuestCutscenes.module.css";
 import {
   type CutsceneFlow,
@@ -673,28 +672,9 @@ export function Cutscene({
 }) {
   const flow = useMemo(() => event.playback || fallbackFlow(event), [event]);
   if (event.kind === "sequence") {
-    const urls = sequenceVideoUrls(event.youtube_fallback);
     return (
       <section id={cutsceneAnchor(event)} className="quest-runtime-block">
-        {urls ? (
-          <>
-            <h3><PlayerText value={event.title} fallback="In-game scene" display={display} /></h3>
-            <p>Scene recording on YouTube</p>
-            <iframe
-              title="In-game scene recording"
-              src={urls.embed}
-              loading="lazy"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-              allowFullScreen
-              style={{ width: "100%", aspectRatio: "16 / 9", border: 0 }}
-            />
-            <p><a href={urls.watch}>Watch on YouTube ↗</a></p>
-            <details>
-              <summary>Scene information and available media</summary>
-              <QuestSceneDetails event={event} display={display} />
-            </details>
-          </>
-        ) : <QuestSceneDetails event={event} display={display} />}
+        <QuestSceneDetails event={event} display={display} />
       </section>
     );
   }

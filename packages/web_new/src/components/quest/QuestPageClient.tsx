@@ -35,8 +35,10 @@ import {
   runtimeBlockSlots,
 } from "@/components/story/QuestRuntimeBlock";
 import { encounterFlows } from "@/components/story/encounterTransitions";
-import { encounterSequenceRecordings, updateSequenceRecording } from "@/components/story/sequenceVideo";
+import { encounterSequenceEvents, sequenceVideoUrls, updateSequenceRecording } from "@/components/story/sequenceVideo";
 import { SequenceVideoAdmin } from "@/components/story/SequenceVideoAdmin";
+import { SequenceVideoContext } from "@/components/story/SequenceVideoContext";
+import { SequenceRecording } from "@/components/story/SequenceRecording";
 import { QuestIllustration } from "@/components/story/QuestIllustration";
 import { QuestIllustratedScene } from "@/components/story/QuestIllustratedScene";
 import { QuestFork } from "@/components/story/QuestFork";
@@ -774,7 +776,8 @@ export function QuestPageClient({
       flow.sequence_media,
     ).length;
     const rendered = parts.map((part, index) => {
-      const recordings = encounterSequenceRecordings(pageMediaEvents, flow, part.cinematics);
+      const sequenceEvents = encounterSequenceEvents(pageMediaEvents, flow, part.cinematics);
+      const recordings = sequenceEvents.filter((event) => !!sequenceVideoUrls(event.youtube_fallback));
       const events = pageMediaEvents.filter(
         (event) =>
           event.kind === "cutscene" &&
@@ -796,6 +799,7 @@ export function QuestPageClient({
         <EncounterCinematicBoundary
           key={`${flow.id}-${index}`}
           media={part.cinematics}
+          actions={sequenceEvents.map((event) => <SequenceVideoAdmin key={event.occurrence_id} event={event} />)}
           unplaced={!part.lines.length}
           playbackResolved={recordings.length > 0 || events.some((event) => !!event.playback)}
           componentCount={index === componentPart && !recordings.length ? componentCount : 0}
@@ -804,7 +808,7 @@ export function QuestPageClient({
             hasEngineCinematicTracks(flow.sequence_media)}
         >
           {recordings.map((event) => (
-            <Cutscene key={event.occurrence_id} event={event} display={playerDisplay} />
+            <SequenceRecording key={event.occurrence_id} event={event} />
           ))}
           {index === componentPart && (
             <QuestSequenceFragments media={flow.sequence_media} />
@@ -929,7 +933,7 @@ export function QuestPageClient({
         {!embedded &&
           line.story_order_mapped === false &&
           (i === 0 || shown[i - 1].story_order_mapped !== false) && (
-            <p>Additional dialogue · position in the story is not mapped</p>
+            <p className="transcript-unmapped-heading">Additional dialogue <span>· position in the story is not mapped</span></p>
           )}
         {scenes}
         {!inScene &&
@@ -1125,6 +1129,9 @@ export function QuestPageClient({
   };
 
   return (
+    <SequenceVideoContext.Provider value={{ questKey, version: loading ? undefined : media?.game_version, onChange: (occurrence, version, recording) => {
+      setMedia((previous) => updateSequenceRecording(previous, occurrence, version, recording));
+    } }}>
     <div className="page-container quest-container">
       {error && (
         <ErrorPanel
@@ -1190,9 +1197,6 @@ export function QuestPageClient({
           </div>
         </div>
       </section>
-      <SequenceVideoAdmin questKey={questKey} manifest={loading ? null : media} onChange={(occurrence, version, recording) => {
-        setMedia((previous) => updateSequenceRecording(previous, occurrence, version, recording));
-      }} />
       <QuestClassification value={classification} />
       {profile?.item_requirements?.length > 0 && (
         <section className="subsection" aria-label="Item requirements">
@@ -1529,5 +1533,6 @@ export function QuestPageClient({
         </button>
       )}
     </div>
+    </SequenceVideoContext.Provider>
   );
 }

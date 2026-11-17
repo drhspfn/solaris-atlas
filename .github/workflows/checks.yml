@@ -54,6 +54,9 @@ jobs:
       - name: Test event calendar and quest requests
         working-directory: packages/web_new
         run: node --experimental-strip-types --test tests/events.test.mjs tests/eventRequests.test.mjs tests/questRequests.test.mjs
+      - name: Test cinematic recordings
+        working-directory: packages/web_new
+        run: node --test tests/encounterTransitions.test.mjs tests/sequenceVideo.test.mjs tests/sequenceVideoAdmin.test.mjs
 
   worker:
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'Run checks'
