@@ -324,6 +324,13 @@ def test_real_runtime_call_assignments_remain_unsupported(token, property_type, 
     result = resolve_event_calls(exports, entry)
     assert result['calls'] == []
     assert result['diagnostics'][-1]['code'] == 'assignment_expression'
+    operation = result['diagnostics'][-1]['source']['runtime_operation']
+    assert operation['destination'] == variable(entry, 'Result')
+    assert operation['expression'] == expression
+    assert operation['executed'] is False
+    assert operation['return_value'] == operation['effects'] == 'unknown'
+    operation['expression']['Token'] = 'changed'
+    assert exports[0]['ScriptBytecode'][1]['Expression'] == expression
 
 
 @pytest.mark.parametrize('target', ['instance', 'wrong_owner', 'wrong_type', 'wrong_source_type'])
