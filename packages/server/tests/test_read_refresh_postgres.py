@@ -68,6 +68,8 @@ async def database(request):
             # This table was added after 0008 and deliberately has no revision
             # trigger: 0024 must register it without touching existing triggers.
             await connection.execute(text("CREATE TABLE i18n.localization_value (id bigint PRIMARY KEY, content text)"))
+            await connection.execute(text("CREATE TABLE core.game_event_snapshot (version text PRIMARY KEY, download_id text, complete boolean NOT NULL)"))
+            await connection.execute(text("CREATE TABLE core.game_event_snapshot_member (version text, event_id bigint, client_capture jsonb)"))
             for statement in (
                 "CREATE TABLE graph.node_type (id smallint PRIMARY KEY, key text)",
                 "CREATE TABLE ops.game_release (id bigint PRIMARY KEY, game_version text)",

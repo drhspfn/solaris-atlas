@@ -18,6 +18,7 @@ from wuwa_story.db.models.game_events import (
 )
 from wuwa_story.db.repositories.event_browsing import _capture_enrichment, read_event_runs
 from wuwa_story.events.domain import CLIENT_SOURCE
+from wuwa_story.read_models.refresh import _event_snapshot_ids
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("WUWA_TEST_DATABASE_URL"), reason="Isolated PostgreSQL required"
@@ -72,6 +73,7 @@ async def test_snapshot_capture_applies_to_events_and_periods_without_mutating_c
             dirty = await db.scalars(text("SELECT snapshot_key FROM ops.read_projection_dirty "
                                           "WHERE kind='game_event' AND entity_id=:identity"), {"identity": event_id})
             assert {"current", "3.8.0"} <= set(dirty)
+            assert set(await db.scalars(_event_snapshot_ids("3.8.0"))) == {event_id, no_period_id}
             discovered = {**old, "prefab_artwork": [{"path": "/old-discovered"}]}
             extra = await db.scalar(select(_capture_enrichment(cast(old, JSONB), cast(discovered, JSONB))))
             assert extra == {"prefab_artwork": discovered["prefab_artwork"]}
