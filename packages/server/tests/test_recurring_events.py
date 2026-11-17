@@ -11,7 +11,8 @@ from wuwa_story.ingestion.recurring_events import recurring_schedule_rows
 
 def test_recurring_import_targets_migrated_identity_and_preserves_history():
     matrix = SimpleNamespace(id=851, source=CLIENT_SOURCE, source_id="activity:100770002",
-        event_kind="recurring", source_data={"legacy_source": SOURCE, "legacy_source_id": "3:100770002"})
+        event_kind="recurring", source_data={"legacy_source": SOURCE, "legacy_source_id": "3:100770002",
+                                            "client": {"asset_version": "3.8.0", "download_id": "current"}})
     ship = SimpleNamespace(id=853, source=CLIENT_SOURCE, source_id="activity:100390001",
         event_kind="recurring", source_data={"legacy_source": SOURCE, "legacy_source_id": "3:100390001"})
     document = {"list": [{"id": 3, "child": [
@@ -32,6 +33,7 @@ def test_recurring_import_targets_migrated_identity_and_preserves_history():
     assert all(row["game_version"] == "3.8" and row["season"] == {"start": 7} for row in rows)
     assert all(row["source_data"]["schedule_source"] == SOURCE and
                row["source_data"]["schedule_revision"] == "a" * 40 for row in rows)
+    assert all(row["source_data"]["client"]["download_id"] == "current" for row in rows)
     persisted = [SimpleNamespace(**row) for row in rows]
     assert recurring_schedule_rows(document, [matrix, ship], existing + persisted, "a" * 40) == []
     matrix.source_data["legacy_source_id"] = "3:999"

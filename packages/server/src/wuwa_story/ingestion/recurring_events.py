@@ -59,12 +59,16 @@ def recurring_schedule_rows(document, events, existing, revision):
                     continue
                 occupied.add((event.id, server, identity))
                 starts.add((event.id, server, start))
+                client = provenance.get("client") or {}
+                asset_version = client.get("asset_version") or ""
+                snapshot = {"client": client} if version and asset_version.startswith(version + ".") else {}
                 rows.append({"event_id": event.id, "source_occurrence_id": identity,
                     "server": server, "game_version": version, "starts_at": start, "ends_at": end,
                     "season": item.get("season"), "source_data": {
                         "time": interval, "versions": versions, "schedule_source": SOURCE,
                         "schedule_revision": revision,
                         "schedule_url": f"{SOURCE_RAW_ROOT}/{revision}/events.json",
+                        **snapshot,
                     }})
     return rows
 

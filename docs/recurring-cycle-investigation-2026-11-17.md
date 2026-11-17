@@ -70,6 +70,12 @@ Whimpering Wastes four-week cadence, are retained. The operator must refresh the
 affected event projections after applying. The standard client catalog import
 continues to use client data only.
 
+A local dry run against read-only production records for event IDs 851, 853
+and 856 and pinned revision `23b472a98235dcf64b33d9805563abf85c9609d3`
+proposed exactly three occurrences: Matrix phase 7, one per server. It proposed
+none for Whimpering Wastes or Hazard Revisited because their stored recurrence
+identities already exist. No production write was made.
+
 The calendar retains a newer undated recurring client version when the matching
 dated run belongs to another version. Banner placeholders retain their existing
 cross-version deduplication. Do not derive Matrix phase dates from its
