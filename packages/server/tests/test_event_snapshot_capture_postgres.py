@@ -4,7 +4,8 @@ import os
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import cast, select, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -15,7 +16,7 @@ from wuwa_story.db.models.game_events import (
     GameEventSnapshot,
     GameEventSnapshotMember,
 )
-from wuwa_story.db.repositories.event_browsing import read_event_runs
+from wuwa_story.db.repositories.event_browsing import _capture_enrichment, read_event_runs
 from wuwa_story.events.domain import CLIENT_SOURCE
 
 pytestmark = pytest.mark.skipif(
@@ -71,6 +72,12 @@ async def test_snapshot_capture_applies_to_events_and_periods_without_mutating_c
             dirty = await db.scalars(text("SELECT snapshot_key FROM ops.read_projection_dirty "
                                           "WHERE kind='game_event' AND entity_id=:identity"), {"identity": event_id})
             assert {"current", "3.8.0"} <= set(dirty)
+            discovered = {**old, "prefab_artwork": [{"path": "/old-discovered"}]}
+            extra = await db.scalar(select(_capture_enrichment(cast(old, JSONB), cast(discovered, JSONB))))
+            assert extra == {"prefab_artwork": discovered["prefab_artwork"]}
+            for changed in ({"download_id": "different"}, {"resources": [{"path": "/different-root"}]}):
+                assert await db.scalar(select(_capture_enrichment(
+                    cast(old, JSONB), cast({**discovered, **changed}, JSONB)))) == {}
             for summary in (True, False):
                 rows = await read_event_runs(db, server="europe", version="3.8.0", summary=summary)
                 periods = [(event, occurrence) for event, occurrence in rows if event.id == event_id]
