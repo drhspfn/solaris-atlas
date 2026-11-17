@@ -136,6 +136,7 @@ def _summary_source(source: Any, locale: str) -> Any:
                        else_=func.jsonb_build_object()),
         "notice_id", field("notice_id"),
         "notice_revision", field("notice_revision"),
+        "notice_match", field("notice_match"),
         "notice_presentation", field("notice_presentation"),
         "start_estimate", field("start_estimate"),
         "official_url", field("official_url"),

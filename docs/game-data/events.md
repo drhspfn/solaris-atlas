@@ -121,6 +121,18 @@ join to `100096` and Tideforge's four rows join to `200096`. The notice period
 belongs to the selectable banner; the four rows are presentation choices, not
 four independent banners. Missing or ambiguous pool evidence leaves them undated.
 
+Calendar responses group choices only when their occurrences carry the same
+proven pool, release, notice revision and schedule. The representative preserves
+its existing event and occurrence IDs; `selectable_members` exposes every grouped
+event ID, source ID, occurrence ID, featured name and detail URL. Detail requests
+for an individual member remain valid. Different runs and rows without matching
+pool evidence remain separate. Deploy the API and projection worker before
+rebuilding affected current event projections: existing projections lack the
+pool evidence and remain ungrouped until refreshed. The eight current 3.8
+events are 1957–1964; use the documented per-entity projection backfill rather
+than requiring an unrestricted rebuild. Roll back by restoring the previous API
+and worker; the additive internal projection field can remain stored.
+
 ## Verification against downloaded client 3.7.0 (2026-10-19)
 
 - 378 Activity rows and 254 GachaViewInfo rows; all 632 resolve English names.

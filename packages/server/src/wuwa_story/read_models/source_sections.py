@@ -33,6 +33,7 @@ from wuwa_story.db.repositories import cutscenes as cutscene_repository
 from wuwa_story.db.repositories.event_browsing import _PREVIEW_ROLES
 from wuwa_story.events.catalog_duplicates import client_signature
 from wuwa_story.events.composition import browse_events
+from wuwa_story.events.selectable_pools import pool_match
 from wuwa_story.ingestion.character_artwork import character_artwork_scope
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
 from wuwa_story.storage.s3 import S3Storage
@@ -376,6 +377,9 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
                 GameEventOccurrence.source_occurrence_id, GameEventOccurrence.starts_at,
                 GameEventOccurrence.ends_at,
                 func.jsonb_build_object(
+                    "notice_match", GameEventOccurrence.source_data["notice_match"],
+                    "notice_id", GameEventOccurrence.source_data["notice_id"],
+                    "notice_revision", GameEventOccurrence.source_data["notice_revision"],
                     "client", func.jsonb_build_object(
                         "table", GameEventOccurrence.source_data["client"]["table"],
                         "title_key", GameEventOccurrence.source_data["client"]["title_key"],
@@ -415,6 +419,8 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
                "_catalog_placeholder": source_occurrence_id.startswith("client:")
                and starts_at is None and ends_at is None,
                "_client_signature": client_signature(data)}
+        if match := pool_match(data):
+            run["_pool_match"] = match
         if snapshot_key != "current" and run_version is None:
             unversioned.append(run)
         else:

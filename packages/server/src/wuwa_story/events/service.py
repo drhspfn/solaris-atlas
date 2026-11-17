@@ -20,6 +20,7 @@ from wuwa_story.events.domain import (
     _presentation,
 )
 from wuwa_story.events.repository import EventRepository
+from wuwa_story.events.selectable_pools import group_selectable_pools, pool_match
 from wuwa_story.notices.matching import notice_candidates
 from wuwa_story.storage.animation_previews import spine_bundle
 from wuwa_story.urls import node_address, record_url
@@ -67,6 +68,7 @@ class EventService:
         summary: bool = False,
         event_id: int | None = None,
         occurrence_id: int | None = None,
+        _include_pool_match: bool = False,
     ) -> dict[str, Any]:
         runs = await self.repository.runs(
             server=server,
@@ -103,26 +105,22 @@ class EventService:
                     spine.setdefault(capture, spine_bundle(
                         self.media_url(bundle.object_key), bundle.file_id, bundle.size_bytes,
                         bundle.metadata, self.animation_enabled))
+        rendered = [
+            self._render(run, server, locale, summary, artwork[run.key], presentations[run.key],
+                         announcements, reward_addresses, images, spine)
+            for run in runs
+        ]
+        if event_id is None:
+            rendered = group_selectable_pools(rendered, server, locale)
+        if not _include_pool_match:
+            for row in rendered:
+                row.pop("_pool_match", None)
         return {
             "server": server,
             "source": CLIENT_SOURCE,
             "source_url": "https://wutheringwaves.kurogames.com/",
             "catalog_status": "ready" if runs else "not_imported",
-            "events": [
-                self._render(
-                    run,
-                    server,
-                    locale,
-                    summary,
-                    artwork[run.key],
-                    presentations[run.key],
-                    announcements,
-                    reward_addresses,
-                    images,
-                    spine,
-                )
-                for run in runs
-            ],
+            "events": rendered,
         }
 
     async def detail(
@@ -137,10 +135,20 @@ class EventService:
             locale=locale,
             event_id=event_id,
             occurrence_id=occurrence_id,
+            _include_pool_match=True,
         )
         if not response["events"]:
             raise EventRunNotFound()
-        return dict(response["events"][0])
+        result = dict(response["events"][0])
+        if result.pop("_pool_match", None):
+            calendar = await self.browse(server, locale=locale, summary=True)
+            for row in calendar["events"]:
+                if any(member["id"] == event_id and member["occurrence_id"] == occurrence_id
+                       for member in row.get("selectable_members", [])):
+                    result["featured_names"] = row["featured_names"]
+                    result["selectable_members"] = row["selectable_members"]
+                    break
+        return result
 
     async def _announcements(self, runs: list[EventRun], event_id: int | None) -> _Announcements:
         notice_ids = {
@@ -290,6 +298,8 @@ class EventService:
             "official_url": _official_announcement(event, occurrence),
             "notices": announcements.links.get(event.id, []),
         }
+        if occurrence and (match := pool_match(occurrence.source_data)):
+            result["_pool_match"] = match
         bundle = spine.get((event.source_id, client.get('download_id')))
         if bundle and self.animation_enabled and _animation_eligible(client):
             result['spine'] = [bundle]
