@@ -49,7 +49,10 @@ from wuwa_story.db.models.core import (
     VoiceReference,
 )
 from wuwa_story.db.models.game_events import (
-    GameEvent, GameEventOccurrence, GameEventSnapshot, GameEventSnapshotMember,
+    GameEvent,
+    GameEventOccurrence,
+    GameEventSnapshot,
+    GameEventSnapshotMember,
 )
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision, NodeType
 from wuwa_story.db.models.i18n import (
