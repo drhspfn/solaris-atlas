@@ -232,3 +232,69 @@ def test_does_not_carry_song_across_an_intervening_movie_or_nested_branch(config
     movie = {'Name':'PlayMovie','Params':{'VideoName':'Movie'}}
     assert _preceding_music([{'Name':'If','Params':{}},movie],movie,{},'Actions') == []
     assert _preceding_music([{'Name':'PlayMovie','Params':{'VideoName':'Other'}},movie],movie,{},'Actions') == []
+
+
+def test_trigger_effect_sequence_preserves_audio_and_authored_waits_without_claiming_runtime_timing(configs):
+    event = {'Name': 'PostAkEvent', 'Params': {'EventConfig': {'Type': 'Global',
+        'AkEvent': '/Game/Aki/WwiseAudio/Events/fly_voice.fly_voice'}}}
+    def effect(name):
+        return {'Name': 'PlayEffect2', 'Params': {'Type': 'DissolveEffect', 'Path': name}}
+    def wait(seconds):
+        return {'Name': 'Wait', 'Params': {'Time': seconds}}
+    actions = [effect('First'), event, wait(11.3), effect('Second'), wait(10.6),
+               effect('Third'), wait(7.9), effect('Fourth')]
+    insert(configs / 'db_level_entity.db', 'levelentityconfig',
+           (1, 2, 3, entity_blob({'TriggerComponent': {'Actions': actions}})))
+    first, = catalog_movie_frame_bindings(configs, 'First')
+    second, = catalog_movie_frame_bindings(configs, 'Second')
+    fourth, = catalog_movie_frame_bindings(configs, 'Fourth')
+    assert not first['events'] and not first['complete']
+    assert second['events'][0]['authored_wait_seconds'] == 11.3
+    assert fourth['events'][0]['authored_wait_seconds'] == pytest.approx(29.8)
+    assert fourth['events'][0]['reference'].endswith('/fly_voice.fly_voice')
+    assert fourth['events'][0]['source']['raw_path'].endswith('.TriggerComponent.Actions[1]')
+    assert fourth['source']['raw_path'].endswith('.TriggerComponent.Actions[7]')
+    assert not fourth['events'][0]['resolved'] and not fourth['complete']
+    assert fourth['events'][0]['start_seconds'] is None
+    assert fourth['unresolved'][0]['code'] == 'effect_sequence_requires_runtime_timing'
+
+
+@pytest.mark.parametrize('intervening', [
+    {'Name': 'Wait', 'Params': {'Time': -1}},
+    {'Name': 'Wait', 'Params': {'Time': True}},
+    {'Name': 'Wait', 'Params': {'Time': 3, 'Extra': 1}},
+    {'Name': 'Wait', 'Params': {'Time': float('nan')}},
+    {'Name': 'Unknown', 'Params': {}},
+])
+def test_trigger_effect_sequence_does_not_sum_unsupported_actions(configs, intervening):
+    event = {'Name': 'PostAkEvent', 'Params': {'EventConfig': {'Type': 'Global',
+        'AkEvent': '/Game/Aki/WwiseAudio/Events/fly_voice.fly_voice'}}}
+    effect = {'Name': 'PlayEffect2', 'Params': {'Type': 'DissolveEffect', 'Path': 'Movie'}}
+    insert(configs / 'db_level_entity.db', 'levelentityconfig',
+           (1, 2, 3, entity_blob({'TriggerComponent': {'Actions': [event, intervening, effect]}})))
+    binding, = catalog_movie_frame_bindings(configs, 'Movie')
+    assert 'authored_wait_seconds' not in binding['events'][0]
+    assert not binding['complete']
+
+
+def test_trigger_effect_multiple_posts_are_not_arbitrarily_selected(configs):
+    post = {'Name': 'PostAkEvent', 'Params': {'EventConfig': {'Type': 'Global',
+        'AkEvent': '/Game/Aki/WwiseAudio/Events/fly_voice.fly_voice'}}}
+    effect = {'Name': 'PlayEffect2', 'Params': {'Type': 'DissolveEffect', 'Path': 'Movie'}}
+    insert(configs / 'db_level_entity.db', 'levelentityconfig',
+           (1, 2, 3, entity_blob({'TriggerComponent': {'Actions': [post, post, effect]}})))
+    binding, = catalog_movie_frame_bindings(configs, 'Movie')
+    assert not binding['events'] and not binding['complete']
+    assert binding['unresolved'][-1]['code'] == 'effect_sequence_audio_context_unresolved'
+
+
+def test_trigger_effect_wait_sum_overflow_remains_unresolved(configs):
+    post = {'Name': 'PostAkEvent', 'Params': {'EventConfig': {'Type': 'Global',
+        'AkEvent': '/Game/Aki/WwiseAudio/Events/fly_voice.fly_voice'}}}
+    wait = {'Name': 'Wait', 'Params': {'Time': 1e308}}
+    effect = {'Name': 'PlayEffect2', 'Params': {'Type': 'DissolveEffect', 'Path': 'Movie'}}
+    insert(configs / 'db_level_entity.db', 'levelentityconfig',
+           (1, 2, 3, entity_blob({'TriggerComponent': {'Actions': [post, wait, wait, effect]}})))
+    binding, = catalog_movie_frame_bindings(configs, 'Movie')
+    assert 'authored_wait_seconds' not in binding['events'][0]
+    assert not binding['complete']

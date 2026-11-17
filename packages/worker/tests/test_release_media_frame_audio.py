@@ -59,6 +59,21 @@ async def test_exact_launcher_without_events_is_not_missing_audio(tmp_path, monk
 
 
 @pytest.mark.asyncio
+async def test_unverified_effect_sequence_is_not_rendered(tmp_path, monkeypatch):
+    binding = {'video_name': 'Movie', 'raw_action': {'Name': 'PlayEffect2'}, 'complete': False,
+               'events': [{'start_seconds': None, 'authored_wait_seconds': 11.3}],
+               'unresolved': [{'code': 'effect_sequence_requires_runtime_timing'}]}
+    monkeypatch.setattr(cutscene_frame_catalog, 'catalog_movie_frame_bindings', lambda *_: [binding])
+    native = AsyncMock()
+    monkeypatch.setattr(cutscene_frame_audio, 'event_soundtracks', native)
+    inputs, report = await release_media.frame_audio_inputs(tmp_path, tmp_path, tmp_path / 'video.db',
+                                                           'Movie', tmp_path / 'fmodel', tmp_path)
+    assert inputs == []
+    assert report['diagnostics'] == binding['unresolved']
+    native.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('diagnostics', [[], [{'code': 'native_source_unavailable'}]])
 @pytest.mark.parametrize('failure', [None, 'missing', 'other'])
 async def test_cutscene_leaf_wires_frame_audio_after_merge_with_pinned_voice_and_report(tmp_path, monkeypatch, diagnostics, failure):

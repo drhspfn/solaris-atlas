@@ -86,6 +86,24 @@ evidence. Binaries remain outside tracked documentation.
 
 ## Operational failure policy
 
+### Trigger-driven dissolve videos
+
+Level-entity `TriggerComponent.Actions` can launch video through `PlayEffect2`
+with `Type: DissolveEffect`, alongside a separately posted Wwise event. The
+catalog retains each such context, the original source paths, and, where the
+intervening actions are supported, the sum of explicit `Wait.Time` values as
+`authored_wait_seconds`. This is configuration evidence, not a verified playback
+offset: action execution, media startup and event lifetime have not been proven.
+These contexts remain unresolved and are not rendered as movie-clock audio.
+Unknown intervening actions, invalid waits and multiple prior posts do not
+produce an inferred offset or an arbitrary event selection.
+
+For the inspected 3.8.0 source, entity 185750044 posts
+`play_vo_level_2_6_younuo_fly_01` before `Fly_M0294` and `Fly_M0312`;
+the authored wait sums are 11.3 and 29.8 seconds respectively. The 3.8.0
+archive index contains the corresponding Wwise event `.uasset` and `.uexp`;
+the localized bank, WEMs, and actual game playback have not been verified.
+
 Unsupported source data can produce partial audio diagnostics while retaining
 video. Infrastructure `OSError`/`RuntimeError`, dependency deferrals, timeouts,
 OOM process exits and allocation failures propagate to the job layer.

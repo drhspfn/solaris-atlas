@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import re
 import sqlite3
 import struct
@@ -48,6 +49,75 @@ def _launchers(value, path, conditional=False):
                 child += '<json>'
             if isinstance(item, (dict, list)):
                 yield from _launchers(item, child, nested or key in _ALTERNATIVES)
+
+
+def _effect_sequence_bindings(value, source, root):
+    """Expose trigger-authored relationships without inventing runtime timing."""
+    if not isinstance(value, dict):
+        return []
+    trigger = value.get('TriggerComponent')
+    actions = trigger.get('Actions') if isinstance(trigger, dict) else None
+    if not isinstance(actions, list):
+        return []
+    path = root + '.TriggerComponent.Actions'
+    result, posts = [], []
+    for index, action in enumerate(actions):
+        if not isinstance(action, dict):
+            continue
+        params = action.get('Params')
+        params = params if isinstance(params, dict) else {}
+        if action.get('Name') == 'PostAkEvent':
+            posts.append(index)
+        if action.get('Name') != 'PlayEffect2' or params.get('Type') != 'DissolveEffect':
+            continue
+        name = params.get('Path')
+        if not isinstance(name, str) or not name:
+            continue
+        proof = {**source, 'raw_path': f'{path}[{index}]'}
+        events = []
+        unresolved = [{'code': 'effect_sequence_requires_runtime_timing', 'source': proof}]
+        if len(posts) == 1:
+            post_index = posts[0]
+            post_path = f'{path}[{post_index}]'
+            parsed = discover_launcher_frame_audio(
+                [{'Second': 0, 'EventActions': [actions[post_index]]}],
+                video_name=name, source={**source, 'raw_path': post_path})
+            unresolved.extend(parsed['unresolved'])
+            waits, known = [], True
+            for item in actions[post_index + 1:index]:
+                if not isinstance(item, dict) or not isinstance(item.get('Params'), dict):
+                    known = False
+                    break
+                item_params = item['Params']
+                if item.get('Name') == 'Wait':
+                    seconds = item_params.get('Time')
+                    if (set(item_params) != {'Time'} or type(seconds) not in (int, float)
+                            or not math.isfinite(seconds) or seconds < 0):
+                        known = False
+                        break
+                    waits.append(seconds)
+                elif not (item.get('Name') == 'PlayEffect2'
+                          and item_params.get('Type') == 'DissolveEffect'):
+                    known = False
+                    break
+            for event in parsed['events']:
+                event['source'] = {**source, 'raw_path': post_path}
+                event['resolved'] = False
+                event['timing_basis'] = 'unverified_trigger_sequence'
+                event['start_seconds'] = None
+                event.pop('raw_frame_event', None)
+                if known:
+                    try:
+                        event['authored_wait_seconds'] = math.fsum(waits)
+                    except OverflowError:
+                        pass
+                events.append(event)
+        else:
+            unresolved.append({'code': 'effect_sequence_audio_context_unresolved', 'source': proof})
+        result.append({'video_name': name, 'source': proof, 'raw_action': deepcopy(action),
+                       'events': events, 'frame_actions': [], 'conditional': True,
+                       'complete': False, 'unresolved': unresolved})
+    return result
 
 
 def _binding(action, source, path, conditional):
@@ -173,6 +243,9 @@ def _catalog(fingerprint):
                         value = json.loads(raw) if raw else ([] if field == 'Actions' else {})
                         proof = {**source, 'key': record_key, 'record_sha256': hashlib.sha256(blob).hexdigest()}
                         root = filename + '[' + json.dumps(record_key, ensure_ascii=False) + '].' + field + '<json>'
+                        if filename == 'db_level_entity.db':
+                            for binding in _effect_sequence_bindings(value, proof, root):
+                                result['bindings'].setdefault(binding['video_name'], []).append(binding)
                         for at, action, conditional in _launchers(value, root):
                             binding = _binding(action, proof, at, conditional)
                             if binding is None:
