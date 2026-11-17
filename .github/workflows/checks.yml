@@ -157,6 +157,14 @@ jobs:
           tests/test_localization_dedup.py tests/test_canonical_edge_batches.py
           tests/test_npc_canonical_import.py tests/test_compiler_importer_deadlock.py
           tests/test_import_progress.py -q
+      - name: Validate logical cutscene analysis and admission locks
+        working-directory: packages/server
+        env:
+          WUWA_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/visual_test
+        run: >-
+          uv run pytest tests/test_cutscene_analysis_plan.py tests/test_cutscene_analysis_ui.py
+          tests/test_scene_analysis_reader.py tests/test_visual_enqueue_lock.py
+          tests/test_video_analysis_roles_and_limits.py -q
       - name: Validate event catalog and projection regressions
         working-directory: packages/server
         run: >-
@@ -192,4 +200,4 @@ jobs:
           scripts.tests.test_worker_configuration.WorkerConfigurationTests.test_projection_budget_covers_the_measured_event_catalog
           scripts.tests.test_render_production_env -q
       - name: Validate admin interaction and tool documentation
-        run: node --test packages/server/tests/test_visual_memory_*.mjs packages/server/tests/test_bbox_annotation_ui.mjs packages/web_new/tests/mcpDocs.test.mjs
+        run: node --test packages/server/tests/test_visual_memory_*.mjs packages/server/tests/test_bbox_annotation_ui.mjs packages/server/tests/test_cutscene_player.mjs packages/web_new/tests/mcpDocs.test.mjs
