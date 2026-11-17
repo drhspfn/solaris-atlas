@@ -16,6 +16,7 @@ from wuwa_story.db.models.game_events import (
 from wuwa_story.db.models.graph import Node
 from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
+from wuwa_story.events.catalog import is_catalog_capture
 from wuwa_story.events.catalog_duplicates import client_signature, visible_occurrences
 from wuwa_story.events.domain import (
     CLIENT_SOURCE,
@@ -93,8 +94,8 @@ async def read_event_runs(
     if event_id is None:
         placeholders = {
             occurrence.id for _, occurrence in rows
-            if occurrence and occurrence.source_occurrence_id.startswith("client:")
-            and occurrence.starts_at is None and occurrence.ends_at is None
+            if occurrence and is_catalog_capture(occurrence.source_occurrence_id,
+                occurrence.starts_at, occurrence.ends_at, occurrence.source_data)
         }
         keep = visible_occurrences(
             [(event.id, occurrence.id if occurrence else None,
@@ -147,6 +148,8 @@ def _summary_source(source: Any, locale: str) -> Any:
         "notice_match", field("notice_match"),
         "notice_presentation", field("notice_presentation"),
         "start_estimate", field("start_estimate"),
+        "schedule_source", field("schedule_source"),
+        "manual_schedule", field("manual_schedule"),
         "official_url", field("official_url"),
         type_=JSONB,
     )

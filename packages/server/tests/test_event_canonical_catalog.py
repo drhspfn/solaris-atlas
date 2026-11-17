@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from wuwa_story.events.catalog import catalog_rows
+from wuwa_story.events.catalog import catalog_rows, is_catalog_capture
 from wuwa_story.read_models.readers import entities, events
 
 
@@ -35,6 +35,13 @@ def test_equal_names_never_bind_unrelated_events():
         {"id": 1, "occurrence_id": 10, "title": "Same"},
         {"id": 2, "occurrence_id": 20, "title": "Same"},
     ])] == [1, 2]
+
+
+def test_manually_edited_capture_is_a_real_independent_period_even_without_dates():
+    assert is_catalog_capture("client:3.8.0", None, None, {})
+    assert not is_catalog_capture("client:3.8.0", None, None, {"schedule_source": "manual"})
+    assert not is_catalog_capture("client:3.8.0", None, None, {"manual_schedule": True})
+    assert not is_catalog_capture("manual:one", None, None, {})
 
 
 @pytest.mark.asyncio

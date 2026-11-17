@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from wuwa_story.events.catalog import catalog_rows
+from wuwa_story.events.catalog import catalog_rows, is_catalog_capture
 from wuwa_story.events.domain import (
     CLIENT_SOURCE,
     SHARED_ACTIVITY_BACKGROUNDS,
@@ -320,10 +320,9 @@ class EventService:
         if occurrence and (match := pool_match(occurrence.source_data)):
             result["_pool_match"] = match
         if occurrence:
-            result["_catalog_placeholder"] = bool(
-                (getattr(occurrence, "source_occurrence_id", None) or "").startswith("client:")
-                and occurrence.starts_at is None and occurrence.ends_at is None
-            )
+            result["_catalog_placeholder"] = is_catalog_capture(
+                getattr(occurrence, "source_occurrence_id", None), occurrence.starts_at,
+                occurrence.ends_at, occurrence.source_data)
             captured_client = (occurrence.source_data or {}).get("client")
             result["catalog_provenance"] = (
                 "occurrence_snapshot" if captured_client else

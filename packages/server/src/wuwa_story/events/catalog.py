@@ -1,6 +1,12 @@
 """Public event identities and independent periods from persisted source bindings."""
 
 
+def is_catalog_capture(source_id, starts_at, ends_at, data):
+    data = data or {}
+    return bool((source_id or "").startswith("client:") and starts_at is None and ends_at is None
+                and data.get("schedule_source") != "manual" and not data.get("manual_schedule"))
+
+
 def catalog_rows(rows):
     families = {}
     for row in rows:

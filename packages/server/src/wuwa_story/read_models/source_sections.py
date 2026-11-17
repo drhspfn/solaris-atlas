@@ -30,6 +30,7 @@ from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.raw import SourceRecord
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.db.repositories import cutscenes as cutscene_repository
+from wuwa_story.events.catalog import is_catalog_capture
 from wuwa_story.events.catalog_duplicates import client_signature
 from wuwa_story.events.composition import browse_events
 from wuwa_story.events.domain import is_preview_artwork
@@ -381,6 +382,8 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
                     "notice_match", GameEventOccurrence.source_data["notice_match"],
                     "notice_id", GameEventOccurrence.source_data["notice_id"],
                     "notice_revision", GameEventOccurrence.source_data["notice_revision"],
+                    "schedule_source", GameEventOccurrence.source_data["schedule_source"],
+                    "manual_schedule", GameEventOccurrence.source_data["manual_schedule"],
                     "client", func.jsonb_build_object(
                         "table", GameEventOccurrence.source_data["client"]["table"],
                         "title_key", GameEventOccurrence.source_data["client"]["title_key"],
@@ -417,8 +420,7 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
         if len(matching) != 1:
             raise ValueError("Event occurrence could not be projected unambiguously")
         run = {**matching[0], "server": server, "game_version": version,
-               "_catalog_placeholder": source_occurrence_id.startswith("client:")
-               and starts_at is None and ends_at is None,
+               "_catalog_placeholder": is_catalog_capture(source_occurrence_id, starts_at, ends_at, data),
                "_client_signature": client_signature(data)}
         if match := pool_match(data):
             run["_pool_match"] = match
