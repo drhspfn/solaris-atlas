@@ -1,5 +1,6 @@
 """Event read models and source-backed presentation policy, independent of IO."""
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -224,8 +225,39 @@ def _presentation(
 ) -> dict[str, Any]:
     locales = _client_data(event, occurrence).get("locales", {})
     presentation = locales.get(locale) or locales.get("en") or {}
-    notice = ((occurrence.source_data or {}) if occurrence else {}).get("notice_presentation") or {}
-    return {**presentation, **(notice.get(locale) or notice.get("en") or {})}
+    occurrence_data = (occurrence.source_data or {}) if occurrence else {}
+    notice = occurrence_data.get("notice_presentation") or {}
+    official = notice.get(locale) or notice.get("en") or {}
+    result = {**presentation, **official}
+    text = official.get("description")
+    match = re.search(
+        r"\b4-Star (?:Resonators|Weapons):\s*([^\n!]+?)\s+receive boosted drop rates\b",
+        text, re.I,
+    ) if (isinstance(text, str) and occurrence_data.get("notice_id")
+          and occurrence_data.get("notice_revision")) else None
+    if match:
+        names = [name.strip() for name in re.split(r",\s*(?:and\s+)?", match[1])]
+        if (1 <= len(names) <= 8 and all(names)
+            and not any(re.search(r"\band\b", name, re.I) for name in names)
+            and len({name.casefold() for name in names}) == len(names)):
+            result = {**result, "up_names": names, "up_names_source": "notice",
+                      "client_up_names": presentation.get("up_names", [])}
+    return result
+
+
+def _notice_schedule_evidence(occurrence: ClientSource | None) -> dict[str, Any] | None:
+    data = (occurrence.source_data or {}) if occurrence else {}
+    notice_id, revision = data.get("notice_id"), data.get("notice_revision")
+    if not notice_id or not revision or data.get("schedule_revision") != revision:
+        return None
+    notice = (data.get("notice_presentation") or {}).get("en") or {}
+    text = notice.get("description")
+    section = re.search(r"Duration[✦\s]*(.*?)(?:✦|$)", text, re.S) if isinstance(text, str) else None
+    version = re.match(r"(?:After\s+the\s+)?Version\s+(\d+\.\d+)\s+update\s*[-–]",
+                       section[1].strip(), re.I) if section else None
+    if not version:
+        return None
+    return {"notice_id": notice_id, "notice_revision": revision, "update_version": version[1]}
 
 
 def _official_announcement(event: ClientSource, occurrence: ClientSource | None) -> str | None:

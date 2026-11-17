@@ -36,6 +36,7 @@ export type GameEvent = {
   convene_type?: string | null;
   game_version: string | null;
   catalog_version?: string;
+  schedule_evidence?: { notice_id: number; notice_revision: string; update_version: string };
   starts_at: string | null;
   start_estimate?: { basis: string; occurrence_id: number; version: string; server: string } | null;
   ends_at: string | null;
@@ -150,14 +151,17 @@ export function calendarPatch(events: GameEvent[], versions: string[], now: numb
   const latest = (values: (string | null)[]) => values.filter((value): value is string => !!value)
     .sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).at(-1);
   // An unreleased client snapshot must not replace the patch currently running.
-  const eventPatch = (event: GameEvent) => patchVersion(event.game_version || event.catalog_version);
+  const eventPatch = (event: GameEvent) => patchVersion(
+    event.game_version || event.schedule_evidence?.update_version || event.catalog_version,
+  );
   const active = events.filter(event => Number.isFinite(endTime(event)) && startTime(event) <= now && endTime(event) > now);
   const version = patchVersion(selected) || latest(active.map(eventPatch))
     || latest(versions.map(patchVersion)) || latest(events.map(event => patchVersion(event.game_version)));
   const runs = events.filter(event => eventPatch(event) === version && version !== null);
   // Snapshot membership alone does not date an old unversioned occurrence.
   const dated = runs.filter(event => Number.isFinite(startTime(event)) && Number.isFinite(endTime(event)) &&
-    (event.game_version || event.start_estimate || (startTime(event) <= now && endTime(event) > now)));
+    (event.game_version || event.schedule_evidence || event.start_estimate ||
+      (startTime(event) <= now && endTime(event) > now)));
   return {
     version,
     start: dated.length ? Math.min(...dated.map(startTime)) : null,

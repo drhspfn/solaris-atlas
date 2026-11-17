@@ -157,6 +157,7 @@ jobs:
         working-directory: packages/server
         run: >-
           uv run pytest tests/test_selectable_pool_calendar.py tests/test_event_service.py
+          tests/test_event_official_roster.py tests/test_event_catalog_provenance.py
           tests/test_event_browsing.py tests/test_projection_readers.py
           tests/test_read_model_builders.py tests/test_read_model_relations.py
           tests/test_read_model_worker.py tests/test_character_search_indexes.py
