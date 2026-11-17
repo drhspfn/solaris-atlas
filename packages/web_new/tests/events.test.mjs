@@ -195,3 +195,12 @@ test('undated latest patches remain undated and empty groups allocate no lanes',
   assert.equal(patch.end, null);
   assert.deepEqual(layoutTimeline(patch.events, 0, DAY), []);
 });
+
+test('a notice version dates its run without relabeling the captured catalog', () => {
+  const event = { ...run(1, 1, '2026-11-11', '2026-12-21'), game_version: null,
+    catalog_version: '3.9.0', schedule_evidence: { update_version: '3.8', notice_id: 42, notice_revision: 'a'.repeat(64) } };
+  const patch = calendarPatch([event], ['3.9.0'], Date.parse('2026-11-17'));
+  assert.equal(patch.version, '3.8');
+  assert.equal(event.catalog_version, '3.9.0');
+  assert.equal(event.game_version, null);
+});
