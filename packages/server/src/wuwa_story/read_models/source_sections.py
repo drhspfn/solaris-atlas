@@ -368,14 +368,16 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
     runs = list(
         await session.execute(
             select(
-                GameEventOccurrence.id, GameEventOccurrence.server, GameEventOccurrence.game_version
+                GameEventOccurrence.id, GameEventOccurrence.server, GameEventOccurrence.game_version,
+                GameEventOccurrence.source_occurrence_id, GameEventOccurrence.starts_at,
+                GameEventOccurrence.ends_at,
             )
             .where(GameEventOccurrence.event_id == entity_id)
             .order_by(GameEventOccurrence.starts_at.desc().nullslast(), GameEventOccurrence.id)
         )
     )
     selected, unversioned = [], []
-    for occurrence_id, server, version in runs:
+    for occurrence_id, server, version, source_occurrence_id, starts_at, ends_at in runs:
         run_version = _event_version(version)
         if snapshot_key != "current" and run_version not in (selected_version, None):
             continue
@@ -395,7 +397,9 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
         ]
         if len(matching) != 1:
             raise ValueError("Event occurrence could not be projected unambiguously")
-        run = {**matching[0], "server": server, "game_version": version}
+        run = {**matching[0], "server": server, "game_version": version,
+               "_catalog_placeholder": source_occurrence_id.startswith("client:")
+               and starts_at is None and ends_at is None}
         if snapshot_key != "current" and run_version is None:
             unversioned.append(run)
         else:

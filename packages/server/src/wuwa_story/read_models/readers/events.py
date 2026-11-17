@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from wuwa_story.db.repositories.read_models import ENTITY_READ_MODELS
+from wuwa_story.events.catalog_duplicates import visible_occurrences
 from wuwa_story.events.domain import PREVIEW_ROLES
 from wuwa_story.read_models.readers import entities
 
@@ -38,7 +39,8 @@ async def event_detail(session, event_id, server, occurrence_id, locale="en"):
             if run.get("server") == server and run.get("occurrence_id") == occurrence_id
         ]
         if len(matches) == 1:
-            return {key: value for key, value in matches[0].items() if key != "server"}
+            return {key: value for key, value in matches[0].items()
+                    if key not in {"server", "_catalog_placeholder"}}
     raise HTTPException(404, "Event run not found")
 
 
@@ -79,6 +81,17 @@ async def events_page(session, server, kind=None, version=None, locale="en", sum
                 if run.get("occurrence_id") is not None:
                     result["detail_url"] += f"&occurrence_id={run['occurrence_id']}"
             events.append(result)
+    if version is None:
+        placeholders = {event["occurrence_id"] for event in events
+                        if event.get("_catalog_placeholder") is True}
+        keep = visible_occurrences(
+            [(event["id"], event.get("occurrence_id"), event.get("catalog_version"))
+             for event in events], placeholders,
+        )
+        events = [event for event in events if event.get("occurrence_id") not in placeholders
+                  or event["occurrence_id"] in keep]
+    for event in events:
+        event.pop("_catalog_placeholder", None)
     events.sort(key=lambda event: (-_time(event.get("starts_at")), event["title"]))
     return {
         "server": server,
