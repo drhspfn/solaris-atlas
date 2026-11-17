@@ -20,7 +20,7 @@ from wuwa_story.events.domain import (
     _presentation,
 )
 from wuwa_story.events.repository import EventRepository
-from wuwa_story.events.selectable_pools import group_selectable_pools, pool_match
+from wuwa_story.events.selectable_pools import group_selectable_pools, pool_key, pool_match
 from wuwa_story.notices.matching import notice_candidates
 from wuwa_story.storage.animation_previews import spine_bundle
 from wuwa_story.urls import node_address, record_url
@@ -140,14 +140,25 @@ class EventService:
         if not response["events"]:
             raise EventRunNotFound()
         result = dict(response["events"][0])
-        if result.pop("_pool_match", None):
-            calendar = await self.browse(server, locale=locale, summary=True)
-            for row in calendar["events"]:
+        if pool_key(result):
+            identities = await self.repository.pool_occurrences(
+                server=server, proof=result["_pool_match"],
+                starts_at=result["starts_at"], ends_at=result["ends_at"],
+            )
+            candidates = []
+            if len(identities) <= 64:
+                for sibling_id, sibling_occurrence_id in identities:
+                    sibling = await self.browse(server, locale=locale, summary=True,
+                        event_id=sibling_id, occurrence_id=sibling_occurrence_id,
+                        _include_pool_match=True)
+                    candidates.extend(sibling["events"])
+            for row in group_selectable_pools(candidates, server, locale):
                 if any(member["id"] == event_id and member["occurrence_id"] == occurrence_id
                        for member in row.get("selectable_members", [])):
                     result["featured_names"] = row["featured_names"]
                     result["selectable_members"] = row["selectable_members"]
                     break
+        result.pop("_pool_match", None)
         return result
 
     async def _announcements(self, runs: list[EventRun], event_id: int | None) -> _Announcements:

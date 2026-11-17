@@ -68,13 +68,20 @@ async def test_projected_calendar_and_each_detail_keep_members(monkeypatch, pool
     entries = [SimpleNamespace(entity_id=row["id"], payload={"event": row,
                "occurrences": [{**row, "server": "europe"}]}) for row in rows]
     monkeypatch.setattr(reader.entities, "_scope_entries", AsyncMock(return_value=entries))
-    monkeypatch.setattr(reader.entities, "page_payload", AsyncMock(side_effect=lambda _, kind, identity, *a, **kw:
-                        next(entry.payload for entry in entries if entry.entity_id == identity)))
+    async def page(_, kind, identity, *args, **kwargs):
+        if kind == "game_notice":
+            return {"revision": "a" * 64, "related_event_ids": [1, 2, 3, 4]}
+        return next(entry.payload for entry in entries if entry.entity_id == identity)
+    page_mock = AsyncMock(side_effect=page)
+    monkeypatch.setattr(reader.entities, "page_payload", page_mock)
     calendar = (await reader.events_page(None, "europe", summary=True))["events"]
     assert len(calendar) == 1
     assert len(calendar[0]["selectable_members"]) == 4
     assert "_pool_match" not in calendar[0]
+    reader.entities._scope_entries.reset_mock()
     detail = await reader.event_detail(None, 2, "europe", 6302)
+    reader.entities._scope_entries.assert_not_awaited()
+    assert [call.args[2] for call in page_mock.await_args_list if call.args[1] == "game_event"] == [2, 1, 3, 4]
     assert detail["id"] == 2 and detail["occurrence_id"] == 6302
     assert detail["featured_names"] == names
     assert len(detail["selectable_members"]) == 4
@@ -110,12 +117,16 @@ async def test_source_calendar_and_nonrepresentative_detail_retain_member_identi
     async def read_runs(**kwargs):
         return [run for run in runs if kwargs["event_id"] is None or run.event.id == kwargs["event_id"]]
     repo.runs.side_effect = read_runs
+    repo.pool_occurrences.return_value = [(run.event.id, run.occurrence.id) for run in runs]
     for name in ("announcements", "notice_snapshots", "reward_nodes", "media", "spine"):
         getattr(repo, name).return_value = []
     service = EventService(repo, lambda value: value, lambda value: value)
     calendar = (await service.browse("europe", summary=True))["events"]
     assert len(calendar) == 1 and len(calendar[0]["selectable_members"]) == 4
+    repo.runs.reset_mock()
     detail = await service.detail(2, "europe", 6302)
+    assert all(call.kwargs["event_id"] is not None for call in repo.runs.await_args_list)
+    repo.pool_occurrences.assert_awaited_once()
     assert detail["id"] == 2 and detail["occurrence_id"] == 6302
     assert detail["featured_names"] == ["Camellya", "Roccia", "Phoebe", "Brant"]
     assert len(detail["selectable_members"]) == 4
@@ -138,3 +149,53 @@ async def test_projection_builder_retains_exact_pool_evidence(monkeypatch):
     assert payload["occurrences"][0]["_pool_match"] == {
         **source["notice_match"], "notice_id": 42, "notice_revision": "a" * 64}
     assert source_sections._calendar_payload(payload)["occurrences"][0]["_pool_match"] == payload["occurrences"][0]["_pool_match"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("notice", [
+    {"revision": "b" * 64, "related_event_ids": [1, 2, 3, 4]},
+    {"revision": "a" * 64, "related_event_ids": [1] * 65},
+    {"revision": "a" * 64, "related_event_ids": [1, 1, 2]},
+])
+async def test_detail_fails_closed_when_notice_membership_is_not_proven(monkeypatch, notice):
+    row = {**choices()[0], "server": "europe"}
+    async def page(_, kind, identity, *args, **kwargs):
+        return notice if kind == "game_notice" else {"event": row, "occurrences": [row]}
+    page_mock = AsyncMock(side_effect=page)
+    monkeypatch.setattr(reader.entities, "page_payload", page_mock)
+    scope = AsyncMock(side_effect=AssertionError("must not load full calendar"))
+    monkeypatch.setattr(reader.entities, "_scope_entries", scope)
+    result = await reader.event_detail(None, 1, "europe", 6301)
+    assert "selectable_members" not in result
+    assert page_mock.await_count == 2
+    scope.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_source_pool_query_uses_notice_members_and_exact_provenance():
+    from unittest.mock import Mock
+
+    from sqlalchemy.dialects import postgresql
+
+    from wuwa_story.db.repositories.event_browsing import SqlAlchemyEventRepository
+
+    session = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(
+        revision="a" * 64, related_event_ids=[1, 2, 3, 4])),
+        execute=AsyncMock(return_value=Mock(all=Mock(return_value=[
+            (1, 6301), (2, 6302), (3, 6303), (4, 6304)]))))
+    repository = SqlAlchemyEventRepository(session, "bucket")
+    proof = choices()[0]["_pool_match"]
+    assert await repository.pool_occurrences(server="europe", proof=proof,
+        starts_at="start", ends_at="end") == [(1, 6301), (2, 6302), (3, 6303), (4, 6304)]
+    compiled = session.execute.call_args.args[0].compile(dialect=postgresql.dialect())
+    assert [1, 2, 3, 4] in compiled.params.values()
+    assert {"europe", "start", "end", 22, 100096, 42, "a" * 64} <= set(
+        value for value in compiled.params.values() if isinstance(value, (str, int)))
+    session.execute.return_value.all.return_value = [(1, 6301), (2, 6302), (3, 6303)]
+    assert await repository.pool_occurrences(server="europe", proof=proof,
+        starts_at="start", ends_at="end") == []
+    session.get.return_value.revision = "b" * 64
+    session.execute.reset_mock()
+    assert await repository.pool_occurrences(server="europe", proof=proof,
+        starts_at="start", ends_at="end") == []
+    session.execute.assert_not_awaited()

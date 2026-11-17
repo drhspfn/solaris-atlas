@@ -125,7 +125,10 @@ Calendar responses group choices only when their occurrences carry the same
 proven pool, release, notice revision and schedule. The representative preserves
 its existing event and occurrence IDs; `selectable_members` exposes every grouped
 event ID, source ID, occurrence ID, featured name and detail URL. Detail requests
-for an individual member remain valid. Different runs and rows without matching
+for an individual member remain valid and load only the notice's bounded member
+set, not the full calendar. If the notice revision or any member cannot be
+verified, detail returns the individual event without a guessed roster.
+Different runs and rows without matching
 pool evidence remain separate. Deploy the API and projection worker before
 rebuilding affected current event projections: existing projections lack the
 pool evidence and remain ungrouped until refreshed. The eight current 3.8

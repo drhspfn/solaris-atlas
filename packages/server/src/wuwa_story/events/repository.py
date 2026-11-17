@@ -14,6 +14,10 @@ from wuwa_story.events.domain import (
 class EventRepository(Protocol):
     async def spine(self, captures: set[tuple[str, str]]) -> list[EventMedia]: ...
 
+    async def pool_occurrences(
+        self, *, server: str, proof: dict, starts_at: object, ends_at: object,
+    ) -> list[tuple[int, int]]: ...
+
     async def runs(
         self,
         *,

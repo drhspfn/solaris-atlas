@@ -1,22 +1,36 @@
 """Group presentations only when an imported notice proves the client pool join."""
 
 
+def proven_member_ids(notice_revision, related_ids, proof_revision, event_id=None):
+    if (notice_revision != proof_revision or not isinstance(related_ids, list)
+        or not 2 <= len(related_ids) <= 64
+        or any(type(identity) is not int or identity <= 0 for identity in related_ids)
+        or len(set(related_ids)) != len(related_ids)
+        or (event_id is not None and event_id not in related_ids)):
+        return []
+    return related_ids
+
+
+def pool_key(event):
+    proof = event.get("_pool_match")
+    if not isinstance(proof, dict) or proof.get("basis") != "gacha_pool":
+        return None
+    release, pool = proof.get("release_id"), proof.get("gacha_id")
+    notice, revision = proof.get("notice_id"), proof.get("notice_revision")
+    if (type(release) is not int or type(pool) is not int or type(notice) is not int
+        or not isinstance(revision, str) or not revision
+        or event.get("kind") != "banner" or not event.get("source_id", "").startswith("gacha:")
+        or not event.get("occurrence_id") or not event.get("ends_at")
+        or len(event.get("featured_names") or []) != 1):
+        return None
+    return release, pool, notice, revision, event.get("starts_at"), event["ends_at"]
+
+
 def group_selectable_pools(events, server, locale):
     groups = {}
     for event in events:
-        proof = event.get("_pool_match")
-        if not isinstance(proof, dict) or proof.get("basis") != "gacha_pool":
-            continue
-        release, pool = proof.get("release_id"), proof.get("gacha_id")
-        notice, revision = proof.get("notice_id"), proof.get("notice_revision")
-        if (type(release) is not int or type(pool) is not int or type(notice) is not int
-            or not isinstance(revision, str) or not revision
-            or event.get("kind") != "banner" or not event.get("source_id", "").startswith("gacha:")
-            or not event.get("occurrence_id") or not event.get("ends_at")
-            or len(event.get("featured_names") or []) != 1):
-            continue
-        key = (release, pool, notice, revision, event.get("starts_at"), event["ends_at"])
-        groups.setdefault(key, []).append(event)
+        if key := pool_key(event):
+            groups.setdefault(key, []).append(event)
     replacements, removed = {}, set()
     for group in groups.values():
         if (len(group) < 2 or len({row["id"] for row in group}) != len(group)
