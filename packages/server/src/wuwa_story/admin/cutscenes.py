@@ -8,7 +8,9 @@ from starlette.templating import Jinja2Templates
 from starlette_admin import CustomView
 
 from wuwa_story.agents.cutscene_vision import visual_reference
+from wuwa_story.agents.scene_analysis_reader import current_scene_report
 from wuwa_story.agents.settings import get_agent_settings
+from wuwa_story.api.routes.cutscene_analysis import _logical_plan
 from wuwa_story.api.routes.cutscenes import detail, release
 from wuwa_story.db.models.core import Cutscene
 from wuwa_story.db.models.ops import ProcessingRun, Processor
@@ -50,6 +52,22 @@ class CutsceneData(CustomView):
                                 "title": meta.get("title"), "events": meta.get("events") or []})
         result["system_reports"] = reports
 
+        # Root-owned reports are valid only while every source and the authored
+        # selection still match the current complete publication.
+        scene_report, current_plan = None, None
+        if asset_version:
+            try:
+                current_plan, _, _ = await _logical_plan(db, scene.node_id, asset_version)
+            except (ValueError, KeyError, TypeError):
+                pass
+            if current_plan:
+                scene_report = await current_scene_report(db, scene.node_id, asset_version, current_plan)
+        if scene_report:
+            meta = scene_report.metadata_json or {}
+            reports = [{"cutscene_node_id": scene.node_id, "asset_version": asset_version,
+                        "title": meta.get("title"), "events": meta.get("events") or []}]
+            result["system_reports"] = reports
+
         runs_count = 0
         latest_run_status = None
         atlases_count = 0
@@ -82,10 +100,29 @@ class CutsceneData(CustomView):
                 )
             atlases_count = len(list(await db.scalars(atlas_stmt)))
 
+        scene_runs = []
+        if current_plan:
+            scene_runs = [run for run in await db.scalars(
+                select(ProcessingRun).join(Processor, Processor.id == ProcessingRun.processor_id)
+                .where(Processor.key == "cutscene_vision", ProcessingRun.target_node_id == scene.node_id,
+                       ProcessingRun.metadata_json["asset_version"].astext == asset_version)
+                .order_by(ProcessingRun.id.desc())
+            ) if (run.metadata_json or {}).get("analysis_plan") == current_plan]
+        if scene_runs:
+            runs_count += len(scene_runs)
+            latest_run_status = scene_runs[0].status
+        if scene_report:
+            atlases_count += len((scene_report.metadata_json or {}).get("atlas_references") or [])
+
         previews_count = len(result["previews"])
         has_analysis = bool(reports or runs_count > 0 or atlases_count > 0)
-        has_artifacts = bool(has_analysis or previews_count > 0)
+        # Existing delete UI addresses assets only; do not present root-owned
+        # artifacts as deletable until the scene cleanup path is integrated.
+        has_artifacts = bool(not scene_report and not scene_runs and asset_ids
+                             and (runs_count > 0 or previews_count > 0 or reports or atlases_count))
         result["analysis"] = {
+            "cutscene_node_id": scene.node_id,
+            "scene_report_id": scene_report.id if scene_report else None,
             "asset_node_ids": asset_ids,
             "asset_version": asset_version,
             "vision_enabled": get_agent_settings().vision_enabled,
