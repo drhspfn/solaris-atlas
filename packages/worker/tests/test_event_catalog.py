@@ -76,7 +76,7 @@ def test_missing_localization_is_reported_without_inventing_a_title(tmp_path):
     assert client_event_record(catalog, "2:102000009")["locales"] == {}
 
 
-def test_matrix_entry_follows_controller_key_without_module_tag(tmp_path):
+def test_ship_tower_entry_uses_authored_module_without_leaking_to_matrix(tmp_path):
     config = fixture_config(tmp_path)
     builder = flatbuffers.Builder(128)
     module = builder.CreateString('NewTowerClimbing')
@@ -87,17 +87,36 @@ def test_matrix_entry_follows_controller_key_without_module_tag(tmp_path):
     with sqlite3.connect(config / 'db_activity.db') as db:
         db.execute('CREATE TABLE activitysplitpak (BinData BLOB)')
         db.execute('INSERT INTO activitysplitpak VALUES (?)', (bytes(builder.Output()),))
+        builder = flatbuffers.Builder(128)
+        module = builder.CreateString('SlashAndTowerLevelPlay')
+        builder.StartObject(2)
+        builder.PrependInt32Slot(0, 39, 0)
+        builder.PrependUOffsetTRelativeSlot(1, module, 0)
+        builder.Finish(builder.EndObject())
+        db.execute('INSERT INTO activitysplitpak VALUES (?)', (bytes(builder.Output()),))
+        builder = flatbuffers.Builder(128)
+        builder.StartObject(25)
+        builder.PrependInt32Slot(1, 39, 0)
+        builder.Finish(builder.EndObject())
+        db.execute('INSERT INTO activity VALUES (?, ?)', (100390001, bytes(builder.Output())))
     builder = flatbuffers.Builder(128)
-    path = builder.CreateString('/Game/UI/Prefabs/MatrixEntry.MatrixEntry')
+    path = builder.CreateString('/Game/UI/Prefabs/ShipEntry.ShipEntry')
+    module = builder.CreateString('SlashAndTowerLevelPlay')
+    builder.StartVector(4, 1, 4)
+    builder.PrependUOffsetTRelative(module)
+    modules = builder.EndVector()
     builder.StartObject(5)
     builder.PrependUOffsetTRelativeSlot(1, path, 0)
+    builder.PrependUOffsetTRelativeSlot(4, modules, 0)
     builder.Finish(builder.EndObject())
     with sqlite3.connect(config / 'db_ui_resource.db') as db:
         db.execute('CREATE TABLE uiresource (Id TEXT, BinData BLOB)')
         db.execute('INSERT INTO uiresource VALUES (?, ?)',
                    ('UiItem_ActivityMowingTower2', bytes(builder.Output())))
-    record = read_event_catalog(config)['102000009']
-    assert any(resource['path'] == '/Game/UI/Prefabs/MatrixEntry' for resource in record['resources'])
+    records = read_event_catalog(config)
+    path = '/Game/UI/Prefabs/ShipEntry'
+    assert sum(resource['path'] == path for resource in records['100390001']['resources']) == 1
+    assert not any(resource['path'] == path for resource in records['102000009']['resources'])
 
 
 @pytest.mark.parametrize("path", ["/Game/../Secret", "Common/Event", ""])
