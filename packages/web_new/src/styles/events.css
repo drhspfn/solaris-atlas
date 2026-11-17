@@ -383,7 +383,12 @@
 .events-undated {
   margin-top: 32px;
 }
-.events-run-index > div {
+.events-run-index summary {
+  cursor: pointer;
+  margin: 14px 0;
+  color: var(--text-secondary);
+}
+.events-run-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 310px), 1fr));
   gap: 8px;

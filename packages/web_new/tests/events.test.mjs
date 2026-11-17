@@ -14,6 +14,7 @@ import {
   artworkGroups,
   layoutTimeline,
   isPermanentListing,
+  calendarPatch,
 } from '../src/components/events/calendar.ts';
 
 test('calendar groups characters, weapons and modes; soonest closing runs come first', () => {
@@ -163,4 +164,34 @@ test('local calendar days have equal width across daylight saving changes', () =
   const boundaries = [0, 23 * 3600000, 47 * 3600000];
   assert.equal(timePosition(boundaries[1], boundaries), DAY_WIDTH);
   assert.equal(timePosition(boundaries[2], boundaries), 2 * DAY_WIDTH);
+});
+
+test('current patch excludes expired history while retaining active cross-patch events', () => {
+  const now = Date.parse('2026-11-17');
+  const old = { ...run(1, 1, '2026-10-01', '2026-11-11'), game_version: '3.7' };
+  const current = { ...run(2, 2, '2026-11-11', '2026-12-03'), game_version: null, catalog_version: '3.8.0' };
+  const nextHalf = { ...run(3, 3, '2026-12-03', '2026-12-21'), game_version: '3.8' };
+  const continuing = { ...run(4, 4, '2026-10-01', '2026-11-20'), game_version: '3.7' };
+  const preload = { ...run(5, 5, '2026-12-21', '2027-02-01'), game_version: '3.9' };
+  const permanent = { ...run(6, 6, '2025-01-01', null, 'permanent'), game_version: '3.9' };
+  const legacy = { ...run(7, 7, '2024-05-01', '2025-02-01'), game_version: null, catalog_version: '3.8.0' };
+  const events = [old, current, nextHalf, continuing, preload, permanent, legacy];
+  const patch = calendarPatch(events, ['3.9.0', '3.8.0'], now);
+  assert.equal(patch.version, '3.8');
+  assert.equal(patch.start, Date.parse('2026-11-11'));
+  assert.equal(patch.end, Date.parse('2026-12-21'));
+  assert.deepEqual(patch.events.map(event => event.id), [2, 3, 4, 7]);
+  assert.equal(layoutTimeline(patch.events, patch.start, patch.end).flatMap(group => group.bars).length, 3);
+  const historical = calendarPatch(events, ['3.9.0'], now, '3.7.0');
+  assert.deepEqual(historical.events.map(event => event.id), [1, 4]);
+  assert.equal(events.length, 7, 'the complete archive remains available for other periods');
+});
+
+test('undated latest patches remain undated and empty groups allocate no lanes', () => {
+  const undated = { ...run(1, 1, null, null), game_version: null, catalog_version: '3.10.0' };
+  const patch = calendarPatch([undated], ['3.9.0', '3.10.0'], Date.parse('2026-11-17'));
+  assert.equal(patch.version, '3.10');
+  assert.equal(patch.start, null);
+  assert.equal(patch.end, null);
+  assert.deepEqual(layoutTimeline(patch.events, 0, DAY), []);
 });
