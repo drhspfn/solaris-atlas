@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from fastapi import HTTPException
+from sqlalchemy.exc import DBAPIError
 
 from wuwa_story.read_models import worker
 from wuwa_story.read_models.context import SOURCE_BUILD, source_build
@@ -21,7 +23,7 @@ def test_source_context_is_nested_and_restored_after_failure():
 
 @pytest.mark.asyncio
 async def test_failed_entity_does_not_stop_other_durable_refreshes(monkeypatch):
-    claims = [SimpleNamespace(kind="character", entity_id=i) for i in (1, 2)]
+    claims = [SimpleNamespace(kind="character", entity_id=i, snapshot_key="current") for i in (1, 2)]
     monkeypatch.setattr(worker, "claim_refreshes", AsyncMock(return_value=claims))
     contexts = []
 
@@ -139,7 +141,7 @@ async def test_pilot_requires_one_kind_and_valid_entity_id(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_runtime_deadline_unwinds_build_before_recording_durable_failure(monkeypatch):
-    claim = SimpleNamespace(kind="item", entity_id=9)
+    claim = SimpleNamespace(kind="item", entity_id=9, snapshot_key="3.8.0")
     monkeypatch.setattr(worker, "claim_refreshes", AsyncMock(return_value=[claim]))
     unwound = asyncio.Event()
 
@@ -159,6 +161,78 @@ async def test_runtime_deadline_unwinds_build_before_recording_durable_failure(m
     assert await worker.refresh_batch(object(), claim_timeout_seconds=0.01) == 1
     failure.assert_awaited_once()
     assert not SOURCE_BUILD.get()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [404, 503])
+async def test_failure_logs_safe_http_status_and_snapshot_without_detail(monkeypatch, caplog, status):
+    claim = SimpleNamespace(kind="character", entity_id=42, snapshot_key="3.8.0")
+    monkeypatch.setattr(worker, "claim_refreshes", AsyncMock(return_value=[claim]))
+    monkeypatch.setattr(worker, "refresh_claim", AsyncMock(side_effect=HTTPException(status, "secret payload")))
+    await worker.refresh_batch(object())
+    record = caplog.records[-1]
+    assert (record.projection_kind, record.projection_entity_id, record.projection_snapshot) == (
+        "character", 42, "3.8.0"
+    )
+    assert record.projection_http_status == status and record.projection_sqlstate is None
+    assert record.projection_timeout == "none" and "secret payload" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sqlstate", ["57014", "55P03", "40P01"])
+async def test_failure_logs_wrapped_database_code_without_sql_or_credentials(monkeypatch, caplog, sqlstate):
+    claim = SimpleNamespace(kind="quest", entity_id=99, snapshot_key="current")
+    cause = Exception("secret asyncpg detail")
+    cause.sqlstate = sqlstate
+    wrapped = Exception("secret database message")
+    wrapped.__cause__ = cause
+    error = DBAPIError("SELECT secret_sql", {"password": "credential"}, wrapped)
+    monkeypatch.setattr(worker, "claim_refreshes", AsyncMock(return_value=[claim]))
+    monkeypatch.setattr(worker, "refresh_claim", AsyncMock(side_effect=error))
+    await worker.refresh_batch(object())
+    record = caplog.records[-1]
+    assert record.projection_sqlstate == sqlstate and record.projection_http_status is None
+    assert record.projection_timeout == ("database_cancel_or_timeout" if sqlstate == "57014" else "none")
+    assert all(secret not in caplog.text for secret in ("secret_sql", "credential", "secret database", "secret asyncpg"))
+
+
+@pytest.mark.asyncio
+async def test_claim_deadline_is_distinct_from_an_inner_timeout(monkeypatch, caplog):
+    claim = SimpleNamespace(kind="quest", entity_id=7, snapshot_key="current")
+    monkeypatch.setattr(worker, "claim_refreshes", AsyncMock(return_value=[claim]))
+    failure = AsyncMock()
+    monkeypatch.setattr(worker, "fail_claim", failure)
+    monkeypatch.setattr(worker, "refresh_claim", AsyncMock(side_effect=TimeoutError("secret detail")))
+    await worker.refresh_batch(object())
+    assert caplog.records[-1].projection_timeout == "none"
+    failure.assert_not_awaited()  # refresh_claim persists ordinary failures itself.
+
+    async def blocked(*args):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(worker, "refresh_claim", blocked)
+    await worker.refresh_batch(object(), claim_timeout_seconds=0.01)
+    assert caplog.records[-1].projection_timeout == "claim_deadline"
+    failure.assert_awaited_once()
+    assert "secret detail" not in caplog.text
+
+
+def test_failure_codes_reject_invalid_untrusted_values():
+    error = DBAPIError("sql", {}, Exception("private"))
+    error.orig.sqlstate = "57014 secret"
+    assert worker._failure_codes(error) == (None, None)
+    error.orig.sqlstate = "57014"
+    assert worker._failure_codes(error) == (None, "57014")
+    error.orig.sqlstate = None
+    error.orig.__cause__ = error.orig  # Cycles from adapters must not hang diagnostics.
+    assert worker._failure_codes(error) == (None, None)
+
+
+def test_failure_log_rejects_untrusted_snapshot_text(caplog):
+    worker._log_failure(SimpleNamespace(kind="quest", entity_id=1, snapshot_key="private\nsecret"),
+                        ValueError("private detail"))
+    assert caplog.records[-1].projection_snapshot == "other"
+    assert "secret" not in caplog.text and "private detail" not in caplog.text
 
 
 @pytest.mark.asyncio

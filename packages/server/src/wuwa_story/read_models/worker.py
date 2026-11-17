@@ -11,7 +11,9 @@ import time
 from dataclasses import asdict
 
 from sqlalchemy import event, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from starlette.exceptions import HTTPException
 
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.ops import GameRelease, ImportRun
@@ -57,6 +59,47 @@ def create_worker_database(
 engine, SessionFactory = create_worker_database()
 
 
+def _failure_codes(error):
+    """Extract only bounded protocol codes, never exception messages or SQL."""
+    status = getattr(error, "status_code", None) if isinstance(error, HTTPException) else None
+    if type(status) is not int or not 100 <= status <= 599:
+        status = None
+    sqlstate = None
+    if isinstance(error, DBAPIError):
+        pending = [error.orig]
+        seen = set()
+        while pending and len(seen) < 8:
+            original = pending.pop()
+            if original is None or id(original) in seen:
+                continue
+            seen.add(id(original))
+            candidate = getattr(original, "sqlstate", None)
+            if isinstance(candidate, str) and re.fullmatch(r"[0-9A-Z]{5}", candidate):
+                sqlstate = candidate
+                break
+            pending.extend((getattr(original, "__context__", None), getattr(original, "__cause__", None)))
+    return status, sqlstate
+
+
+def _log_failure(claim, error, *, claim_timeout=False):
+    status, sqlstate = _failure_codes(error)
+    snapshot = claim.snapshot_key
+    if not isinstance(snapshot, str) or not re.fullmatch(
+        r"(?:current|[0-9]+(?:\.[0-9]+){1,3}|download:[0-9a-f]{1,64})", snapshot
+    ):
+        snapshot = "other"
+    reason = "claim_deadline" if claim_timeout else "database_cancel_or_timeout" if sqlstate == "57014" else "none"
+    logger.warning(
+        "%s kind=%s entity=%s snapshot=%s error=%s http_status=%s sqlstate=%s timeout=%s",
+        "read_projection.timed_out" if claim_timeout else "read_projection.failed",
+        claim.kind, claim.entity_id, snapshot, type(error).__name__, status, sqlstate, reason,
+        extra={"projection_kind": claim.kind, "projection_entity_id": claim.entity_id,
+               "projection_snapshot": snapshot, "projection_error_type": type(error).__name__,
+               "projection_http_status": status,
+               "projection_sqlstate": sqlstate, "projection_timeout": reason},
+    )
+
+
 async def refresh_batch(
     factory=SessionFactory, *, limit=1, kinds=None, entity_ids=None, snapshot_key=None,
     claim_timeout_seconds=CLAIM_TIMEOUT_SECONDS,
@@ -67,25 +110,20 @@ async def refresh_batch(
         factory, limit=limit, kinds=kinds, entity_ids=entity_ids, snapshot_key=snapshot_key,
     )
     for claim in claims:
+        deadline = asyncio.timeout(claim_timeout_seconds)
         try:
             with source_build():
-                async with asyncio.timeout(claim_timeout_seconds):
+                async with deadline:
                     await refresh_claim(factory, claim)
         except asyncio.CancelledError:
             raise
         except TimeoutError as error:
-            # refresh_claim has unwound and stopped its heartbeat. Record the
-            # timeout outside that cancelled context so retry state can commit.
-            await fail_claim(factory, claim, error)
-            logger.warning("read_projection.timed_out kind=%s entity=%s", claim.kind, claim.entity_id)
+            _log_failure(claim, error, claim_timeout=deadline.expired())
+            if deadline.expired():
+                # The build has unwound before the durable timeout is recorded.
+                await fail_claim(factory, claim, error)
         except Exception as error:
-            # Retry state is durable; never log source payloads or DB URLs.
-            logger.warning(
-                "read_projection.failed kind=%s entity=%s error=%s",
-                claim.kind,
-                claim.entity_id,
-                type(error).__name__,
-            )
+            _log_failure(claim, error)
     return len(claims)
 
 
