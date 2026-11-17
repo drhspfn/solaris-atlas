@@ -90,6 +90,42 @@ async def test_canonical_binding_retains_original_sources_members_and_periods(da
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("conflicting_history", [False, True])
+async def test_import_binds_only_proven_ordinary_banner_variants(database, conflicting_history):
+    def banner(role, kind):
+        return {**record("Banner"), "table": "GachaViewInfo", "gacha_type": kind,
+                "featured_ids": [role], "event_kind": "banner"}
+
+    async with database() as session:
+        first, second = await session.get(GameEvent, 1), await session.get(GameEvent, 2)
+        first.source_id, second.source_id = "gacha:739", "gacha:1893"
+        head = await session.get(GameEventSnapshot, "3.8.0")
+        head.complete = False
+        if conflicting_history:
+            session.add(GameEventSnapshot(version="3.7.0", download_id="older", complete=True))
+            await session.flush()
+            session.add(GameEventSnapshotMember(version="3.7.0", event_id=2,
+                                               client_capture=banner(999, 2)))
+        await session.flush()
+        records = {"gacha:739": banner(1210, 2), "gacha:1893": banner(1210, 2),
+                   "gacha:1918": banner(1210, 9)}
+        await store_client_events(session, records, "3.8.0", "pinned")
+        await store_client_events(session, records, "3.8.0", "pinned")
+        assert first.canonical_event_id is None
+        assert second.canonical_event_id == (None if conflicting_history else first.id)
+        option = await session.scalar(select(GameEvent).where(GameEvent.source_id == "gacha:1918"))
+        assert option.canonical_event_id is None
+        assert len(list(await session.scalars(select(GameEventOccurrence).where(
+            GameEventOccurrence.event_id.in_([1, 2]))))) == 6
+        assert {member.event_id for member in await session.scalars(select(GameEventSnapshotMember).where(
+            GameEventSnapshotMember.version == "3.8.0"))} == {1, 2, option.id}
+        if not conflicting_history:
+            for changed_id in ("gacha:739", "gacha:1893"):
+                with pytest.raises(ValueError, match="canonical banner binding"):
+                    await store_client_events(session, {changed_id: banner(999, 2)}, "3.9.0", "future")
+
+
+@pytest.mark.asyncio
 async def test_partial_reimport_preserves_complete_snapshot_and_members(database):
     async with database() as session:
         result = await store_client_events(session, {"100": record("Updated"), "101": {"locales": {}}},

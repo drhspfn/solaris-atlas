@@ -46,6 +46,62 @@ def _same_authored_capture(existing, incoming):
             and (not old_checksum or old_checksum == new_checksum))
 
 
+def _ordinary_banner_role(source_id, capture):
+    if not source_id.startswith("gacha:") or capture.get("table") != "GachaViewInfo":
+        return None
+    featured = capture.get("featured_ids")
+    if capture.get("gacha_type") != 2 or not isinstance(featured, list) or len(featured) != 1:
+        return None
+    return featured[0] if type(featured[0]) is int and featured[0] > 0 else None
+
+
+def _ordinary_binding_role(event):
+    evidence = getattr(event, "canonical_evidence", None) or {}
+    if not isinstance(evidence, dict):
+        return None
+    reference = evidence.get("reference", "")
+    prefix = "GachaViewInfo:type2:role:"
+    if evidence.get("basis") == "game_source" and isinstance(reference, str) and reference.startswith(prefix):
+        suffix = reference.removeprefix(prefix)
+        return int(suffix) if suffix.isdecimal() else None
+    return None
+
+
+async def _bind_ordinary_banners(session, events, presentations, existing):
+    groups = {}
+    for event, capture in zip(events, presentations, strict=True):
+        if role := _ordinary_banner_role(event.source_id, capture):
+            groups.setdefault(role, []).append(event)
+    groups = {role: rows for role, rows in groups.items() if len(rows) > 1}
+    if not groups:
+        return
+    ids = [event.id for rows in groups.values() for event in rows]
+    members = list(await session.scalars(select(GameEventSnapshotMember).where(
+        GameEventSnapshotMember.event_id.in_(ids))))
+    history = {}
+    for member in members:
+        history.setdefault(member.event_id, []).append(member.client_capture)
+    for role, rows in groups.items():
+        if any(not history.get(event.id) or any(
+            not isinstance(capture, dict) or _ordinary_banner_role(event.source_id, capture) != role
+            for capture in history[event.id]) for event in rows):
+            continue
+        row_ids = {event.id for event in rows}
+        parents = {event.canonical_event_id for event in rows if event.canonical_event_id is not None}
+        if len(parents) > 1 or (parents and not parents <= row_ids):
+            continue
+        root = next(iter(parents)) if parents else min(row_ids)
+        if any(event.canonical_event_id is not None for event in rows if event.id == root):
+            continue
+        candidates = {event.id for event in rows if event.id != root and event.canonical_event_id is None}
+        if any(event.canonical_event_id in candidates for event in existing):
+            continue  # Never turn an existing root with children into a nested alias.
+        for event in rows:
+            if event.id in candidates:
+                event.canonical_event_id = root
+                event.canonical_evidence = {"basis": "game_source", "reference": f"GachaViewInfo:type2:role:{role}"}
+
+
 def _covers_catalog_capture(row, presentation, version):
     snapshot = (row.source_data or {}).get("client") or {}
     scheduled = bool(getattr(row, "starts_at", None) or getattr(row, "ends_at", None))
@@ -80,6 +136,10 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
         GameEvent.source.in_([CLIENT_SOURCE, SOURCE])).order_by(GameEvent.id).with_for_update()))
     indexed = {
         event.source_id: event for event in existing if event.source == CLIENT_SOURCE}
+    automatic_children = {}
+    for item in existing:
+        if role := _ordinary_binding_role(item):
+            automatic_children.setdefault(item.canonical_event_id, set()).add(role)
     legacy = {}
     for event in existing:
         if event.source != SOURCE:
@@ -91,6 +151,12 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
         if not record.get("locales", {}).get("en"):
             continue
         event = indexed.get(client_identity(key)) or legacy.get(client_identity(key))
+        if event:
+            roles = set(automatic_children.get(event.id, ()))
+            if role := _ordinary_binding_role(event):
+                roles.add(role)
+            if roles and roles != {_ordinary_banner_role(client_identity(key), record)}:
+                raise ValueError("Imported source conflicts with an existing canonical banner binding")
         member = members_by_id.get(event.id) if event else None
         if snapshot and snapshot.complete and member is None:
             raise ValueError("Existing complete event snapshot differs from the imported catalog")
@@ -186,6 +252,8 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
             if "source_checksum" in capture:
                 updated["source_checksum"] = capture["source_checksum"]
             member.client_capture = updated
+    await session.flush()
+    await _bind_ordinary_banners(session, events, presentations, existing)
     occurrences = list(await session.scalars(select(GameEventOccurrence).where(
         GameEventOccurrence.event_id.in_([e.id for e in events]),
         or_(GameEventOccurrence.game_version == version,
