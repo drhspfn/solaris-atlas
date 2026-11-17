@@ -164,5 +164,10 @@ jobs:
           tests/test_read_model_builders.py tests/test_read_model_relations.py
           tests/test_read_model_worker.py tests/test_character_search_indexes.py
           tests/test_api_dockerfile.py -q
+      - name: Validate production projection budget
+        run: >-
+          uv run --project packages/server python -m unittest
+          scripts.tests.test_worker_configuration.WorkerConfigurationTests.test_projection_budget_covers_the_measured_event_catalog
+          scripts.tests.test_render_production_env -q
       - name: Validate admin interaction and tool documentation
         run: node --test packages/server/tests/test_visual_memory_*.mjs packages/server/tests/test_bbox_annotation_ui.mjs packages/web_new/tests/mcpDocs.test.mjs
