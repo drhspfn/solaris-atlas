@@ -6,6 +6,7 @@ from typing import Any
 
 from wuwa_story.events.domain import (
     CLIENT_SOURCE,
+    SHARED_ACTIVITY_BACKGROUNDS,
     EventAnnouncement,
     EventRun,
     EventRunNotFound,
@@ -234,7 +235,10 @@ class EventService:
         def image_url(path: str) -> str | None:
             return images.get((client.get("download_id", ""), path))
 
-        image = _client_preview(artwork, image_url) or image_url(run.banner_path or "")
+        banner = image_url(run.banner_path or "")
+        if event.source_id.startswith("activity:") and run.banner_path in SHARED_ACTIVITY_BACKGROUNDS:
+            banner = None
+        image = _client_preview(artwork, image_url, event.source_id) or banner
         notice = announcements.latest.get(event.id)
         captured = (
             ((occurrence.source_data or {}) if occurrence else {})
@@ -270,7 +274,7 @@ class EventService:
             "featured_names": presentation.get("featured_names", []),
             "up_names": presentation.get("up_names", []),
             "banner_path": run.banner_path,
-            "banner_url": image_url(run.banner_path or ""),
+            "banner_url": banner,
             "artwork": [{**asset, "url": image_url(asset["path"])} for asset in artwork],
             "preview_url": self.notice_image_url(preview),
             "preview_provenance": provenance,

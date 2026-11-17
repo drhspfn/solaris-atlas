@@ -14,6 +14,7 @@ from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.events.catalog_duplicates import client_signature, visible_occurrences
 from wuwa_story.events.domain import (
     CLIENT_SOURCE,
+    PREFAB_PREVIEWS,
     Event,
     EventAnnouncement,
     EventMedia,
@@ -103,6 +104,10 @@ def _summary_source(source: Any, locale: str) -> Any:
         return value
 
     predicate = " || ".join(f'@.role == "{role}"' for role in _PREVIEW_ROLES)
+    prefab_predicate = " || ".join(
+        f'(@.role == "prefab_texture" && @.prefab == "{prefab}" && @.path == "{path}")'
+        for prefab, path in PREFAB_PREVIEWS.values()
+    )
     client = func.jsonb_build_object(
         "download_id", func.coalesce(field("client", "download_id"), func.to_jsonb("")),
         "asset_version", field("client", "asset_version"),
@@ -118,7 +123,7 @@ def _summary_source(source: Any, locale: str) -> Any:
             locale, field("client", "locales", locale),
         ),
         "artwork", func.jsonb_path_query_array(source, cast(f"$.client.artwork[*] ? ({predicate})", JSONPATH)),
-        "prefab_artwork", func.jsonb_path_query_array(source, cast(f"$.client.prefab_artwork[*] ? ({predicate})", JSONPATH)),
+        "prefab_artwork", func.jsonb_path_query_array(source, cast(f"$.client.prefab_artwork[*] ? ({predicate} || {prefab_predicate})", JSONPATH)),
     )
     return func.jsonb_build_object(
         "client", case(((func.jsonb_typeof(field("client")) == "object") & (field("client") != cast({}, JSONB)), client),
