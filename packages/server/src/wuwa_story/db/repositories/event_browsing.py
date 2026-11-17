@@ -106,6 +106,7 @@ def _summary_source(source: Any, locale: str) -> Any:
         "notice_id", field("notice_id"),
         "notice_revision", field("notice_revision"),
         "notice_presentation", field("notice_presentation"),
+        "start_estimate", field("start_estimate"),
         "official_url", field("official_url"),
         type_=JSONB,
     )
