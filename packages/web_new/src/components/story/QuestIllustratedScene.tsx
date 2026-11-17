@@ -20,6 +20,7 @@ import { QuestIllustration, type Illustration } from "./QuestIllustration";
 import type { SequenceMedia } from "./encounterTransitions";
 import { sequenceFrameForLine } from "./sequenceReader";
 import { mediaViewerUrl } from "../ui/mediaViewerUtils";
+import { RegionLoop, type LoopRegion } from "./regionLoop";
 
 type SceneLine = {
   id: string;
@@ -58,7 +59,7 @@ export function QuestIllustratedScene({
   anchors: Map<string, string>;
   focusLine?: string | null;
   sequenceMedia?: SequenceMedia;
-  backgroundMusic?: { url: string; loop: boolean } | null;
+  backgroundMusic?: { url: string; loop: boolean; loop_region?: LoopRegion } | null;
   display: PlayerDisplay;
 }) {
   const { dialogueStyle, voiceLanguage, preferredRover } =
@@ -79,6 +80,7 @@ export function QuestIllustratedScene({
   const [musicVolume, setMusicVolume] = useState(0.35);
   const root = useRef<HTMLElement>(null);
   const music = useRef<HTMLAudioElement>(null);
+  const regionalMusic = useRef<RegionLoop | null>(null);
   const voice = useRef<HTMLAudioElement>(null);
   const active = useRef(0);
   const current = Math.max(0, Math.min(index, lines.length - 1));
@@ -104,12 +106,22 @@ export function QuestIllustratedScene({
   const indicatorVisible = started && canAdvance && !showingChoices;
 
   const startMusic = () => {
+    if (backgroundMusic?.loop_region && mediaViewerUrl(backgroundMusic.url)) {
+      setMusicError(false);
+      try {
+        regionalMusic.current ??= new RegionLoop(backgroundMusic.url, backgroundMusic.loop_region);
+        regionalMusic.current.setVolume(musicVolume);
+        void regionalMusic.current.play().catch(() => setMusicError(true));
+      } catch { setMusicError(true); }
+      return;
+    }
     const audio = music.current;
     if (!audio || !audio.paused) return;
     setMusicError(false);
     audio.volume = musicVolume;
     void audio.play().catch(() => setMusicError(true));
   };
+  const pauseMusic = () => { music.current?.pause(); regionalMusic.current?.pause(); };
   const select = (next: number, userGesture = false) => {
     if (next < 0 || next >= lines.length) return;
     if (userGesture) {
@@ -186,14 +198,20 @@ export function QuestIllustratedScene({
   }, [voiceVolume, voiceUrl, line?.id]);
   useEffect(() => {
     if (music.current) music.current.volume = musicVolume;
+    regionalMusic.current?.setVolume(musicVolume);
   }, [musicVolume, backgroundMusic?.url]);
+  useEffect(() => () => {
+    regionalMusic.current?.close();
+    regionalMusic.current = null;
+  }, [backgroundMusic?.url, backgroundMusic?.loop_region?.start_sample,
+      backgroundMusic?.loop_region?.end_sample, backgroundMusic?.loop_region?.sample_rate]);
 
   useEffect(() => {
     if (!started || transcript || !textDone || !voiceDone || showingChoices)
       return;
     if (current === lines.length - 1) {
       voice.current?.pause();
-      music.current?.pause();
+      pauseMusic();
       setAuto(false);
     } else if (auto) select(current + 1);
   }, [
@@ -243,7 +261,7 @@ export function QuestIllustratedScene({
   }, [lines, anchors, focusLine]);
   useEffect(
     () => () => {
-      music.current?.pause();
+      pauseMusic();
       voice.current?.pause();
     },
     [],
@@ -263,7 +281,7 @@ export function QuestIllustratedScene({
     if (current < lines.length - 1) select(current + 1, true);
     else {
       voice.current?.pause();
-      music.current?.pause();
+      pauseMusic();
       setAuto(false);
     }
   };
@@ -461,7 +479,7 @@ export function QuestIllustratedScene({
             onClick={() => {
               if (!transcript) {
                 voice.current?.pause();
-                music.current?.pause();
+                pauseMusic();
                 setAuto(false);
               } else if (started) startMusic();
               setTranscript(!transcript);
@@ -507,7 +525,7 @@ export function QuestIllustratedScene({
           }}
         />
       )}
-      {backgroundMusic && mediaViewerUrl(backgroundMusic.url) && (
+      {backgroundMusic && !backgroundMusic.loop_region && mediaViewerUrl(backgroundMusic.url) && (
         <audio
           ref={music}
           data-scene-background-music

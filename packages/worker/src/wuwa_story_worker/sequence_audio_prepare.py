@@ -273,12 +273,13 @@ async def _prepare_sequence_audio(root, bundle, fmodel, converter, voice_root, s
                         for rover in ('male', 'female') if male != female else (None,):
                             wav, evidence = await render_bank(bank, audio, branch, decoder, rover, run_tool, language=language)
                             flow_loop = None
+                            flow_region = None
                             if section.get('reconstruction_kind') == 'flow_authored_music':
                                 from wuwa_story_worker.sequence_music_context import (
                                     verify_authored_music,
                                 )
-                                flow_loop, flow_originals, flow_evidence = await verify_authored_music(
-                                    root, fmodel, converter, audio, branch, evidence, flow_context.get('stop_event'))
+                                flow_loop, flow_region, flow_originals, flow_evidence = await verify_authored_music(
+                                    root, fmodel, converter, audio, branch, evidence, flow_context.get('stop_event'), wav)
                                 originals.update(flow_originals)
                                 for proof_name, content in flow_evidence.items():
                                     entries['audio-evidence/' + hashlib.sha256(reference.encode()).hexdigest()[:16] + '/' + proof_name] = content
@@ -316,7 +317,8 @@ async def _prepare_sequence_audio(root, bundle, fmodel, converter, voice_root, s
                                            'duration_seconds': duration, 'source_media': proof, 'tools': tools,
                                            'voice_plan_id': voice_plan['id'] if voice != root else None,
                                            'timing_basis': 'standalone_authored_event; section clock/range/fade remain source values',
-                                           **({'role': 'music', 'loop': flow_loop} if flow_loop is not None else {})})
+                                           **({'role': 'music', 'loop': flow_loop} if flow_loop is not None else {}),
+                                           **({'loop_region': flow_region} if flow_region is not None else {})})
                     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                         if isinstance(error, BlockingIOError) or transient_job_error(error):
                             raise

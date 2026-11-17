@@ -84,6 +84,14 @@ localization-key links to the owning FlowState. Music/audio actions stay separat
 Event times are sequence-clock positions, not guaranteed elapsed wall time when
 dialogue or QTE pauses the scene.
 
+For the verified single-source Wwise intro/loop TXTP profile, the worker records
+vgmstream's loop start and end in samples and the sample rate after checking that
+the decoder's total samples and rate match the rendered WAV. The source recipe
+and decoder metadata remain in the archive. The illustrated reader plays the
+intro once and repeats the sample-bounded region with Web Audio; unsupported loop
+shapes remain unresolved. Browser playback requires CDN GET CORS access and
+decodes the complete soundtrack into memory.
+
 Discovery supports `SpineImage.Id`, direct `OpenUiView` UI keys and gender variants,
 array opens, typed SequenceData/LevelSequence/subsequence dependencies, and generated
 `PreloadUiArray` keys. Preloads are archived separately and never reported as played.

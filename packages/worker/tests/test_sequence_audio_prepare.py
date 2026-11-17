@@ -382,7 +382,8 @@ async def test_legacy_flow_soundtrack_requires_verified_music_bus(prepared, monk
     if state_only:
         monkeypatch.setattr(audio, 'render_bank', AsyncMock(side_effect=ValueError('Wwise control-only event')))
     else:
-        monkeypatch.setattr(sequence_music_context, 'verify_authored_music', AsyncMock(return_value=(True, [], {})))
+        monkeypatch.setattr(sequence_music_context, 'verify_authored_music', AsyncMock(return_value=(
+            True, {'start_sample': 123, 'end_sample': 48000, 'sample_rate': 48000}, [], {})))
     context = sequence_music_context.authored_flow_music_context(
         {'owner': 7, 'release_id': 21, 'presentation': presentation, 'presentation_sha256': presentation['sha256']},
         {'asset_version': '3.7.1', 'download_id': 'base-plan'})
@@ -398,6 +399,8 @@ async def test_legacy_flow_soundtrack_requires_verified_music_bus(prepared, monk
         else:
             assert section['status'] == 'rendered'
             assert all(track['role'] == 'music' and track['loop'] is True for track in section['tracks'])
+            assert all(track['loop_region'] == {'start_sample': 123, 'end_sample': 48000, 'sample_rate': 48000}
+                       for track in section['tracks'])
 
 
 @pytest.mark.asyncio

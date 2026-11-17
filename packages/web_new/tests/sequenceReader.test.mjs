@@ -200,6 +200,13 @@ test("background music must be uniquely published and explicitly marked music", 
     media(section({ ...track("music", "/music.ogg"), loop: true })),
   );
   assert.equal(loop.loop, true);
+  const region = { start_sample: 23226, end_sample: 3112259, sample_rate: 48000 };
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(sequenceBackgroundMusic(media(section({ ...track("music", "/music.ogg"), loop: true, loop_region: region }))).loop_region)),
+    region,
+  );
+  assert.equal(sequenceBackgroundMusic(media(section({ ...track("music", "/music.ogg"), loop: true,
+    loop_region: { ...region, end_sample: 1 } }))), undefined);
   assert.equal(
     sequenceBackgroundMusic(
       media(

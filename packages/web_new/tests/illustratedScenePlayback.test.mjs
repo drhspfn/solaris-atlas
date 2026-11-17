@@ -30,6 +30,7 @@ function harness(hasVoice = true, content = "Text", hasMusic = false) {
   };
   const musicAudio = { ...audio };
   const voiceAudio = hasVoice ? audio : { ...audio };
+  const regionalAudio = { ...audio, setVolume() {}, close() {} };
   const react = {
     useState(v) {
       const i = si++;
@@ -83,6 +84,7 @@ function harness(hasVoice = true, content = "Text", hasMusic = false) {
       }),
     },
     "./sequenceReader": { sequenceFrameForLine: () => undefined },
+    "./regionLoop": { RegionLoop: function () { return regionalAudio; } },
     "../ui/mediaViewerUtils": { mediaViewerUrl: (v) => v },
   };
   const win = {
@@ -122,7 +124,8 @@ function harness(hasVoice = true, content = "Text", hasMusic = false) {
     lines,
     anchors: new Map(),
     display: { name: "Rover", colorMode: "accent", customColor: "#fff" },
-    backgroundMusic: hasMusic ? { url: "/music.ogg", loop: true } : null,
+    backgroundMusic: hasMusic ? { url: "/music.ogg", loop: true,
+      ...(hasMusic === "region" ? { loop_region: { start_sample: 1, end_sample: 2, sample_rate: 1 } } : {}) } : null,
     renderLine: (line) => line.player_choices?.length
       ? { type: "a", props: { href: "#reply", children: "Choose reply" } }
       : null,
@@ -155,6 +158,7 @@ function harness(hasVoice = true, content = "Text", hasMusic = false) {
     states,
     audio,
     musicAudio: hasVoice ? musicAudio : audio,
+    regionalAudio,
     voiceAudio,
     timers,
     render,
@@ -165,6 +169,15 @@ function harness(hasVoice = true, content = "Text", hasMusic = false) {
       ),
   };
 }
+test("region music follows scene start and transcript pause", () => {
+  const h = harness(true, "Text", "region");
+  let tree = h.render();
+  h.button(tree, "Enable auto advance").props.onClick();
+  tree = h.render();
+  assert.equal(h.regionalAudio.plays, 1);
+  h.nodes(tree).find(x => x.type === "button" && [x.props.children].flat(Infinity).includes("Read transcript")).props.onClick();
+  assert.equal(h.regionalAudio.pauses, 1);
+});
 test("scene starts first voice and waits for text and audio before advancing", () => {
   const h = harness();
   let tree = h.render();
