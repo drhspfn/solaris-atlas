@@ -83,6 +83,14 @@ example, the [Second Coming of Solaris notice](https://wutheringwaves.kurogames.
 uses “After the Version 3.8 update”; the [maintenance notice](https://wutheringwaves.kurogames.com/m/en/main/news/detail/5705)
 gives a scheduled window, not a verified actual completion time.
 
+Selectable Reverb notices can date all their client rows only when the entire
+notice roster identifies unique same-version rows and the raw `GachaPool` joins
+those rows to exactly one complete `GachaId` group. The occurrence records keep
+the release and pool identity in `notice_match`. In 3.8, Starpath's four rows
+join to `100096` and Tideforge's four rows join to `200096`. The notice period
+belongs to the selectable banner; the four rows are presentation choices, not
+four independent banners. Missing or ambiguous pool evidence leaves them undated.
+
 ## Verification against downloaded client 3.7.0 (2026-10-19)
 
 - 378 Activity rows and 254 GachaViewInfo rows; all 632 resolve English names.

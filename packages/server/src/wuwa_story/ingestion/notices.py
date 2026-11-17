@@ -13,6 +13,8 @@ from sqlalchemy.dialects.postgresql import insert
 
 from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
 from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
+from wuwa_story.db.models.ops import GameRelease
+from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
 from wuwa_story.notices.matching import notice_candidates as notice_candidates
 from wuwa_story.notices.matching import notice_matches as notice_matches
@@ -158,6 +160,56 @@ async def version_start_estimate(session, content, server, published_at):
     return latest
 
 
+async def selectable_banner_matches(session, content, events):
+    """Require a complete selectable roster and an explicit, same-release pool join."""
+    match = re.search(
+        r"selectable 5-Star (Resonators|Weapons):\s*(.*?),\s*and 4-Star ",
+        content["text"],
+    )
+    if not match:
+        return [], None
+    kind = "Resonator" if match[1] == "Resonators" else "Weapon"
+    if f"Reverb {kind} Convene" not in content["title"]:
+        return [], None
+    def normalize(value):
+        return re.sub(r"[^\w]+", "", value.casefold())
+    names = [normalize(name) for name in re.split(r",|\band\b", match[2]) if name.strip()]
+    if len(names) < 2 or len(names) != len(set(names)):
+        return [], None
+    candidates = [event for event in notice_candidates(content, events, match_roster=False)
+                  if event.event_kind == "banner"
+                  and (event.source_data or {}).get("client", {}).get("gacha_type") == (13 if kind == "Resonator" else 14)
+                  and len((event.source_data or {}).get("client", {}).get("locales", {}).get("en", {}).get("featured_names", [])) == 1
+                  and normalize(event.source_data["client"]["locales"]["en"]["featured_names"][0]) in names]
+    if len(candidates) != len(names) or {normalize(event.source_data["client"]["locales"]["en"]["featured_names"][0]) for event in candidates} != set(names):
+        return [], None
+    versions = {event.source_data["client"].get("asset_version") for event in candidates}
+    ids = [event.source_id.removeprefix("gacha:") for event in candidates]
+    if len(versions) != 1 or None in versions or any(not event.source_id.startswith("gacha:") or not identifier.isdecimal() for event, identifier in zip(candidates, ids, strict=True)):
+        return [], None
+    rows = (await session.execute(
+        select(SourceRecord.release_id, SourceRecord.data)
+        .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
+        .join(GameRelease, GameRelease.id == SourceRecord.release_id)
+        .where(SourceFile.release_id == SourceRecord.release_id,
+               SourceFile.logical_source_path == "BinData/gacha/gachapool.json",
+               GameRelease.game_version == next(iter(versions)))
+    )).all()
+    groups = {}
+    for release_id, data in rows:
+        if type(data.get("Id")) is int and type(data.get("GachaId")) is int:
+            groups.setdefault((release_id, data["GachaId"]), []).append(str(data["Id"]))
+    proven = [(release, pool) for (release, pool), members in groups.items()
+              if len(members) == len(ids) and set(members) == set(ids)]
+    if len(proven) != 1:
+        return [], None
+    release, pool = proven[0]
+    if any(sum(identifier in members for (group_release, _), members in groups.items()
+               if group_release == release) != 1 for identifier in ids):
+        return [], None
+    return candidates, {"basis": "gacha_pool", "release_id": release, "gacha_id": pool}
+
+
 async def fetch_notice_feed(launcher_define):
     """Discover the deployed Notice web application's API origin from client constants."""
 
@@ -240,7 +292,11 @@ async def store_notices(session, feed, page, document):
                 notice = GameNotice(feed=feed, locale="en", source_id=str(raw["id"]))
                 session.add(notice)
             matched = notice_matches(content, events)
-            if notice.revision == revision and notice.related_event_ids:
+            match_evidence = None
+            if not matched:
+                matched, match_evidence = await selectable_banner_matches(session, content, events)
+            if (notice.revision == revision and notice.related_event_ids
+                and "selectable 5-Star" not in content["text"]):
                 matched = [event for event in events if event.id in notice.related_event_ids]
             notice.title, notice.category = content["title"], category
             if notice.revision != revision:
@@ -341,6 +397,7 @@ async def store_notices(session, feed, page, document):
                         "client": snapshot,
                         "notice_id": notice.id,
                         "notice_revision": revision,
+                        **({"notice_match": match_evidence} if match_evidence else {}),
                         "notice_presentation": {
                             "en": {"title": content["title"], "description": content["text"]}
                         },
