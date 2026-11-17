@@ -46,8 +46,9 @@ def exports(tmp_path):
             entries.append({"path": file.relative_to(parent / "files").as_posix(), "size": len(content),
                             "sha256": hashlib.sha256(content).hexdigest()})
         path = parent / "manifest.json"
-        write_json(path, {"job_id": plan["id"], "version": plan["version"], "tier": plan["tier"],
-                          "filter": filter_name, "files": entries})
+        write_json(path, {"schema_version": 1, "job_id": plan["id"], "version": plan["version"],
+                          "tier": plan["tier"], "keys_commit": plan["keys_commit"],
+                          "extractor_sha256": "c" * 64, "filter": filter_name, "files": entries})
         manifests.append(path)
     return plan, plan_path, *manifests
 

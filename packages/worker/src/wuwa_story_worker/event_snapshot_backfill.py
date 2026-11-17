@@ -6,8 +6,10 @@ import hashlib
 import json
 import re
 import sqlite3
+import sys
 from contextlib import closing
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from sqlalchemy import delete, select, text
 from wuwa_story.db.models.game_events import GameEvent, GameEventSnapshot, GameEventSnapshotMember
@@ -18,11 +20,13 @@ from wuwa_story_worker.client_assets import validate_plan
 from wuwa_story_worker.event_catalog import validate_event_schema
 
 
-def _verified_files(manifest_path, plan, expected_filter, names):
+def _verified_files(manifest_path, plan, expected_filter, names, destination):
     manifest_path = Path(manifest_path)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if (manifest.get("job_id") != plan["id"] or manifest.get("version") != plan["version"]
-            or manifest.get("tier") != plan["tier"] or manifest.get("filter") != expected_filter):
+    if (manifest.get("schema_version") != 1 or manifest.get("job_id") != plan["id"]
+            or manifest.get("version") != plan["version"] or manifest.get("tier") != plan["tier"]
+            or manifest.get("keys_commit") != plan["keys_commit"] or manifest.get("filter") != expected_filter
+            or not re.fullmatch(r"[0-9a-f]{64}", manifest.get("extractor_sha256", ""))):
         raise ValueError("Export manifest does not match the pinned client and filter")
     root = (manifest_path.parent / "files").resolve()
     found = {}
@@ -36,12 +40,16 @@ def _verified_files(manifest_path, plan, expected_filter, names):
         if not source.is_relative_to(root) or not source.is_file():
             raise ValueError("Export file is missing or outside its manifest")
         digest = hashlib.sha256()
-        with source.open("rb") as stream:
+        target = destination / path.name
+        size = 0
+        with source.open("rb") as stream, target.open("wb") as output:
             for block in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(block)
-        if source.stat().st_size != entry.get("size") or digest.hexdigest() != entry.get("sha256"):
+                size += len(block)
+                output.write(block)
+        if size != entry.get("size") or digest.hexdigest() != entry.get("sha256"):
             raise ValueError(f"Export checksum mismatch: {path.name}")
-        found[path.name] = source
+        found[path.name] = target
     if found.keys() != set(names):
         raise ValueError("Export manifest does not contain every required catalog file")
     return found
@@ -56,24 +64,23 @@ def load_identities(plan_path, config_manifest, readers_manifest):
         raise ValueError("Client download is not complete")
     if not re.fullmatch(r"\d+\.\d+\.\d+", plan["version"]):
         raise ValueError("A full client version is required")
-    config = _verified_files(config_manifest, plan, "ConfigDB", {"db_activity.db", "db_gacha.db"})
-    readers = _verified_files(readers_manifest, plan, "JavaScript/Core/Define/Config",
-                              {"Activity.js", "GachaViewInfo.js"})
-    if readers["Activity.js"].parent != readers["GachaViewInfo.js"].parent:
-        raise ValueError("Client schema readers must share a directory")
-    validate_event_schema(readers["Activity.js"].parent)
-    identities = set()
-    for filename, table_name, prefix in (("db_activity.db", "activity", "activity:"),
-                                         ("db_gacha.db", "gachaviewinfo", "gacha:")):
-        # Ignore unverified SQLite sidecars; exports are immutable artifacts.
-        with closing(sqlite3.connect(config[filename].as_uri() + "?mode=ro&immutable=1", uri=True)) as db:
-            rows = list(db.execute(f"SELECT Id FROM {table_name}"))
-        if not rows or any(identifier is None or str(identifier) == "" for (identifier,) in rows):
-            raise ValueError(f"Empty or invalid {table_name} catalog")
-        group = {prefix + str(identifier) for (identifier,) in rows}
-        if len(group) != len(rows):
-            raise ValueError(f"Duplicate IDs in {table_name} catalog")
-        identities.update(group)
+    with TemporaryDirectory(prefix="event-snapshot-") as temporary:
+        destination = Path(temporary)
+        config = _verified_files(config_manifest, plan, "ConfigDB", {"db_activity.db", "db_gacha.db"}, destination)
+        _verified_files(readers_manifest, plan, "JavaScript/Core/Define/Config",
+                        {"Activity.js", "GachaViewInfo.js"}, destination)
+        validate_event_schema(destination)
+        identities = set()
+        for filename, table_name, prefix in (("db_activity.db", "activity", "activity:"),
+                                             ("db_gacha.db", "gachaviewinfo", "gacha:")):
+            with closing(sqlite3.connect(config[filename].as_uri() + "?mode=ro&immutable=1", uri=True)) as db:
+                rows = list(db.execute(f"SELECT Id FROM {table_name}"))
+            if not rows or any(identifier is None or str(identifier) == "" for (identifier,) in rows):
+                raise ValueError(f"Empty or invalid {table_name} catalog")
+            group = {prefix + str(identifier) for (identifier,) in rows}
+            if len(group) != len(rows):
+                raise ValueError(f"Duplicate IDs in {table_name} catalog")
+            identities.update(group)
     return plan, identities
 
 
@@ -126,7 +133,10 @@ def main():
     parser.add_argument("--readers-manifest", type=Path, required=True)
     parser.add_argument("--apply", action="store_true", help="Publish only if every identity matches")
     args = parser.parse_args()
-    print(json.dumps(asyncio.run(run(args))))
+    result = asyncio.run(run(args))
+    print(json.dumps(result))
+    if args.apply and result["missing"]:
+        sys.exit(2)
 
 
 if __name__ == "__main__":
