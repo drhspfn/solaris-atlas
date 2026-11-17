@@ -217,6 +217,21 @@ def test_prefab_preview_requires_exact_prefab_and_available_capture():
         assert _client_preview([background, tab], lambda p: p, source) == "/Game/Tab"
 
 
+@pytest.mark.parametrize("source,prefab,path", [
+    ("activity:synthetic-a", "/Game/UiItem_Activity37POI",
+     "/Game/Aki/UI/UIResources/Common/Image/BgCgBig/Activity/Activity37/Activity37POI/T_Activity37POIBg"),
+    ("activity:synthetic-b", "/Game/UiItem_FarmGoldMain",
+     "/Game/Aki/UI/UIResources/Common/Image/BgCgBig/Activity/ActivityFarmGold/T_ActivityFarmGold37"),
+    ("activity:108700001", "/Game/UiView_RhythmShipLevel",
+     "/Game/Aki/UI/UIResources/Common/Image/BgCgBig/Activity/Activity32/RhythmShip/T_RhythmShipLevelBg01"),
+])
+def test_single_published_prefab_background_does_not_prove_event_preview(source, prefab, path):
+    from wuwa_story.events.domain import _client_preview
+
+    candidate = {"role": "prefab_texture", "path": path, "prefab": prefab}
+    assert _client_preview([candidate], lambda value: value, source) is None
+
+
 @pytest.mark.asyncio
 async def test_start_estimate_survives_source_and_projected_calendar_and_detail(event, repository, service, monkeypatch):
     from datetime import UTC, datetime
