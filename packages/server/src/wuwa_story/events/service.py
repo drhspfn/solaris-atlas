@@ -311,6 +311,9 @@ class EventService:
         }
         if occurrence and (match := pool_match(occurrence.source_data)):
             result["_pool_match"] = match
+        if presentation.get("up_names_source") == "notice":
+            result["up_names_source"] = "notice"
+            result["client_up_names"] = presentation["client_up_names"]
         bundle = spine.get((event.source_id, client.get('download_id')))
         if bundle and self.animation_enabled and _animation_eligible(client):
             result['spine'] = [bundle]
