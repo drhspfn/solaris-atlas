@@ -8,7 +8,7 @@ on:
       component:
         description: Images to build and publish
         type: choice
-        options: [all, api, web, worker, models]
+        options: [all, api, web, worker, models, vision]
         default: all
         required: true
 
@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: ${{ fromJSON(github.event_name == 'push' && '["api","web","worker"]' || (inputs.component == 'all' && '["api","web","worker"]' || (inputs.component == 'web' && '["web","worker"]' || (inputs.component == 'models' && '["worker"]' || format('["{0}"]', inputs.component))))) }}
+        component: ${{ fromJSON(github.event_name == 'push' && '["api","web","worker"]' || (inputs.component == 'all' && '["api","web","worker"]' || (inputs.component == 'vision' && '["api","worker"]' || (inputs.component == 'web' && '["web","worker"]' || (inputs.component == 'models' && '["worker"]' || format('["{0}"]', inputs.component)))))) }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -96,6 +96,41 @@ jobs:
             WORKER_IMAGE=${{ steps.meta.outputs.worker }}
           cache-from: type=gha,scope=models
           cache-to: type=gha,mode=max,scope=models
+
+  vision:
+    needs: build
+    if: github.event_name == 'push' || inputs.component == 'all' || inputs.component == 'vision'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set image names and tags
+        id: meta
+        shell: bash
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}-vision"
+          tags="$image:$GITHUB_SHA,$image:${GITHUB_SHA:0:7}"
+          if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then tags="$tags,$image:main"; fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "worker=ghcr.io/${GITHUB_REPOSITORY,,}-worker:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "api=ghcr.io/${GITHUB_REPOSITORY,,}-api:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+      - name: Build and push CPU vision worker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/worker/Dockerfile.vision
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            WORKER_IMAGE=${{ steps.meta.outputs.worker }}
+            API_IMAGE=${{ steps.meta.outputs.api }}
+          cache-from: type=gha,scope=vision
+          cache-to: type=gha,mode=max,scope=vision
 
   deploy:
     needs: build

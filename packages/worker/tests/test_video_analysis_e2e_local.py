@@ -412,7 +412,7 @@ async def test_run_video_analysis_agent_e2e_local(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_run_video_analysis_agent_resumes_step_offset(tmp_path: Path, monkeypatch):
+async def test_run_video_analysis_agent_replays_paid_steps_without_new_calls(tmp_path: Path, monkeypatch):
     ffmpeg_bin = shutil.which("ffmpeg")
     if not ffmpeg_bin:
         pytest.skip("ffmpeg not installed on PATH")
@@ -439,8 +439,7 @@ async def test_run_video_analysis_agent_resumes_step_offset(tmp_path: Path, monk
     )
     workspace.root.mkdir(parents=True, exist_ok=True)
 
-    # Simulate resuming after steps 0 and 1 already exist (max(AgentCall.step) == 1 -> step_offset = 2)
-    db = _FakeDb(scalar_values=[1, None])
+    db = _FakeDb()
     run = SimpleNamespace(
         id=99002,
         target_node_id=5002,
@@ -448,7 +447,8 @@ async def test_run_video_analysis_agent_resumes_step_offset(tmp_path: Path, monk
         cost=0.05,
         tokens_input=1000,
         tokens_output=100,
-        raw_output={"mode": "video_agent", "step": 2},
+        raw_output={"mode": "video_agent", "step": 2, "tool_results": {
+            "0:0": {"output": {"results": []}, "atlases": []}}},
         input_hash=b"\xef\x01" * 16,
         metadata_json={"asset_version": "3.7.1", "file_id": 123, "source_sha256": "deadbeef"},
     )
@@ -515,7 +515,18 @@ async def test_run_video_analysis_agent_resumes_step_offset(tmp_path: Path, monk
             "usage": {"input_tokens": 5000, "output_tokens": 120},
         }
 
-    monkeypatch.setattr(Provider, "post", fake_post_quick)
+    first_response = {
+        "status": "completed", "usage": {"input_tokens": 500, "output_tokens": 50},
+        "output": [{"type": "function_call", "call_id": "tc_search",
+                    "name": "search_entities", "arguments": '{"query":"Rover"}'}],
+    }
+    final_response = await fake_post_quick(None, "/responses", {})
+    db._scalar_values = [
+        SimpleNamespace(status="completed", response=first_response, cost_usd=0.02),
+        SimpleNamespace(status="completed", response=final_response, cost_usd=0.03),
+    ]
+    post = AsyncMock(side_effect=AssertionError("Paid response must be replayed"))
+    monkeypatch.setattr(Provider, "post", post)
 
     await run_video_analysis_agent(
         db,
@@ -527,6 +538,8 @@ async def test_run_video_analysis_agent_resumes_step_offset(tmp_path: Path, monk
                  "game_version": "3.7.1"},
     )
 
-    assert steps_seen == [2]
-    assert run.raw_output["step"] == 3
-    assert pytest.approx(run.cost, rel=1e-6) == 0.06
+    assert steps_seen == []
+    assert run.raw_output["step"] == 2
+    assert run.tokens_input == 1000 and run.tokens_output == 100
+    assert pytest.approx(run.cost, rel=1e-6) == 0.05
+    post.assert_not_awaited()

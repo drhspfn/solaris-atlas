@@ -153,6 +153,66 @@ video does not establish what was visible in a historical game build.
 To disable paid visual work, stop the dedicated consumer and set the flag false.
 Imported video/dialogue and previous valid descriptions continue to work.
 
+## Logical scene runtime
+
+The v5 worker accepts a pinned `metadata.analysis_plan` (version 1). The scheduler
+owns selection: it must resolve authored Rover alternatives and preserve every
+sequential or unique selected interval. The worker never derives a playthrough
+from filenames or concatenates overlapping alternatives. Jobs without a plan keep
+their single-asset input path, including older visual protocols.
+
+A plan contains `cutscene_node_id`, `selection`, and ordered `segments`. Each segment
+has `asset_node_id`, `file_id`, `source_sha256`, `asset_version`, `source_start`,
+`source_end`, `scene_start`, `scene_end`, and `provenance`. Bounds are finite seconds,
+durations must match without time scaling, and selected scene intervals cannot
+overlap. Scene time equals source time plus `scene_start - source_start`. Missing
+placement or duration must be resolved before enqueueing; the runtime does not guess.
+Every selected file is downloaded and hash-checked, and its interval checked against
+the probed duration (0.1 second tolerance), before any model request. Short selected
+parts are included, even when individually shorter than the single-video skip limit.
+
+All selected parts enter one agent conversation, one globally numbered screenshot
+pool, one report and one run's aggregate usage. Atlases stay within source segments;
+each tile retains source and scene coordinates, segment identity and provenance.
+The decoder's 0.1 second EOF margin is recorded separately as `decode_source_time`.
+The overview reserves beginning/ending samples for every segment. Gaps keep their
+authored offsets and are disclosed without fabricated imagery; resample windows
+that hit a gap return an error so the agent can request a narrower window.
+
+The shared screenshot ceiling is `AGENT_VISION_MAX_FRAMES` (default 600, allowed
+2..1200), including overview and zoom frames. At least two overview frames per
+segment must fit; a scene with too many parts fails rather than dropping parts.
+Each atlas contains at most `AGENT_VISION_ATLAS_FRAMES` (default 12, maximum 24).
+Zoom requests keep the dynamic soft limit and 96-frame hard ceiling. The agent has
+at most 14 provider turns across retries, with the existing per-request input,
+output and daily ledger reservations. An overview or growing conversation that
+cannot fit the input budget pauses instead of omitting selected videos. These are
+sampling limits, not a guarantee of exhaustive visual coverage.
+
+Recorded responses and tool results are replayed after interruption; zoom atlases
+are rebuilt locally with the same numbering. Already-accounted steps do not add
+usage twice. Unknown remote outcomes and exceeded reservations prohibit another
+automatic request; output-limited or invalid responses cannot publish a partial
+report. A single final report replaces a paid global merge step.
+
+For logical jobs, the run target and report/atlas/preview reference owners are the
+cutscene root. The report uses `cutscene_visual_description`, keeps the full plan,
+`cutscene_node_id`, `run_id`, gaps and source mappings, and records aggregate input
+tokens, output tokens and USD cost. Its file is the report JSON; `source_file_id`
+identifies the representative source video. Atlas and preview variants link to the
+actual segment source file and processing run. Atlas manifests include the logical
+run identity; physical content-addressed files can still be shared. Status/readers
+and deletion must use the same scene identity while retaining legacy asset jobs.
+
+Analysis deletion requires an explicit asset version. It serializes with enqueueing
+and refuses active runs with HTTP 409. Root-owned reports are removed through the
+root owner; legacy asset-owned reports retain their existing owner. Only references,
+inferred edges, lore and atlas/preview variant associations belonging to the selected
+analysis are removed. Content-addressed files, locations and physical R2 objects are
+retained to avoid deleting shared data during concurrent publication. No automatic
+garbage collector for these retained objects is currently configured. Update all
+analysis producers before relying on the shared admission locks.
+
 ## Source failures and variant alignment
 
 Preparation normalizes authored Windows separators and records rejected movie

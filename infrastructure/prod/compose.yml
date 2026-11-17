@@ -357,7 +357,7 @@ services:
         required: ${USE_MINIO:-true}
 
   cutscene-vision:
-    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/solaris-atlas-worker:${IMAGE_TAG:-latest}
+    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/solaris-atlas-vision:${IMAGE_TAG:-latest}
     restart: unless-stopped
     profiles: [workers]
     env_file:
@@ -371,8 +371,13 @@ services:
     volumes:
       - worker_data:/var/lib/wuwa-worker
       - solaris_logs:/var/log/solaris
+      - ./models/visual-memory:/models:ro
     environment:
       WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
+      VISUAL_MEMORY_EMBEDDER: ${VISUAL_MEMORY_EMBEDDER:-ccip}
+      VISUAL_MEMORY_CCIP_PATH: ${VISUAL_MEMORY_CCIP_PATH:-/models/ccip-24-4ea118d1}
+      VISUAL_MEMORY_DETECTOR_PATH: /models/anime-character-detector/character.onnx
+      VISUAL_MEMORY_DINO_PATH: /models/dinov2-small
       WUWA_LOG_JSON_DIR: /var/log/solaris
       WUWA_LOG_SERVICE: cutscene-vision
     depends_on:

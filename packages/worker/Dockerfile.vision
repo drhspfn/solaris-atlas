@@ -1,0 +1,13 @@
+# A dedicated image keeps CPU visual inference out of the ordinary import workers.
+# Both inputs are built from the same immutable revision by images.yml.
+ARG API_IMAGE
+ARG WORKER_IMAGE
+FROM ${API_IMAGE} AS visual
+FROM ${WORKER_IMAGE}
+USER root
+COPY --from=visual /opt/venv /opt/visual-venv
+# Use the API's exact inference package versions: they are part of the stored
+# model fingerprint, including Pillow, numpy and onnxruntime versions.
+ENV PYTHONPATH=/opt/visual-venv/lib/python3.12/site-packages
+USER appuser
+RUN --network=none python -c "import cv2, numpy, onnxruntime, PIL; from wuwa_story.visual_memory.service import VisualMemoryService; from wuwa_story_worker.video_analysis_agent import run_video_analysis_agent; print('CPU visual inference dependencies available')"

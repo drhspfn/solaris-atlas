@@ -197,6 +197,7 @@ async def test_cutscene_data_reports_previews_without_ai_analysis(monkeypatch):
         "wuwa_story.admin.cutscenes.visual_reference",
         AsyncMock(return_value=None),
     )
+    monkeypatch.setattr("wuwa_story.admin.cutscenes._logical_plan", AsyncMock(side_effect=ValueError("no flow")))
 
     monkeypatch.setattr(
         "wuwa_story.admin.cutscenes.get_agent_settings",
@@ -209,7 +210,10 @@ async def test_cutscene_data_reports_previews_without_ai_analysis(monkeypatch):
 
     body = json.loads(response.body)
     assert body["analysis"] == {
+        "cutscene_node_id": 15536,
+        "scene_report_id": None,
         "asset_node_ids": [4801],
+        "cleanup_owner_ids": [4801],
         "asset_version": "3.7.1",
         "vision_enabled": True,
         "has_analysis": False,
@@ -220,3 +224,40 @@ async def test_cutscene_data_reports_previews_without_ai_analysis(monkeypatch):
         "previews_count": 2,
         "atlases_count": 0,
     }
+
+
+@pytest.mark.asyncio
+async def test_scene_status_exposes_root_and_asset_cleanup_owners(monkeypatch):
+    from wuwa_story.admin import cutscenes
+
+    plan = {"version": 1, "cutscene_node_id": 15536, "segments": [{"file_id": 9}]}
+    report = SimpleNamespace(id=90, metadata_json={"title": "Current", "events": [{"time": 1}],
+                                                  "atlas_references": [1, 2]})
+    stale = SimpleNamespace(status="completed", metadata_json={"analysis_plan": {"old": True}})
+    current = SimpleNamespace(status="running", metadata_json={"analysis_plan": plan})
+    db = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(node_id=15536, cg_name="Start")),
+                         scalars=AsyncMock(side_effect=[[], [], [current, stale]]))
+    request = Request({"type": "http", "method": "GET", "path": "/data/15536",
+                       "path_params": {"node_id": 15536}, "query_string": b"", "headers": [],
+                       "state": {"session": db}})
+    monkeypatch.setattr(cutscenes, "release", AsyncMock(return_value=SimpleNamespace(id=7, game_version="3.8.0")))
+    monkeypatch.setattr(cutscenes, "detail", AsyncMock(return_value={"event": {"playback": {
+        "asset_version": "3.8.0", "media": {"one": {"asset_node_id": 4801}}}}}))
+    monkeypatch.setattr(cutscenes, "previews", AsyncMock(return_value={}))
+    monkeypatch.setattr(cutscenes, "visual_reference", AsyncMock(return_value=None))
+    monkeypatch.setattr(cutscenes, "_logical_plan", AsyncMock(return_value=(plan, None, {})))
+    reader = AsyncMock(return_value=report)
+    monkeypatch.setattr(cutscenes, "current_scene_report", reader)
+    monkeypatch.setattr(cutscenes, "get_agent_settings", lambda: SimpleNamespace(vision_enabled=True))
+    response = await cutscenes.CutsceneData("Cutscene data").render(request, None)
+    import json
+    body = json.loads(response.body)
+    reader.assert_awaited_once_with(db, 15536, "3.8.0", plan)
+    assert body["analysis"]["scene_report_id"] == 90
+    assert body["analysis"]["reports_count"] == 1
+    assert body["analysis"]["runs_count"] == 1
+    assert body["analysis"]["atlases_count"] == 2
+    assert body["analysis"]["has_analysis"] is True
+    assert body["analysis"]["has_artifacts"] is True
+    assert body["analysis"]["cleanup_owner_ids"] == [15536]
+    assert body["system_reports"][0]["title"] == "Current"

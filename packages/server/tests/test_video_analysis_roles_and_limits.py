@@ -25,6 +25,8 @@ def test_video_analysis_role_and_tools_are_separated():
     video_prompt = analysis_prompt("video_analysis")
     assert quest_prompt != video_prompt
     assert "Video Analysis" in video_prompt
+    assert "identification is unavailable" in video_prompt
+    assert "`unknown` and `unresolved` are not identifications" in video_prompt
 
     tool_names = {tool["name"] for tool in video_analysis_definitions()}
     assert tool_names == set(VIDEO_ANALYSIS_TOOLS)
@@ -145,14 +147,12 @@ def test_video_analysis_result_validates_event_driven_fields():
 
 
 @pytest.mark.asyncio
-async def test_wipe_cutscene_analysis_deletes_db_and_orphan_s3_objects():
+@pytest.mark.parametrize("owner_id", [55, 15536])
+async def test_wipe_retains_shared_content_without_network_io(owner_id):
     scalar_values = iter([
         1,       # advisory lock
         9,       # Processor.id
-        None,    # still_referenced for file 100
-        None,    # still_variant for file 100
-        123,     # still_referenced for file 200 (kept!)
-        None,    # still_variant for file 200
+        1,       # run lock
     ])
     scalars_values = iter([
         [77],    # run_ids
@@ -162,7 +162,6 @@ async def test_wipe_cutscene_analysis_deletes_db_and_orphan_s3_objects():
             SimpleNamespace(id=11, file_id=200),
         ],
         [100],   # variant file_ids
-        [SimpleNamespace(backend="s3", object_key="objects/aa/bb/atlas.jpg")],
     ])
 
     session = SimpleNamespace(
@@ -173,16 +172,50 @@ async def test_wipe_cutscene_analysis_deletes_db_and_orphan_s3_objects():
     )
     storage = SimpleNamespace(delete=AsyncMock())
 
-    summary = await wipe_cutscene_analysis(session, storage, asset_id=55, game_version="2.1")
+    summary = await wipe_cutscene_analysis(session, storage, asset_id=owner_id, game_version="2.1")
 
     assert summary == {
-        "asset_node_id": 55,
+        "asset_node_id": owner_id,
         "game_version": "2.1",
         "deleted_runs": 1,
         "deleted_references": 2,
-        "deleted_files": 1,
-        "deleted_s3_objects": 1,
+        "deleted_files": 0,
+        "deleted_s3_objects": 0,
+        "retained_files": 2,
         "deleted_edges": 2,
         "deleted_lore_chunks": 2,
     }
-    storage.delete.assert_awaited_once_with("objects/aa/bb/atlas.jpg")
+    storage.delete.assert_not_awaited()
+    statements = [str(call.args[0]) for call in session.execute.await_args_list]
+    variants = [statement for statement in statements if statement.startswith("DELETE FROM storage.file_variant")]
+    assert len(variants) == 1
+    assert "processor_run_id" in variants[0]
+    assert "child_file_id" not in variants[0]
+    assert not any(statement.startswith("DELETE FROM storage.file_object") for statement in statements)
+    assert not any(statement.startswith("DELETE FROM storage.file_location") for statement in statements)
+
+
+@pytest.mark.asyncio
+async def test_wipe_rejects_active_run_before_any_delete():
+    import hashlib
+
+    session = SimpleNamespace(scalar=AsyncMock(side_effect=[True, 9, False]),
+                              scalars=AsyncMock(return_value=[77]), execute=AsyncMock())
+    storage = SimpleNamespace(delete=AsyncMock())
+    with pytest.raises(ValueError, match="currently running"):
+        await wipe_cutscene_analysis(session, storage, asset_id=55, game_version="2.1")
+    assert session.execute.await_count == 1  # source admission lock only
+    key = int.from_bytes(hashlib.sha256(b"cutscene-vision-source:2.1:55").digest()[:7], "big")
+    assert session.execute.await_args.args[1] == {"key": key}
+    storage.delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_wipe_requires_version_before_locks_or_deletion():
+    session = SimpleNamespace(scalar=AsyncMock(), scalars=AsyncMock(), execute=AsyncMock())
+    storage = SimpleNamespace(delete=AsyncMock())
+    with pytest.raises(ValueError, match="specific asset version"):
+        await wipe_cutscene_analysis(session, storage, asset_id=55)
+    session.scalar.assert_not_awaited()
+    session.execute.assert_not_awaited()
+    storage.delete.assert_not_awaited()

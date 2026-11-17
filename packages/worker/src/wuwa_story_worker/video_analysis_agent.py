@@ -85,10 +85,20 @@ class VideoWorkspace:
     next_atlas_index: int = 1
     next_frame_index: int = 1
 
+    def source_at(self, timestamp: float) -> tuple[Path, float, float, dict]:
+        return self.movie, timestamp, self.duration, {}
+
+    def overview_times(self) -> list[float]:
+        return sample_times(self.duration, float(self.limits["overview_interval"]),
+                            int(self.limits["max_overview_frames"]))
+
     async def extract_frame(self, timestamp: float, global_index: int) -> bytes:
         out = self.root / f"frame_{global_index:04d}.jpg"
         out.unlink(missing_ok=True)
-        safe_ts = min(max(0.0, float(timestamp)), max(0.0, self.duration - 0.1)) if self.duration > 0 else max(0.0, float(timestamp))
+        movie, local_time, duration, source = self.source_at(timestamp)
+        safe_ts = (source["decode_source_time"] if source else
+                   min(max(0.0, float(local_time)), max(0.0, duration - 0.1))
+                   if duration > 0 else max(0.0, float(local_time)))
         await run_tool(
             [
                 str(self.ffmpeg),
@@ -98,7 +108,7 @@ class VideoWorkspace:
                 "-ss",
                 str(safe_ts),
                 "-i",
-                str(self.movie),
+                str(movie),
                 "-frames:v",
                 "1",
                 "-vf",
@@ -215,74 +225,10 @@ async def _identify_atlas_characters(
     atlas_indices: list[int] | None = None,
     global_frame_indices: list[int] | None = None,
 ) -> dict[str, Any]:
-    """Run visual memory character matching on selected local workspace frames."""
-    selected_frames: list[int] = []
-    if global_frame_indices:
-        selected_frames.extend(
-            idx for idx in global_frame_indices if idx in workspace.frame_paths
-        )
-    if atlas_indices:
-        wanted = set(atlas_indices)
-        for entry in workspace.atlases:
-            if entry.atlas_index in wanted:
-                selected_frames.extend(
-                    range(entry.frame_number_start, entry.frame_number_end + 1)
-                )
-    if not selected_frames:
-        selected_frames = sorted(workspace.frame_paths)[:8]
-    selected_frames = list(dict.fromkeys(selected_frames))[:16]
-    if db is None:
-        return {
-            "available": False,
-            "reason": "database_unavailable_in_local_simulation",
-            "inspected_frames": selected_frames,
-            "matches": [],
-        }
-    try:
-        from wuwa_story.visual_memory.inference import VisualDetector
-        from wuwa_story.visual_memory.service import VisualMemoryService
-    except Exception as exc:
-        return {
-            "available": False,
-            "reason": f"visual_memory_unavailable: {exc}",
-            "inspected_frames": selected_frames,
-            "matches": [],
-        }
-    detector = VisualDetector()
-    if not detector.available():
-        return {
-            "available": False,
-            "reason": "visual_memory_onnx_models_not_configured",
-            "inspected_frames": selected_frames,
-            "matches": [],
-        }
-    service = VisualMemoryService(db)
-    matches: list[dict[str, Any]] = []
-    for frame_idx in selected_frames:
-        path = workspace.frame_paths.get(frame_idx)
-        if not path or not path.is_file():
-            continue
-        image_bytes = path.read_bytes()
-        detections = await asyncio.to_thread(detector.detect_and_embed, image_bytes)
-        frame_matches = []
-        for det in detections:
-            candidates = await service.search_embedding(det["embedding"], limit=3)
-            frame_matches.append(
-                {
-                    "bbox": det.get("bbox"),
-                    "score": det.get("score"),
-                    "candidates": candidates,
-                }
-            )
-        if frame_matches:
-            matches.append(
-                {
-                    "global_frame": frame_idx,
-                    "time": workspace.frame_times.get(frame_idx),
-                    "detections": frame_matches,
-                }
-            )
-    return {"available": True, "inspected_frames": selected_frames, "matches": matches}
+    """Use the shared identification path and preserve its confidence and evidence."""
+    from wuwa_story_worker.video_identity import identify_atlas_characters
+
+    return await identify_atlas_characters(db, workspace, atlas_indices, global_frame_indices)
 
 
 async def _execute_video_tool(
@@ -304,10 +250,13 @@ async def _execute_video_tool(
         )
         if not check["ok"]:
             return check, []
-        created = await workspace.build_atlases(
-            list(check["times"]),  # type: ignore[arg-type]
-            reason=str(args.get("reason") or "zoom_window"),
-        )
+        try:
+            created = await workspace.build_atlases(
+                list(check["times"]),  # type: ignore[arg-type]
+                reason=str(args.get("reason") or "zoom_window"),
+            )
+        except ValueError as error:
+            return {"ok": False, "error": str(error)}, []
         return (
             {
                 "ok": True,
@@ -589,11 +538,7 @@ async def run_video_analysis_agent(
     context: dict[str, Any] | None,
 ) -> VideoAnalysisResult:
     """Execute the multi-turn video analysis agent and persist outputs."""
-    overview_times = sample_times(
-        workspace.duration,
-        float(workspace.limits["overview_interval"]),
-        int(workspace.limits["max_overview_frames"]),
-    )
+    overview_times = workspace.overview_times()
     overview_atlases = await workspace.build_atlases(overview_times, reason="overview")
 
     tools = video_analysis_definitions()
@@ -604,6 +549,14 @@ async def run_video_analysis_agent(
         "atlases": workspace.manifest(overview_atlases),
         "source_text_context": context or {},
     }
+    if run.metadata_json.get("analysis_plan"):
+        intro["analysis_plan"] = run.metadata_json["analysis_plan"]
+        intro["timeline_rules"] = (
+            "Analyze ALL selected segments as ONE ordered scene, with ONE shared screenshot pool. "
+            "All frame labels, tool windows and result times use scene seconds. "
+            "Source times and offsets are in the manifest. Gaps contain no video evidence. "
+            "The selection already resolves mutually exclusive alternatives; do not concatenate them."
+        )
     history: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
     ]
@@ -619,52 +572,63 @@ async def run_video_analysis_agent(
             )
         )
 
-        max_step = await db.scalar(
-            select(func.max(AgentCall.step)).where(AgentCall.run_id == run.id)
-        )
-        step_offset = (max_step + 1) if max_step is not None else 0
         final_result: VideoAnalysisResult | None = None
+        accounted = set((run.raw_output or {}).get(
+            "accounted_steps", range(int((run.raw_output or {}).get("step", 0)))))
         for turn_index in range(MAX_AGENT_TURNS):
-            step = step_offset + turn_index
+            step = turn_index
             route, payload = provider.request(history, tools)
             input_bound = _estimate_input_tokens(payload, workspace.atlases)
-            call = await reserve(
-                db,
-                settings,
-                run_id=run.id,
-                step=step,
-                input_bound=input_bound,
-                output_bound=settings.max_output_tokens,
-                kind="cutscene_visual",
+            call = await db.scalar(
+                select(AgentCall).where(AgentCall.run_id == run.id, AgentCall.step == step)
             )
-            await db.commit()
-
-            try:
-                raw = await provider.post(route, payload)
-            except ProviderRejected as error:
-                await settle(db, call.id, settings, 0, 0, {"_rejected": error.diagnostic()})
+            if call is not None:
+                if call.status != "completed" or not call.response:
+                    raise ValueError("Uncertain prior call; automatic retry prohibited")
+                raw = call.response
+                if raw.get("_rejected"):
+                    raise ProviderFailure("recorded_provider_rejection_requires_new_run")
+                source_tokens, output_tokens = token_usage(raw, settings.provider)
+            else:
+                call = await reserve(
+                    db, settings, run_id=run.id, step=step, input_bound=input_bound,
+                    output_bound=settings.max_output_tokens, kind="cutscene_visual")
                 await db.commit()
-                raise
-            except ProviderFailure:
+                try:
+                    raw = await provider.post(route, payload)
+                except ProviderRejected as error:
+                    await settle(db, call.id, settings, 0, 0, {"_rejected": error.diagnostic()})
+                    await db.commit()
+                    raise
+                except ProviderFailure:
+                    await db.commit()
+                    raise
+                source_tokens, output_tokens = token_usage(raw, settings.provider)
+                within = await settle(db, call.id, settings, source_tokens, output_tokens, raw)
+                # Commit recorded usage even when the response exceeds the reservation.
                 await db.commit()
-                raise
-            source_tokens, output_tokens = token_usage(raw, settings.provider)
-            await settle(db, call.id, settings, source_tokens, output_tokens, raw)
+                if within is False:
+                    raise ValueError("Visual usage exceeded reservation")
             if hasattr(db, "flush"):
                 await db.flush()
             if hasattr(db, "refresh"):
                 await db.refresh(call)
-            run.tokens_input = (run.tokens_input or 0) + source_tokens
-            run.tokens_output = (run.tokens_output or 0) + output_tokens
-            run.cost = float(getattr(run, "cost", 0) or 0) + float(getattr(call, "cost_usd", 0) or 0)
+            if step not in accounted:
+                run.tokens_input = (run.tokens_input or 0) + source_tokens
+                run.tokens_output = (run.tokens_output or 0) + output_tokens
+                run.cost = float(getattr(run, "cost", 0) or 0) + float(getattr(call, "cost_usd", 0) or 0)
+                accounted.add(step)
             run.raw_output = {
                 **(run.raw_output or {}),
                 "mode": "video_agent",
                 "step": step + 1,
                 "atlases": len(workspace.atlases),
+                "accounted_steps": sorted(accounted),
             }
             await db.commit()
 
+            if provider.output_limited(raw):
+                raise ProviderFailure("video_agent_output_limit")
             turn = provider.parse(raw)
             history.extend(turn.items)
             if not turn.calls:
@@ -674,7 +638,7 @@ async def run_video_analysis_agent(
                 raise ProviderFailure("video_agent_stopped_without_result")
 
             new_images: list[tuple[AtlasEntry, dict[str, Any]]] = []
-            for tc in turn.calls:
+            for tool_index, tc in enumerate(turn.calls):
                 if tc.name == "finish_video_analysis":
                     try:
                         final_result = VideoAnalysisResult.model_validate(tc.arguments)
@@ -688,7 +652,22 @@ async def run_video_analysis_agent(
                         continue
                     history.append(provider.tool_result(tc, {"status": "accepted"}))
                     break
-                tool_out, created = await _execute_video_tool(db, workspace, tc)
+                tool_key = f"{step}:{tool_index}"
+                cached = (run.raw_output or {}).get("tool_results", {}).get(tool_key)
+                if cached is not None:
+                    tool_out = cached["output"]
+                    created = []
+                    for atlas in cached["atlases"]:
+                        created.extend(await workspace.build_atlases(atlas["times"], reason=atlas["reason"]))
+                else:
+                    tool_out, created = await _execute_video_tool(db, workspace, tc)
+                    tool_results = dict((run.raw_output or {}).get("tool_results", {}))
+                    tool_results[tool_key] = {
+                        "output": tool_out,
+                        "atlases": [{"times": e.sample_times, "reason": e.reason} for e in created],
+                    }
+                    run.raw_output = {**(run.raw_output or {}), "tool_results": tool_results}
+                    await db.commit()
                 history.append(provider.tool_result(tc, tool_out))
                 for entry in created:
                     new_images.append((entry, tool_out))
@@ -707,24 +686,31 @@ async def run_video_analysis_agent(
     if final_result is None:
         raise ProviderFailure("video_agent_exceeded_max_turns")
 
+    provenance = (workspace.report_provenance(final_result)
+                  if hasattr(workspace, "report_provenance") else {})
     service = FileRegistrationService(storage)
     atlas_refs = []
     for entry in workspace.atlases:
+        source = entry.layout.get("source_segment", run.metadata_json)
         manifest = {
             "protocol": VISION_VERSION,
-            "source_file_id": run.metadata_json["file_id"],
-            "source_sha256": run.metadata_json["source_sha256"],
+            "source_file_id": source["file_id"],
+            "source_sha256": source["source_sha256"],
             **entry.layout,
         }
+        if provenance:
+            manifest.update(run_id=run.id, cutscene_node_id=run.target_node_id,
+                            asset_version=source["asset_version"])
         identity = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
-        source_path = f"video:{run.metadata_json['file_id']}:atlas:{identity}"
+        source_path = f"video:{source['file_id']}:atlas:{identity}"
         file = await service.register_file(db, entry.path, "image", mime_type="image/jpeg")
-        await service.register_variant(db, run.metadata_json["file_id"], file.id, "video_frame_atlas", run.id)
+        await service.register_variant(db, source["file_id"], file.id, "video_frame_atlas", run.id)
         reference = await db.scalar(
             select(FileReference).where(
                 FileReference.reference_type == "video_frame_atlas",
                 FileReference.source_path == source_path,
                 FileReference.file_id == file.id,
+                FileReference.owner_node_id == run.target_node_id,
             )
         )
         if reference is None:
@@ -743,8 +729,13 @@ async def run_video_analysis_agent(
     max_preview_time = max(0.0, workspace.duration - 0.1)
     for candidate in sorted(final_result.preview_candidates, key=lambda c: c.score, reverse=True)[:5]:
         preview_path.unlink(missing_ok=True)
-        seek_time = min(max(0.0, float(candidate.time)), max_preview_time)
+        logical_scene = "analysis_plan" in run.metadata_json
+        seek_time = (float(candidate.time) if logical_scene
+                     else min(max(0.0, float(candidate.time)), max_preview_time))
         try:
+            movie, seek_time, _, preview_source = workspace.source_at(seek_time)
+            if logical_scene:
+                seek_time = preview_source["decode_source_time"]
             await run_tool(
                 [
                     str(workspace.ffmpeg),
@@ -754,7 +745,7 @@ async def run_video_analysis_agent(
                     "-ss",
                     str(seek_time),
                     "-i",
-                    str(workspace.movie),
+                    str(movie),
                     "-frames:v",
                     "1",
                     "-vf",
@@ -773,8 +764,9 @@ async def run_video_analysis_agent(
             logger.warning("video_agent.preview_extract_failed time=%s error_type=%s", seek_time, type(exc).__name__)
             continue
         file = await service.register_file(db, preview_path, "image", mime_type="image/jpeg")
-        await service.register_variant(db, run.metadata_json["file_id"], file.id, "cutscene_preview", run.id)
-        source_path = f"video:{run.metadata_json['file_id']}:preview:run:{run.id}:time:{candidate.time}"
+        preview_file_id = preview_source.get("file_id", run.metadata_json["file_id"])
+        await service.register_variant(db, preview_file_id, file.id, "cutscene_preview", run.id)
+        source_path = f"video:{preview_file_id}:preview:run:{run.id}:time:{candidate.time}"
         ref = await db.scalar(
             select(FileReference).where(
                 FileReference.reference_type == "cutscene_preview",
@@ -792,12 +784,13 @@ async def run_video_analysis_agent(
                 source_path=source_path,
             )
             ref.metadata_json = {
-                "source_file_id": run.metadata_json["file_id"],
-                "source_sha256": run.metadata_json["source_sha256"],
-                "asset_version": run.metadata_json["asset_version"],
+                "source_file_id": preview_file_id,
+                "source_sha256": preview_source.get("source_sha256", run.metadata_json["source_sha256"]),
+                "asset_version": preview_source.get("asset_version", run.metadata_json["asset_version"]),
                 "timestamp": candidate.time,
                 "score": candidate.score,
                 "run_id": run.id,
+                **({"source": preview_source} if preview_source else {}),
             }
         preview_ids.append(file.id)
 
@@ -818,6 +811,11 @@ async def run_video_analysis_agent(
         "atlases": workspace.manifest(),
         "atlas_references": atlas_refs,
         "preview_file_ids": preview_ids,
+        "run_id": run.id,
+        "tokens_input": run.tokens_input,
+        "tokens_output": run.tokens_output,
+        "cost_usd": float(run.cost or 0),
+        **provenance,
     }
     report_path = workspace.root / "visual-report.json"
     report_path.write_text(json.dumps(report, ensure_ascii=False, sort_keys=True), encoding="utf-8")

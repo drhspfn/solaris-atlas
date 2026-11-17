@@ -42,6 +42,7 @@ test("cutscene player follows branches and respects clip boundaries", async () =
     decisions = new Element(),
     restart = new Element(),
     fullscreen = new Element();
+  const badge = new Element(), clear = new Element(), analysisMessage = new Element();
   language.value = "en";
   video.paused = true;
   video.currentTime = 0;
@@ -103,10 +104,12 @@ test("cutscene player follows branches and respects clip boundaries", async () =
     media: { a: { url: "/a" }, b: { url: "/b" } },
   };
   const document = {
-    getElementById: () => root,
+    getElementById: (id) => ({"cutscene-player": root, "sa-cutscene-analysis-badge": badge,
+      "sa-cutscene-clear-analysis": clear, "sa-cutscene-analysis-msg": analysisMessage})[id],
     createElement: () => new Element(),
   };
   const requests = [];
+  let failFirst = false;
   let payload = { game_version: "1.0", event: { playback: flow },
     previews: [{url:"https://cdn.test/preview.jpg"},{url:"https://cdn.test/preview.jpg"},{url:"javascript:alert(1)"}],
     public_descriptions: [{title:"Public scene",text:"A compact public description."}],
@@ -114,6 +117,12 @@ test("cutscene player follows branches and respects clip boundaries", async () =
   };
   const fetch = async (url) => {
     requests.push(url);
+    if (url.endsWith("/auth/csrf")) return {ok: true, json: async () => ({csrf_token: "test"})};
+    if (url.includes("/assets/15536/analysis")) return failFirst
+      ? {ok: false, status: 503, json: async () => ({detail: "Archive database is temporarily unavailable"})}
+      : {ok: true, json: async () => ({deleted_runs: 1})};
+    if (url.includes("/assets/10014/analysis")) return {ok: false, status: 503,
+      json: async () => ({detail: "Archive database is temporarily unavailable"})};
     return {
     ok: true,
     json: async () => payload,
@@ -127,7 +136,8 @@ test("cutscene player follows branches and respects clip boundaries", async () =
       ),
       "utf8",
     ),
-    { document, fetch, URLSearchParams, AbortController, Audio: Element },
+    { document, fetch, URLSearchParams, AbortController, Audio: Element,
+      location: {hostname: "solarisatlas.fun", port: ""}, window: {confirm: () => true} },
   );
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(requests[0], "https://api.solarisatlas.fun/console/cutscene-data/15536?locale=en");
@@ -162,4 +172,23 @@ test("cutscene player follows branches and respects clip boundaries", async () =
   assert.match(previews.children[0].textContent, /No preview images/);
   assert.equal(system.children[0].children[1].children.length, 2);
   assert.equal(stage.hidden, true);
+  payload = {previews: [], public_descriptions: [], system_reports: [], event: {playback: null},
+    analysis: {asset_node_ids: [10014], cleanup_owner_ids: [15536, 10014], asset_version: "3.7.1", has_artifacts: true,
+      reports_count: 1, runs_count: 1, previews_count: 0, atlases_count: 0}};
+  form.dispatch("submit");
+  await new Promise((resolve) => setImmediate(resolve));
+  clear.dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(analysisMessage.textContent, /Deletion incomplete for owner 10014/);
+  assert.match(analysisMessage.textContent, /1 of 2 owners completed/);
+  assert.match(analysisMessage.textContent, /database is temporarily unavailable/);
+  assert.equal(clear.disabled, false);
+  assert.match(requests.at(-1), /cutscene-data\/15536/);
+  failFirst = true;
+  const before = requests.length;
+  clear.dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(analysisMessage.textContent, /Deletion incomplete for owner 15536/);
+  assert.match(analysisMessage.textContent, /0 of 2 owners completed/);
+  assert.equal(requests.slice(before).some((url) => url.includes("/assets/10014/analysis")), false);
 });

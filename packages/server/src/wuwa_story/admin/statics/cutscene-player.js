@@ -98,7 +98,7 @@
     if (clearAnalysisBtn) {
       const canClear = Boolean(
         currentAnalysis?.has_artifacts &&
-          currentAnalysis?.asset_node_ids?.length,
+          currentAnalysis?.cleanup_owner_ids?.length && currentAnalysis?.asset_version,
       );
       clearAnalysisBtn.hidden = !canClear;
       clearAnalysisBtn.disabled = false;
@@ -141,7 +141,8 @@
       card.className = "sa-cutscene-description";
       card.open = systemList.children.length === 0;
       const heading = document.createElement("summary");
-      heading.textContent = `${report.title || "Visual observations"} · asset ${report.asset_node_id} · ${report.events?.length || 0} observations`;
+      const owner = report.cutscene_node_id ? `scene ${report.cutscene_node_id}` : `asset ${report.asset_node_id}`;
+      heading.textContent = `${report.title || "Visual observations"} · ${owner} · ${report.events?.length || 0} observations`;
       const list = document.createElement("ol");
       list.className = "sa-cutscene-observations";
       for (const event of report.events || []) {
@@ -471,24 +472,26 @@
   });
 
   clearAnalysisBtn?.addEventListener("click", async () => {
-    const assetIds = currentAnalysis?.asset_node_ids || [];
+    const assetIds = currentAnalysis?.cleanup_owner_ids || [];
     const version = currentAnalysis?.asset_version || "";
     if (!assetIds.length) return;
     const label = version ? `${assetIds.length} asset(s) (${version})` : `${assetIds.length} asset(s)`;
     if (
       !window.confirm(
-        `Delete visual analysis, previews, atlases, and R2 files for ${label}?`,
+        `Delete visual analysis, preview and atlas records for ${label}? Stored files will be retained.`,
       )
     ) {
       return;
     }
     clearAnalysisBtn.disabled = true;
+    let completed = 0;
+    let failedAsset = null;
     try {
       const csrfToken = await fetchCsrfToken();
       let runs = 0;
       let refs = 0;
-      let objs = 0;
       for (const assetId of assetIds) {
+        failedAsset = assetId;
         const qs = version ? `?game_version=${encodeURIComponent(version)}` : "";
         const res = await fetch(
           `${apiPrefix()}/admin/story-agent/cutscenes/assets/${assetId}/analysis${qs}`,
@@ -504,15 +507,17 @@
         }
         runs += Number(body.deleted_runs || 0);
         refs += Number(body.deleted_references || 0);
-        objs += Number(body.deleted_s3_objects || 0);
+        completed += 1;
       }
       showAnalysisMessage(
-        `Deleted visual analysis: ${runs} runs, ${refs} refs, ${objs} R2 objects.`,
+        `Deleted visual analysis: ${runs} runs, ${refs} refs. Stored files retained.`,
         "success",
       );
       await load({ keepMessage: true });
     } catch (error) {
-      showAnalysisMessage(error.message || "Delete failed", "danger");
+      const message = `Deletion incomplete${failedAsset === null ? "" : ` for owner ${failedAsset}`}: ${error.message || "request failed"}. ${completed} of ${assetIds.length} owners completed. Refresh the status and retry if needed.`;
+      await load({ keepMessage: true });
+      showAnalysisMessage(message, "danger");
       clearAnalysisBtn.disabled = false;
     }
   });
