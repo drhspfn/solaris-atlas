@@ -264,6 +264,10 @@ def test_trigger_effect_sequence_preserves_audio_and_authored_waits_without_clai
     {'Name': 'Wait', 'Params': {'Time': True}},
     {'Name': 'Wait', 'Params': {'Time': 3, 'Extra': 1}},
     {'Name': 'Wait', 'Params': {'Time': float('nan')}},
+    {'Name': 'Wait', 'Params': {'Time': 3}, 'Disabled': True},
+    {'Name': 'Wait', 'Params': {'Time': 3}, 'Async': True},
+    {'Name': 'Wait', 'Params': {'Time': 3}, 'EdLocalDisabled': True},
+    {'Name': 'PlayEffect2', 'Params': {'Type': 'DissolveEffect'}, 'Async': True},
     {'Name': 'Unknown', 'Params': {}},
 ])
 def test_trigger_effect_sequence_does_not_sum_unsupported_actions(configs, intervening):
@@ -275,6 +279,34 @@ def test_trigger_effect_sequence_does_not_sum_unsupported_actions(configs, inter
     binding, = catalog_movie_frame_bindings(configs, 'Movie')
     assert 'authored_wait_seconds' not in binding['events'][0]
     assert not binding['complete']
+
+
+@pytest.mark.parametrize('endpoint,flag', [('post', 'Disabled'), ('post', 'Async'),
+                                           ('effect', 'Disabled'), ('effect', 'Async')])
+def test_trigger_effect_flagged_endpoints_do_not_claim_sequential_waits(configs, endpoint, flag):
+    post = {'Name': 'PostAkEvent', 'Params': {'EventConfig': {'Type': 'Global',
+        'AkEvent': '/Game/Aki/WwiseAudio/Events/fly_voice.fly_voice'}}}
+    effect = {'Name': 'PlayEffect2', 'Params': {'Type': 'DissolveEffect', 'Path': 'Movie'}}
+    (post if endpoint == 'post' else effect)[flag] = True
+    insert(configs / 'db_level_entity.db', 'levelentityconfig',
+           (1, 2, 3, entity_blob({'TriggerComponent': {'Actions': [
+               post, {'Name': 'Wait', 'Params': {'Time': 3}}, effect]}})))
+    binding, = catalog_movie_frame_bindings(configs, 'Movie')
+    assert 'authored_wait_seconds' not in binding['events'][0]
+    assert not binding['complete']
+
+
+def test_trigger_effect_explicit_false_flags_preserve_authored_waits(configs):
+    flags = {'Disabled': False, 'Async': False, 'EdLocalDisabled': False}
+    post = {'Name': 'PostAkEvent', 'Params': {'EventConfig': {'Type': 'Global',
+        'AkEvent': '/Game/Aki/WwiseAudio/Events/fly_voice.fly_voice'}}, **flags}
+    wait = {'Name': 'Wait', 'Params': {'Time': 3}, **flags}
+    effect = {'Name': 'PlayEffect2', 'Params': {'Type': 'DissolveEffect', 'Path': 'Movie'}, **flags}
+    insert(configs / 'db_level_entity.db', 'levelentityconfig',
+           (1, 2, 3, entity_blob({'TriggerComponent': {'Actions': [post, wait, effect]}})))
+    binding, = catalog_movie_frame_bindings(configs, 'Movie')
+    assert binding['events'][0]['authored_wait_seconds'] == 3
+    assert binding['events'][0]['resolved'] is False and not binding['complete']
 
 
 def test_trigger_effect_multiple_posts_are_not_arbitrarily_selected(configs):

@@ -83,9 +83,18 @@ def _effect_sequence_bindings(value, source, root):
                 [{'Second': 0, 'EventActions': [actions[post_index]]}],
                 video_name=name, source={**source, 'raw_path': post_path})
             unresolved.extend(parsed['unresolved'])
-            waits, known = [], True
+            # A disabled/async endpoint or intervening action needs its actual
+            # runtime path; its configured Wait values are not a sequential sum.
+            waits = []
+            known = all(item.get(flag) is None or item.get(flag) is False
+                        for item in (actions[post_index], action)
+                        for flag in ('Disabled', 'Async', 'EdLocalDisabled'))
             for item in actions[post_index + 1:index]:
                 if not isinstance(item, dict) or not isinstance(item.get('Params'), dict):
+                    known = False
+                    break
+                if any(item.get(flag) is not None and item.get(flag) is not False
+                       for flag in ('Disabled', 'Async', 'EdLocalDisabled')):
                     known = False
                     break
                 item_params = item['Params']
