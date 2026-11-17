@@ -964,6 +964,7 @@ export function QuestPageClient({
                   <PlayerText
                     display={playerDisplay}
                     value={branch.choice.text}
+                    terms={transcript?.terms}
                     fallback="Choice text unavailable"
                   />
                 </strong>
@@ -990,6 +991,7 @@ export function QuestPageClient({
                   <PlayerText
                     display={playerDisplay}
                     value={line.text}
+                    terms={transcript?.terms}
                     fallback={line.text?.inline_text || ""}
                   />
                 ) : (
@@ -1046,6 +1048,7 @@ export function QuestPageClient({
                           <PlayerText
                             display={playerDisplay}
                             value={choice.text}
+                            terms={transcript?.terms}
                             fallback="Choice text unavailable"
                           />
                         </span>
@@ -1060,6 +1063,7 @@ export function QuestPageClient({
                         <PlayerText
                           display={playerDisplay}
                           value={choice.text}
+                          terms={transcript?.terms}
                           fallback="Choice text unavailable"
                         />
                       </span>

@@ -153,3 +153,13 @@ test("skill and chain tags (size, SapTag, Cus:Sap, Cus:Ipt, te href) format clea
   assert.match(html, /Snowforged Blade/);
   assert.doesNotMatch(html, /&lt;size=|&lt;te |&lt;SapTag=|Cus:Sap|Cus:Ipt/);
 });
+
+test("quest dialogue uses the same term trigger as skills", () => {
+  const text = 'My work log. See—Day 727 in the <te href=700034>world of the dead</te>.';
+  assert.match(render(text), /class="game-term-plain"/);
+  const html = render(text, { terms: { 700034: {
+    id: 700034, title: 'World of the Dead', description: "Lily's name for the Somnoire.",
+  } } });
+  assert.match(html, /class="game-term-trigger"/);
+  assert.match(html, /world of the dead/);
+});
