@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -10,6 +11,7 @@ from wuwa_story.ingestion.notices import (
     parse_notice,
     safe_notice_url,
     store_notices,
+    version_start_estimate,
 )
 
 
@@ -250,7 +252,7 @@ async def test_notice_import_preserves_partial_schedule_provenance():
     event = SimpleNamespace(id=7, title="Artisan's Search", event_kind="limited",
                             banner_path=None, source_data={"client": {"download_id": "test"}})
     session = AsyncMock()
-    session.scalars.return_value = [event]
+    session.scalars.side_effect = [[event], [], [], [], [event], [], [], []]
     session.scalar.return_value = None
     added = []
     session.add = added.append
@@ -275,6 +277,60 @@ async def test_notice_import_preserves_partial_schedule_provenance():
     report = await store_notices(session, "https://feed.test", "https://board.test", {"game": [raw]})
     assert report["dated_runs"] == 3
     assert added == []
+
+
+@pytest.mark.asyncio
+async def test_version_anchor_uses_latest_previous_banner_and_rejects_ambiguous_boundaries():
+    from sqlalchemy.dialects import postgresql
+
+    content = {"text": "✦Duration✦\nAfter the Version 3.8 update - 2026-12-21 11:59 (Server Time)\n✦Rules✦"}
+    published = datetime(2026, 11, 10, tzinfo=UTC)
+    latest = SimpleNamespace(id=2, ends_at=datetime(2026, 11, 11, 10, 59, 59, 999000, tzinfo=UTC), game_version="3.7")
+    earlier = SimpleNamespace(id=1, ends_at=latest.ends_at.replace(second=0, microsecond=0), game_version="3.7")
+    session = AsyncMock()
+    session.scalars.return_value = [latest, earlier]
+    assert await version_start_estimate(session, content, "europe", published) is latest
+    query = session.scalars.await_args.args[0].compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+    sql = str(query)
+    assert "3.7" in sql and "3.8" not in sql and "europe" in sql
+    assert "14" in str(query) or "2026-10-27" in sql
+    assert "gacha_type" in sql and "IN (2, 3)" in sql
+    earlier.ends_at = latest.ends_at - timedelta(hours=2)
+    assert await version_start_estimate(session, content, "europe", published) is None
+    assert await version_start_estimate(session, content, "europe", None) is None
+    assert await version_start_estimate(session, {"text": content["text"].replace("3.8", "4.0")}, "europe", published) is None
+
+
+@pytest.mark.asyncio
+async def test_version_estimate_is_shared_across_categories_and_preserves_notice_provenance():
+    banner = SimpleNamespace(id=7, title="Lily", event_kind="banner", banner_path=None, source_data={"client": {}})
+    school = SimpleNamespace(id=8, title="School", event_kind="limited", banner_path=None, source_data={"client": {}})
+    anchor = SimpleNamespace(id=99, ends_at=datetime(2026, 11, 11, 10, 59, 59, 999000, tzinfo=UTC), game_version="3.7")
+    session = AsyncMock()
+    session.scalars.side_effect = [[banner, school], [anchor], [anchor], [anchor]]
+    session.scalar.return_value = None
+    added = []
+    session.add = added.append
+
+    async def flush():
+        for row in added:
+            if isinstance(row, GameNotice):
+                row.id = 12
+
+    session.flush.side_effect = flush
+    duration = "<p>✦Duration✦</p><p>Version 3.8 Update - 2026-12-21 03:59 (server time)</p><p>✦Rules✦</p>"
+    raw = [raw_notice(id=str(i), tabTitle=f"[{title}] Event", content=duration,
+                      startTimeMs=int(datetime(2026, 11, 10, tzinfo=UTC).timestamp() * 1000))
+           for i, title in [(10, "Lily"), (11, "School")]]
+    await store_notices(session, "feed", "board", {"game": raw})
+    runs = [row for row in added if not isinstance(row, GameNotice)]
+    assert len(runs) == 6
+    for row in runs:
+        assert row.starts_at == anchor.ends_at
+        assert row.source_data["start_estimate"] == {"basis": "previous_version_banner_end", "occurrence_id": 99, "version": "3.7", "server": row.server}
+        assert row.source_data["schedule_source"] == "feed"
+        assert row.source_data["schedule_revision"]
+    assert session.scalars.await_count == 4
 
 
 @pytest.mark.asyncio

@@ -260,6 +260,7 @@ class EventService:
             "convene_type": client.get("convene_type"),
             "game_version": occurrence.game_version if occurrence else None,
             "starts_at": occurrence.starts_at if occurrence else None,
+            "start_estimate": (occurrence.source_data or {}).get("start_estimate") if occurrence else None,
             "ends_at": occurrence.ends_at if occurrence else None,
             "season": occurrence.season if occurrence else None,
             "rewards": [
@@ -274,9 +275,11 @@ class EventService:
             "preview_url": self.notice_image_url(preview),
             "preview_provenance": provenance,
             "catalog_version": client.get("asset_version"),
-            "schedule_status": "recorded"
-            if occurrence and occurrence.starts_at
-            else "server_controlled",
+            "schedule_status": (
+                "estimated" if occurrence and (occurrence.source_data or {}).get("start_estimate")
+                else "recorded" if occurrence and occurrence.starts_at
+                else "server_controlled"
+            ),
             "hidden_in_client": client.get("hidden", False),
             "game_path": event.game_path,
             "source_url": event.source_url,

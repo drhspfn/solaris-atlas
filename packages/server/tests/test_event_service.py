@@ -95,6 +95,7 @@ async def test_undated_calendar_and_detail_keep_public_contract(event, repositor
                 "convene_type": None,
                 "game_version": None,
                 "starts_at": None,
+                "start_estimate": None,
                 "ends_at": None,
                 "season": None,
                 "rewards": [],
@@ -129,6 +130,38 @@ async def test_undated_calendar_and_detail_keep_public_contract(event, repositor
         event_id=7,
         occurrence_id=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_start_estimate_survives_source_and_projected_calendar_and_detail(event, repository, service, monkeypatch):
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from fastapi.encoders import jsonable_encoder
+    from sqlalchemy import select
+    from sqlalchemy.dialects import postgresql
+
+    from wuwa_story.db.models.game_events import GameEventOccurrence
+    from wuwa_story.db.repositories.event_browsing import _summary_source
+    from wuwa_story.read_models.readers import events as projected
+    from wuwa_story.read_models.source_sections import _calendar_payload
+
+    estimate = {"basis": "previous_version_banner_end", "occurrence_id": 99, "version": "3.7", "server": "europe"}
+    run = EventOccurrence(id=42, game_version="3.8", starts_at=datetime(2026, 11, 11, tzinfo=UTC),
+                          ends_at=None, season=None, banner_path=None, source_data={"start_estimate": estimate})
+    repository.runs.return_value = [EventRun(event, run)]
+    source = (await service.browse("europe", summary=True))["events"][0]
+    assert source["start_estimate"] == estimate and source["schedule_status"] == "estimated"
+    detail = await service.detail(7, "europe", occurrence_id=42)
+    assert detail["start_estimate"] == estimate
+    payload = _calendar_payload(jsonable_encoder({"event": source, "occurrences": [{**source, "server": "europe"}]}))
+    monkeypatch.setattr(projected.entities, "_scope_entries", AsyncMock(return_value=[SimpleNamespace(entity_id=7, payload=payload)]))
+    monkeypatch.setattr(projected.entities, "page_payload", AsyncMock(return_value=payload))
+    assert (await projected.events_page(None, "europe", summary=True))["events"][0]["start_estimate"] == estimate
+    assert (await projected.event_detail(None, 7, "europe", 42))["start_estimate"] == estimate
+    summary_query = select(_summary_source(GameEventOccurrence.source_data, "en")).compile(
+        dialect=postgresql.dialect())
+    assert "start_estimate" in summary_query.params.values()
 
 
 @pytest.mark.asyncio

@@ -73,8 +73,12 @@ activity types are grouped as recurring. Runtime phase/availability remains
 server-controlled.
 
 Official Notice durations can state an end timestamp while describing the start
-as a version update. Such runs retain a null start and the stated server-specific
-end, with the feed and Notice revision recorded as schedule provenance. For
+as a version update. When the immediately preceding numbered version has a
+compatible banner end near publication, that end supplies a shared estimated
+start for the update and server. The API exposes its provenance as
+`start_estimate` and sets `schedule_status` to `estimated`; the timestamp is not
+an observed update completion. If the evidence is missing or ambiguous, the
+start remains null. The stated end, feed, and Notice revision remain recorded. For
 example, the [Second Coming of Solaris notice](https://wutheringwaves.kurogames.com/en/main/news/detail/5741)
 uses “After the Version 3.8 update”; the [maintenance notice](https://wutheringwaves.kurogames.com/m/en/main/news/detail/5705)
 gives a scheduled window, not a verified actual completion time.

@@ -129,6 +129,35 @@ def notice_period(content, server):
     return (start, end) if start is None or end > start else None
 
 
+async def version_start_estimate(session, content, server, published_at):
+    """Use only nearby ends from the immediately preceding numbered version."""
+    section = re.search(r"Duration[✦\s]*(.*?)(?:✦|$)", content["text"], re.S)
+    version = re.search(r"(?:After\s+the\s+)?Version\s+(\d+)\.(\d+)\s+update\s*[-–]", section[1], re.I) if section else None
+    if not version or not published_at or int(version[2]) == 0:
+        return None
+    previous = f"{version[1]}.{int(version[2]) - 1}"
+    candidates = list(await session.scalars(
+        select(GameEventOccurrence).join(GameEvent, GameEvent.id == GameEventOccurrence.event_id)
+        .where(
+            GameEvent.source == CLIENT_SOURCE,
+            GameEvent.event_kind == "banner",
+            GameEvent.source_data["client"]["gacha_type"].as_integer().in_([2, 3]),
+            GameEventOccurrence.game_version == previous,
+            GameEventOccurrence.server == server,
+            GameEventOccurrence.ends_at >= published_at - timedelta(days=14),
+            GameEventOccurrence.ends_at <= published_at + timedelta(days=14),
+        ).order_by(GameEventOccurrence.ends_at.desc(), GameEventOccurrence.id)
+    ))
+    if not candidates:
+        return None
+    latest = candidates[0]
+    # Different nearby boundaries are ambiguous; second/millisecond truncation is normal.
+    if any(timedelta(minutes=5) < latest.ends_at - row.ends_at < timedelta(days=1)
+           for row in candidates[1:]):
+        return None
+    return latest
+
+
 async def fetch_notice_feed(launcher_define):
     """Discover the deployed Notice web application's API origin from client constants."""
 
@@ -191,6 +220,7 @@ async def store_notices(session, feed, page, document):
     await session.execute(text("SELECT pg_advisory_xact_lock(705, 2)"))
     events = list(await session.scalars(select(GameEvent).where(GameEvent.source == CLIENT_SOURCE)))
     report = {"notices": 0, "linked": 0, "dated_runs": 0}
+    anchors = {}
     for category in ("recommend", "game", "activity"):
         for raw in document.get(category, []):
             if raw.get("whiteList"):
@@ -285,6 +315,24 @@ async def store_notices(session, feed, page, document):
                             )
                             session.add(row)
                         row.ends_at = end
+                        if start is None:
+                            version = re.search(r"Version\s+(\d+\.\d+)\s+update", content["text"], re.I)
+                            key = (version[1], server) if version else None
+                            if key and key not in anchors:
+                                anchors[key] = await version_start_estimate(session, content, server, notice.published_at)
+                            anchor = anchors.get(key)
+                            old_estimate = (row.source_data or {}).get("start_estimate")
+                            if row.starts_at is None or old_estimate:
+                                row.starts_at = anchor.ends_at if anchor and anchor.ends_at < end else None
+                                row.source_data = {**(row.source_data or {})}
+                                row.source_data.pop("start_estimate", None)
+                                if row.starts_at:
+                                    row.source_data["start_estimate"] = {
+                                        "basis": "previous_version_banner_end",
+                                        "occurrence_id": anchor.id,
+                                        "version": anchor.game_version,
+                                        "server": server,
+                                    }
                     snapshot = (row.source_data or {}).get("client") or event.source_data.get(
                         "client", {}
                     )
