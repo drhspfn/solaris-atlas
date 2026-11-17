@@ -44,11 +44,11 @@ def test_mcp_streamable_http_endpoint_lists_tools() -> None:
             },
         )
         assert initialized.status_code == 200
-        session_id = initialized.headers["mcp-session-id"]
+        assert "mcp-session-id" not in initialized.headers
 
         listed = client.post(
             "/mcp",
-            headers={**headers, "Mcp-Session-Id": session_id, "Mcp-Protocol-Version": "2025-03-26"},
+            headers={**headers, "Mcp-Protocol-Version": "2025-03-26"},
             json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
         )
 
@@ -66,6 +66,8 @@ def test_mcp_streamable_http_endpoint_lists_tools() -> None:
         "get_character_profile", "get_character_archive", "get_character_skills",
         "get_character_model", "get_character_connections",
         "get_item_profile", "get_item_sellers", "search_cutscenes", "get_cutscene",
+        "visual_search", "visual_identify", "visual_list_identities", "visual_get_reference",
+        "visual_inspect_cutscene", "visual_get_video_scan",
     }
 
 
