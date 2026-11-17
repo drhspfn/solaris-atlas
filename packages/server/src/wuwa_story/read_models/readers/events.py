@@ -49,6 +49,11 @@ async def event_detail(session, event_id, server, occurrence_id, locale="en", ve
     event = payload.get("event")
     if not isinstance(runs, list) or not isinstance(event, dict):
         raise entities._unready()
+    if version:
+        unknown = payload.get("unversioned_occurrences", [])
+        if not isinstance(unknown, list):
+            raise entities._unready()
+        runs = [*runs, *unknown]
     if event.get("canonical_event_id") is not None and occurrence_id is not None and not any(
         run.get("server") == server and run.get("occurrence_id") == occurrence_id for run in runs
     ):
@@ -134,6 +139,11 @@ async def events_page(session, server, kind=None, version=None, locale="en", sum
         event, runs = payload.get("event"), payload.get("occurrences")
         if not isinstance(event, dict) or not isinstance(runs, list):
             raise entities._unready()
+        if version:
+            unknown = payload.get("unversioned_occurrences", [])
+            if not isinstance(unknown, list):
+                raise entities._unready()
+            runs = [*runs, *unknown]
         if kind and event.get("kind") != kind:
             continue
         server_runs = [run for run in runs if run.get("server") == server]

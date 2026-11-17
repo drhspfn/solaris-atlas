@@ -29,7 +29,7 @@ def fixture(kind=13, size=4):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind,size", [(7, 5), (9, 8), (13, 4), (8, 5), (10, 8), (14, 4)])
+@pytest.mark.parametrize("kind,size", [(5, 10), (6, 5), (7, 5), (9, 8), (13, 4), (8, 5), (10, 8), (14, 4)])
 async def test_complete_exact_pools_bind_all_options_with_stable_existing_root(kind, size):
     events, captures, members = fixture(kind, size)
     session = SimpleNamespace(scalars=AsyncMock(return_value=members))

@@ -331,7 +331,7 @@ class EventService:
         if occurrence and (match := pool_match(occurrence.source_data)):
             result["_pool_match"] = match
         pool = client.get("gacha_pool_proof") or {}
-        if client.get("gacha_type") in {7, 8, 9, 10, 13, 14} and type(pool.get("gacha_id")) is int:
+        if client.get("gacha_type") in {5, 6, 7, 8, 9, 10, 13, 14} and type(pool.get("gacha_id")) is int:
             result["selectable_pool_id"] = pool["gacha_id"]
             result["selectable_pool_members"] = pool.get("members", [])
         if occurrence:

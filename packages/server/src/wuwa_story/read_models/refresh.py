@@ -28,7 +28,12 @@ from sqlalchemy.dialects.postgresql import insert
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.browse import EntityReadRelation
 from wuwa_story.db.models.core import Quest
-from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
+from wuwa_story.db.models.game_events import (
+    GameEvent,
+    GameEventOccurrence,
+    GameEventSnapshot,
+    GameEventSnapshotMember,
+)
 from wuwa_story.db.models.graph import Node, NodeRevision, NodeType
 from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.models.notices import GameNotice
@@ -379,10 +384,16 @@ def _event_snapshot_ids(snapshot_key):
         return select(GameEventOccurrence.event_id).where(False)
     major, minor = patch
     valid = GameEventOccurrence.game_version.op("~")(r"^[0-9]+\.[0-9]+(\.[0-9]+)*$")
-    return select(GameEventOccurrence.event_id).where(
+    complete = select(GameEventSnapshot.version).where(
+        GameEventSnapshot.version == snapshot_key, GameEventSnapshot.complete.is_(True))
+    captured = select(GameEventSnapshotMember.event_id).where(
+        GameEventSnapshotMember.version.in_(complete))
+    legacy = select(GameEventOccurrence.event_id).where(
+        ~exists(complete),
         case((valid, cast(func.split_part(GameEventOccurrence.game_version, ".", 1), Numeric))) == major,
         case((valid, cast(func.split_part(GameEventOccurrence.game_version, ".", 2), Numeric))) == minor,
     )
+    return union(captured, legacy)
 
 
 def _source_ids(kind, snapshot_key="current"):

@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from wuwa_story.api.read_projections import catalog_entry
 from wuwa_story.db.models.core import Character, Cutscene
-from wuwa_story.db.models.game_events import GameEvent
+from wuwa_story.db.models.game_events import GameEvent, GameEventSnapshotMember
 from wuwa_story.db.models.graph import Node, NodeType
 from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.models.notices import GameNotice
@@ -46,6 +46,8 @@ def context(monkeypatch):
         (Node, 7): node,
         (NodeType, 1): node_type,
         (GameEvent, 7): event,
+        **{(GameEventSnapshotMember, (version, 7)): Row(client_capture={"download_id": "pinned"})
+           for version in ("3.10", "3.10.0", "3.10.45")},
         (GameNotice, 7): Row(locale="ja"),
         (Cutscene, 7): Row(cg_name="AuthoredMovie"),
         (Character, 7): Row(metadata_json={"role_type": 2}),
@@ -339,7 +341,7 @@ async def test_event_history_keeps_all_servers_and_unknown_versions_separate(
     result = await builders.build_entity(context.session, "event", 7, 2, snapshot)
     payload = result["payload"]
     assert [run["occurrence_id"] for run in payload["occurrences"]] == (
-        [1, 2, 3] if snapshot == "current" else [1]
+        [1, 2, 3] if snapshot == "current" else [1, 3]
     )
     assert [run["occurrence_id"] for run in payload["unversioned_occurrences"]] == (
         [] if snapshot == "current" else [2]
@@ -352,7 +354,7 @@ async def test_event_history_keeps_all_servers_and_unknown_versions_separate(
     assert unknown["server"] == "region_4"
     assert payload["occurrences"][0]["starts_at"].startswith("2026-01-02T")
     assert [call.args[0] for call in render.await_args_list] == (
-        ["asia", "region_4", "america", ""] if snapshot == "current" else ["asia", "region_4", ""]
+        ["asia", "region_4", "america", ""]
     )
     assert all(call.args[3] == "ja" for call in render.await_args_list)
     assert result["primary_image_file_id"] is None  # External URLs are not storage file IDs.
@@ -409,6 +411,7 @@ async def test_regional_event_retains_authoritative_undated_fallback_in_calendar
 
 @pytest.mark.asyncio
 async def test_unknown_event_versions_do_not_establish_historical_membership(context):
+    context.records.pop((GameEventSnapshotMember, ("3.10", 7)))
     with pytest.raises(HTTPException) as error:
         await builders.build_entity(context.session, "event", 7, 2, "3.10")
     assert error.value.status_code == 404
@@ -769,7 +772,7 @@ async def test_quest_repeated_full_page_fails_instead_of_looping_or_publishing_t
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("snapshot", ["3.10", "3.10.0", "3.10.45"])
-async def test_event_snapshot_matches_schedule_major_minor_not_prefix(context, snapshot):
+async def test_event_snapshot_membership_does_not_filter_its_independent_periods(context, snapshot):
     context.session.execute.return_value = [
         (1, "asia", "3.10", "run:1", None, None, {}),
         (2, "asia", "3.1", "run:2", None, None, {}),
@@ -777,12 +780,14 @@ async def test_event_snapshot_matches_schedule_major_minor_not_prefix(context, s
     ]
     sections.browse_events.side_effect = [
         {"events": [{"id": 7, "occurrence_id": 1}]},
+        {"events": [{"id": 7, "occurrence_id": 2}]},
+        {"events": [{"id": 7, "occurrence_id": 3}]},
         {"events": [{"id": 7, "occurrence_id": None}]},
     ]
     entry = await builders.build_entity(context.session, "event", 7, 2, snapshot)
-    assert [run["occurrence_id"] for run in entry["payload"]["occurrences"]] == [1]
+    assert [run["occurrence_id"] for run in entry["payload"]["occurrences"]] == [1, 2, 3]
     assert entry["payload"]["occurrences"][0]["game_version"] == "3.10"
-    assert sections.browse_events.await_count == 2
+    assert sections.browse_events.await_count == 4
 
 
 @pytest.mark.asyncio
