@@ -68,7 +68,8 @@ async def test_recurring_projection_keeps_new_catalog_version(monkeypatch):
 
     monkeypatch.setattr(reader.entities, "_scope_entries", entries)
     events = (await reader.events_page(None, "europe"))["events"]
-    assert {row["occurrence_id"] for row in events} == {1, 2}
+    assert {row["occurrence_id"] for row in events} == {1, None}
+    assert next(row for row in events if row["occurrence_id"] is None)["catalog_version"] == "3.8.0"
 
 
 @pytest.mark.asyncio
@@ -133,9 +134,9 @@ async def test_different_and_missing_client_signatures_remain_visible(monkeypatc
         return [SimpleNamespace(entity_id=796, payload={"event": base, "occurrences": runs})]
     monkeypatch.setattr(reader.entities, "_scope_entries", entries)
     result = (await reader.events_page(None, "europe"))["events"]
-    assert {row["occurrence_id"] for row in result} == {2238, 5391}
+    assert {row["occurrence_id"] for row in result} == {2238, None}
     assert all("_client_signature" not in row for row in result)
     for run in runs:
         run.pop("_client_signature")
     result = (await reader.events_page(None, "europe"))["events"]
-    assert {row["occurrence_id"] for row in result} == {2238, 5391}
+    assert {row["occurrence_id"] for row in result} == {2238, None}

@@ -22,10 +22,11 @@ def catalog_rows(rows):
             return tuple(int(part) for part in value.split(".")) if value and all(
                 part.isdecimal() for part in value.split(".")) else ()
 
-        selected = periods or [max(sources, key=capture_version)]
+        captures = [row for row in sources if row.get("_catalog_placeholder") or row.get("occurrence_id") is None]
+        selected = [*periods, *([max(captures, key=capture_version)] if captures else [])]
         for row in selected:
             public = {**row, "id": identity, "source_event_id": row.get("source_event_id", row["id"])}
-            if not periods:
+            if row in captures:
                 public["occurrence_id"] = None
             public.pop("_catalog_placeholder", None)
             result.append(public)

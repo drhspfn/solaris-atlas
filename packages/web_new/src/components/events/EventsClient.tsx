@@ -638,7 +638,7 @@ export function EventsPage({
           returnFocus={returnFocus.current}
           fallbackFocus={chart.current}
           event={selected}
-          history={groups.find((runs) => runs[0].id === selected.id) ?? []}
+          history={groups.find((runs) => runs[0].id === selected.id)?.filter(run => run.occurrence_id != null) ?? []}
           timeZone={timeZone}
           now={now}
           onSelect={(event) => {

@@ -284,8 +284,9 @@ async def test_service_preserves_historical_media_when_current_capture_has_exact
         [("capture/UI/banner.png", "https://cdn.test/old", {"download_id": "old"})],
     ]
     result = await event_composition.browse_events("europe", None, None, "en", session)
-    # The current catalog presentation is not an extra scheduled period.
-    historical, = result["events"]
+    historical, current = result["events"]
+    assert current["occurrence_id"] is None  # A catalog presentation is not a period.
+    assert current["preview_url"] == current["banner_url"] == "https://cdn.test/current"
     assert historical["preview_url"] == historical["banner_url"] == "https://cdn.test/old"
     assert historical["artwork"][0]["url"] == "https://cdn.test/old"
     assert historical["preview_provenance"] == "game_client"

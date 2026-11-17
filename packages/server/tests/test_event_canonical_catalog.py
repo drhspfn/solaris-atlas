@@ -16,8 +16,8 @@ def test_source_aliases_form_one_event_with_all_real_periods():
     ]
     result = catalog_rows(rows)
     assert {row["id"] for row in result} == {7}
-    assert [row["occurrence_id"] for row in result] == [1, 2, 3]
-    assert [row["source_event_id"] for row in result] == [7, 8, 8]
+    assert [row["occurrence_id"] for row in result] == [1, 2, 3, None]
+    assert [row["source_event_id"] for row in result] == [7, 8, 8, 7]
     assert rows[-1]["_catalog_placeholder"] is True
 
 
