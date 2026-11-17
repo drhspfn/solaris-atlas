@@ -57,6 +57,12 @@ class _EntityReadMixin:
                     "entity_id",
                 )
             )
+            indexes.extend((
+                Index("ix_character_read_title_fts", text("to_tsvector('simple'::regconfig, title)"),
+                      postgresql_using="gin"),
+                Index("ix_character_read_alias_keys", text("(card['alias_keys'])"),
+                      postgresql_using="gin"),
+            ))
         if name == "quest_read":
             indexes.append(
                 Index(
