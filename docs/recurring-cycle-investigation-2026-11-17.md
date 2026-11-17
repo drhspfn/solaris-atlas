@@ -100,6 +100,11 @@ overrides a notice-backed or explicitly authored phase with the same season.
 Each Notice import advances the bounded window; the CLI can also be rerun.
 Refresh affected projections afterwards.
 
+Manual schedule records always take precedence and are never recurrence
+anchors. A missing manual start or end is an open bound: overlapping calculated
+windows are suppressed, and superseded unexpired calculated windows may be
+removed. Manual records themselves are never overwritten or removed.
+
 An offline calculation from the read-only Europe anchors at 2026-11-17 17:00
 UTC yields Whimpering Wastes phase 23 (October 26 03:00–November 23 03:00 UTC)
 and phase 24 (November 23 03:00–December 21 03:00 UTC). Hazard Revisited yields

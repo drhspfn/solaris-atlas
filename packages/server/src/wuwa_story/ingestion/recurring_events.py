@@ -19,9 +19,20 @@ from wuwa_story.ingestion.game_events import (
 )
 
 
+def _manual(data):
+    return data.get("schedule_source") == "manual" or data.get("manual_schedule") is not None
+
+
 def _calculated(row):
     data = row.source_data or {}
-    return not data.get("notice_id") and (data.get("start_estimate") or {}).get("basis") == "declared_recurrence"
+    return (not _manual(data) and not data.get("notice_id")
+            and (data.get("start_estimate") or {}).get("basis") == "declared_recurrence")
+
+
+def _overlaps_period(period, start, end):
+    """Unknown manual endpoints are open bounds, never evidence of a gap."""
+    return (period.starts_at is None or period.starts_at < end) and (
+        period.ends_at is None or period.ends_at > start)
 
 
 def recurring_schedule_rows(document, events, existing, revision):
@@ -73,7 +84,7 @@ def recurring_schedule_rows(document, events, existing, revision):
                 seen.add(phase_key)
                 previous = candidates[0] if candidates else None
                 previous_data = (previous.source_data or {}) if previous else {}
-                if previous and (previous_data.get("notice_id") or previous_data.get("schedule_source") not in (None, SOURCE)
+                if previous and (_manual(previous_data) or previous_data.get("notice_id") or previous_data.get("schedule_source") not in (None, SOURCE)
                     or (not previous_data.get("schedule_source") and not legacy)):
                     continue
                 if any(row is not previous and not _calculated(row)
@@ -123,7 +134,7 @@ def calculated_cycles(events, existing, now):
             cycle = cycle if isinstance(cycle, dict) else {}
             weeks, number = cycle.get("weeks"), season.get("start")
             times = data.get("time") or []
-            if (data.get("notice_id") or not (data.get("schedule_source") == SOURCE or
+            if (_manual(data) or data.get("notice_id") or not (data.get("schedule_source") == SOURCE or
                      (legacy and not data.get("schedule_source"))) or
                 type(weeks) is not int or not 0 < weeks <= 520 or
                 type(number) is not int or number < 1 or not row.starts_at or
@@ -142,6 +153,7 @@ def calculated_cycles(events, existing, now):
         anchor = (max(active_anchors, key=lambda row: row.starts_at) if active_anchors
                   else min(anchors, key=lambda row: row.starts_at))
         explicit = [row for row in rows if not _calculated(row)]
+        manual_periods = [row for row in rows if _manual(row.source_data or {})]
         boundaries = [row.starts_at for row in explicit if row.starts_at and row.starts_at > anchor.starts_at]
         if anchor.ends_at:
             boundaries.append(anchor.ends_at)
@@ -160,6 +172,7 @@ def calculated_cycles(events, existing, now):
                      and isinstance(row.season, dict)
                      and row.season.get("start") == anchor.season["start"] + offset
                      and row.season.get("start") not in explicit_phases
+                     and not any(_overlaps_period(period, row.starts_at, row.ends_at) for period in manual_periods)
                      and (not boundary or row.ends_at <= boundary)
                      and (row.source_data or {}).get("schedule_revision") == (anchor.source_data or {}).get("schedule_revision"))
             if not valid:
@@ -171,6 +184,8 @@ def calculated_cycles(events, existing, now):
             if end <= now or (boundary and end > boundary):
                 continue
             if anchor.season["start"] + offset in explicit_phases:
+                continue
+            if any(_overlaps_period(period, start, end) for period in manual_periods):
                 continue
             if any(row.starts_at == start and row.id not in obsolete for row in rows):
                 continue
@@ -213,6 +228,7 @@ async def import_recurring_schedules(session, *, apply=False):
             set_={key: getattr(statement.excluded, key) for key in
                   ("game_version", "starts_at", "ends_at", "season", "source_data")},
             where=(GameEventOccurrence.source_data["notice_id"].astext.is_(None)
+                   & GameEventOccurrence.source_data["manual_schedule"].astext.is_(None)
                    & or_(GameEventOccurrence.source_data["schedule_source"].astext.is_(None),
                          GameEventOccurrence.source_data["schedule_source"].astext == SOURCE))))
         await session.flush()
@@ -227,6 +243,9 @@ async def import_recurring_schedules(session, *, apply=False):
             GameEventOccurrence.id.in_(obsolete), GameEventOccurrence.ends_at > now,
             GameEventOccurrence.source_data["start_estimate"]["basis"].as_string() == "declared_recurrence",
             GameEventOccurrence.source_data["notice_id"].astext.is_(None),
+            GameEventOccurrence.source_data["manual_schedule"].astext.is_(None),
+            or_(GameEventOccurrence.source_data["schedule_source"].astext.is_(None),
+                GameEventOccurrence.source_data["schedule_source"].astext != "manual"),
         ))
     if apply and calculated:
         await session.execute(insert(GameEventOccurrence).values(calculated).on_conflict_do_nothing(

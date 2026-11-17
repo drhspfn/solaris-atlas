@@ -66,6 +66,7 @@ async def test_import_dry_run_does_not_write_and_apply_uses_conflict_guard(monke
     applied = await recurring_events.import_recurring_schedules(session, apply=True)
     assert len(applied["occurrences"]) == 1
     assert "ON CONFLICT" in str(session.execute.await_args_list[-1].args[0])
+    assert "manual_schedule" in session.execute.await_args_list[-1].args[0].compile().params.values()
 
 
 @pytest.mark.parametrize("suffix", ["", "@2026-11-19T03:00:00+00:00"])
@@ -132,6 +133,61 @@ def test_cycles_require_valid_trusted_anchored_rule():
     anchor.source_data["schedule_source"] = SOURCE
     anchor.season["cycle"]["weeks"] = 0
     assert calculated_cycles([event], [anchor], start + timedelta(days=30)) == ([], [])
+
+
+@pytest.mark.parametrize("manual_data", [{"schedule_source": "manual"}, {"manual_schedule": {}}])
+def test_manual_unknown_start_blocks_overlapping_calculated_windows(manual_data):
+    event = SimpleNamespace(id=853, source=CLIENT_SOURCE, source_id="activity:100390001",
+        event_kind="recurring", source_data={"legacy_source": SOURCE, "legacy_source_id": "3:100390001"})
+    start = datetime(2025, 3, 17, 3, tzinfo=UTC)
+    anchor = SimpleNamespace(id=2427, event_id=853, server="europe", source_occurrence_id="10039000102",
+        starts_at=start, ends_at=None, game_version=None, season={"start": 2, "cycle": {"weeks": 4}},
+        source_data={"time": [start.isoformat()]})
+    now = datetime(2026, 11, 17, tzinfo=UTC)
+    old, _ = calculated_cycles([event], [anchor], now)
+    existing = [SimpleNamespace(id=3000+i, **row) for i, row in enumerate(old)]
+    manual = SimpleNamespace(id=4000, event_id=853, server="europe", source_occurrence_id="manual:1",
+        starts_at=None, ends_at=old[1]["starts_at"] + timedelta(days=1), game_version=None,
+        season=None, source_data=manual_data)
+    planned, obsolete = calculated_cycles([event], [anchor, *existing, manual], now)
+    assert planned == [] and obsolete == [3000, 3001]
+    assert manual.id not in obsolete and anchor.id not in obsolete
+    assert calculated_cycles([event], [anchor, manual], now) == ([], [])
+    manual.ends_at = old[0]["starts_at"]
+    assert len(calculated_cycles([event], [anchor, manual], now)[0]) == 2
+    manual.ends_at = None
+    assert calculated_cycles([event], [anchor, manual], now) == ([], [])
+
+
+def test_manual_row_never_becomes_recurrence_anchor_or_is_removed():
+    event = SimpleNamespace(id=853, source=CLIENT_SOURCE, source_id="activity:100390001",
+        event_kind="recurring", source_data={"legacy_source": SOURCE, "legacy_source_id": "3:100390001"})
+    start = datetime(2025, 3, 17, 3, tzinfo=UTC)
+    anchor = SimpleNamespace(id=2427, event_id=853, server="europe", source_occurrence_id="10039000102",
+        starts_at=start, ends_at=None, game_version=None, season={"start": 2, "cycle": {"weeks": 4}},
+        source_data={"time": [start.isoformat()], "schedule_source": "manual", "manual_schedule": {}})
+    now = datetime(2026, 11, 17, tzinfo=UTC)
+    assert calculated_cycles([event], [anchor], now) == ([], [])
+    anchor.source_data = {"time": [start.isoformat()]}
+    generated, _ = calculated_cycles([event], [anchor], now)
+    manual = SimpleNamespace(id=3000, **generated[0])
+    manual.source_data = {**manual.source_data, "schedule_source": "manual", "manual_schedule": {}}
+    anchor.starts_at += timedelta(hours=1)
+    anchor.source_data["time"] = [anchor.starts_at.isoformat()]
+    planned, obsolete = calculated_cycles([event], [anchor, manual], now)
+    assert manual.id not in obsolete
+    assert all(not (row["starts_at"] < manual.ends_at and row["ends_at"] > manual.starts_at) for row in planned)
+
+
+def test_manual_stamped_legacy_phase_is_not_rewritten():
+    event = SimpleNamespace(id=853, source=CLIENT_SOURCE, source_id="activity:100390001",
+        event_kind="recurring", source_data={"legacy_source": SOURCE, "legacy_source_id": "3:100390001"})
+    old = SimpleNamespace(event_id=853, server="europe", source_occurrence_id="10039000102",
+        starts_at=None, ends_at=datetime(2026, 12, 1, tzinfo=UTC), game_version=None,
+        season={"start": 2}, source_data={"manual_schedule": {}})
+    document = {"list": [{"id": 3, "child": [{"id": 10039000102, "sourceId": 100390001,
+        "time": [[], ["2026-11-19T04:00:00Z", "2026-12-22T00:00:00Z"]]}]}]}
+    assert recurring_schedule_rows(document, [event], [old], "b" * 40) == []
 
 
 def test_future_recurrence_override_does_not_replace_current_anchor():
