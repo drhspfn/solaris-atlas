@@ -466,6 +466,18 @@ async def test_search_keeps_fulltext_and_substring_recall_for_numeric_hash_multi
 
 
 @pytest.mark.asyncio
+async def test_character_search_expressions_match_indexes_in_prepared_plans():
+    session = SimpleNamespace(execute=AsyncMock(return_value=result([])))
+    await reader.search_page(session, "Aalto", category=["character"], character_kind="all")
+    query = session.execute.call_args.args[0].compile(dialect=postgresql.dialect())
+    sql = str(query)
+    assert "to_tsvector('simple'::regconfig, core.character_read.title)" in sql
+    assert "core.character_read.card['alias_keys']" in sql
+    assert "search_vector" in sql and "ts_rank" in sql and "ILIKE" in sql
+    assert "Aalto" in query.params.values() and "aalto" in str(query.params.values())
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "kind",
     [

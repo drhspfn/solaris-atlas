@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 from fastapi import HTTPException
-from sqlalchemy import case, func, literal, or_, select, union_all
+from sqlalchemy import case, func, literal, literal_column, or_, select, union_all
 
 from wuwa_story.db.repositories.character_identity import public_character_filter
 from wuwa_story.db.repositories.read_models import ENTITY_READ_MODELS, card_columns
@@ -93,10 +93,13 @@ async def search_page(
     tsquery = func.plainto_tsquery("simple", q)
     for kind in kinds:
         model = ENTITY_READ_MODELS[kind]
+        # Keep the indexed expressions constant in PostgreSQL generic prepared plans.
+        aliases = model.card[literal_column("'alias_keys'")] if kind == "character" else model.card["alias_keys"]
+        title_vector = func.to_tsvector(literal_column("'simple'::regconfig"), model.title)
         match = or_(
-            model.search_vector.op("@@")(tsquery) if kind != "character" else func.to_tsvector("simple", model.title).op("@@")(tsquery),
+            model.search_vector.op("@@")(tsquery) if kind != "character" else title_vector.op("@@")(tsquery),
             model.title.icontains(q.strip(), autoescape=True),
-            model.searchable_text.icontains(q.strip(), autoescape=True) if kind != "character" else model.card["alias_keys"].contains([normalized]),
+            model.searchable_text.icontains(q.strip(), autoescape=True) if kind != "character" else aliases.contains([normalized]),
             model.canonical_key == q,
         )
         filters = [model.locale_id == locale_id, model.snapshot_key == snapshot, match]
@@ -124,7 +127,7 @@ async def search_page(
             score = case(
                 (model.canonical_key == q, 2.0),
                 (func.lower(model.title) == normalized, 1.0),
-                (model.card["alias_keys"].contains([normalized]), 1.0),
+                (aliases.contains([normalized]), 1.0),
                 else_=func.ts_rank(model.search_vector, tsquery),
             )
             queries.append(
