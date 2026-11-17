@@ -205,6 +205,50 @@ async def test_verified_prefab_preview_excludes_shared_activity_background(event
     assert payload["preview_url"] is None and payload["banner_url"] is None
 
 
+@pytest.mark.asyncio
+async def test_verified_prefab_survives_source_to_projected_calendar(event, repository, service, monkeypatch):
+    from types import SimpleNamespace
+
+    from wuwa_story.events.domain import PREFAB_PREVIEWS
+    from wuwa_story.read_models.readers import events as projected
+    from wuwa_story.read_models.source_sections import _calendar_payload
+
+    source_id = "activity:108700001"
+    prefab, path = PREFAB_PREVIEWS[source_id]
+    verified = {"path": path, "role": "prefab_texture", "prefab": prefab}
+    other = {"path": "/Game/Unrelated", "role": "prefab_texture", "prefab": prefab}
+    client = {"download_id": "current", "prefab_artwork": [verified, other]}
+    record = replace(event, id=850, source_id=source_id, event_kind="permanent",
+                     banner_path=None, source_data={"client": client})
+    run = EventOccurrence(id=5097, game_version="3.8", starts_at=None, ends_at=None,
+                          season=None, banner_path=None, source_data={"client": client})
+    repository.runs.return_value = [EventRun(record, run)]
+    repository.media.return_value = [EventMedia(path, "soar.png", {"download_id": "current"})]
+    source = (await service.browse("europe", summary=True))["events"][0]
+    assert source["preview_url"] == "https://cdn/soar.png"
+    assert source["banner_url"] is None
+    payload = _calendar_payload({"event": source, "occurrences": [{**source, "server": "europe"}]})
+    assert [asset["path"] for asset in payload["occurrences"][0]["artwork"]] == [path]
+    monkeypatch.setattr(projected.entities, "_scope_entries", AsyncMock(
+        return_value=[SimpleNamespace(entity_id=850, payload=payload)]))
+    result = (await projected.events_page(None, "europe", summary=True))["events"][0]
+    assert result["preview_url"] == "https://cdn/soar.png"
+    assert result["artwork"] == [{**verified, "url": "https://cdn/soar.png"}]
+
+    # Both projection filters enforce event identity as well as prefab and path.
+    for candidate in (
+        {**source, "source_id": "activity:other"},
+        {**source, "artwork": [{**verified, "prefab": "/Game/Other"}]},
+        {**source, "artwork": [{**verified, "path": "/Game/Other"}]},
+    ):
+        candidate["server"] = "europe"
+        assert _calendar_payload({"event": candidate, "occurrences": []})["event"]["artwork"] == []
+        monkeypatch.setattr(projected.entities, "_scope_entries", AsyncMock(return_value=[
+            SimpleNamespace(entity_id=850, payload={"event": candidate, "occurrences": [candidate]})
+        ]))
+        assert (await projected.events_page(None, "europe", summary=True))["events"][0]["artwork"] == []
+
+
 def test_prefab_preview_requires_exact_prefab_and_available_capture():
     from wuwa_story.events.domain import (
         PREFAB_PREVIEWS,
@@ -394,7 +438,7 @@ async def test_http_routes_use_overridden_service_and_map_domain_errors(monkeypa
             "/events?server=asia&kind=banner&version=3.7&locale=fr&summary=true"
         )
         assert response.status_code == 200 and response.json() == {
-            "events": []}
+            "events": [], "snapshot_presentation": "current_and_recorded_occurrences"}
         missing = await client.get("/events/7/detail?server=america&occurrence_id=42&locale=fr")
     service.browse.assert_awaited_once_with(
         "asia", "banner", "3.7.0", "fr", summary=True)
