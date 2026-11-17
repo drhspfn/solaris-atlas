@@ -30,9 +30,9 @@ from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.raw import SourceRecord
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.db.repositories import cutscenes as cutscene_repository
-from wuwa_story.db.repositories.event_browsing import _PREVIEW_ROLES
 from wuwa_story.events.catalog_duplicates import client_signature
 from wuwa_story.events.composition import browse_events
+from wuwa_story.events.domain import is_preview_artwork
 from wuwa_story.events.selectable_pools import pool_match
 from wuwa_story.ingestion.character_artwork import character_artwork_scope
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
@@ -154,7 +154,8 @@ def _calendar_payload(payload):
         return {
             **row,
             "artwork": [
-                dict(art) for art in row.get("artwork", []) if art.get("role") in _PREVIEW_ROLES
+                dict(art) for art in row.get("artwork", [])
+                if is_preview_artwork(row.get("source_id"), art)
             ],
         }
 

@@ -325,6 +325,7 @@ async def _character_relations(session, node, release_id, add):
             )
         other_crosswalk = _speaker_crosswalk(release_id)
         shared_facts = {}
+        shared_seen = {}
         other_participation = dialogue_participation(
             release_id, state_ids=state_lines)
         for character_id, state_id, line_id, source_id, edge_id in await session.execute(
@@ -337,9 +338,10 @@ async def _character_relations(session, node, release_id, add):
             .order_by(other_crosswalk.c.character_id, other_participation.c.state_id,
                       other_participation.c.line_id)
         ):
-            fact = shared_facts.setdefault(
-                (character_id, state_id),
-                {
+            key = (character_id, state_id)
+            fact = shared_facts.get(key)
+            if fact is None:
+                fact = shared_facts[key] = {
                     "evidence_type": "co_presence_only",
                     "release_id": release_id,
                     "state_node_id": state_id,
@@ -349,14 +351,19 @@ async def _character_relations(session, node, release_id, add):
                     "other_source_record_ids": [],
                     "other_crosswalk_edge_ids": [],
                     "meaning": "Dialogue in one authored flow state; no personal relationship is asserted",
-                },
-            )
+                }
+                shared_seen[key] = {
+                    "other_dialogue_node_ids": set(),
+                    "other_source_record_ids": set(),
+                    "other_crosswalk_edge_ids": set(),
+                }
             for field, value in (
                 ("other_dialogue_node_ids", line_id),
                 ("other_source_record_ids", source_id),
                 ("other_crosswalk_edge_ids", edge_id),
             ):
-                if value not in fact[field]:
+                if value not in shared_seen[key][field]:
+                    shared_seen[key][field].add(value)
                     fact[field].append(value)
         for (character_id, _), fact in sorted(shared_facts.items()):
             add("character", character_id, "co_present_in_flow_state", fact)

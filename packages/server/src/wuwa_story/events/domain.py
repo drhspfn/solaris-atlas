@@ -30,6 +30,14 @@ PREVIEW_ROLES = (
 )
 
 
+def is_preview_artwork(source_id: str | None, asset: dict[str, Any]) -> bool:
+    return asset.get("role") in PREVIEW_ROLES or (
+        asset.get("role") == "prefab_texture"
+        and source_id in PREFAB_PREVIEWS
+        and (asset.get("prefab"), asset.get("path")) == PREFAB_PREVIEWS[source_id]
+    )
+
+
 class EventRunNotFound(LookupError):
     def __init__(self) -> None:
         super().__init__("Event run not found")

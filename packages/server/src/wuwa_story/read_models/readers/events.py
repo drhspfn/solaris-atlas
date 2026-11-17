@@ -6,7 +6,7 @@ from sqlalchemy import select
 from wuwa_story.db.models.game_events import GameEventSnapshotMember
 from wuwa_story.db.repositories.read_models import ENTITY_READ_MODELS
 from wuwa_story.events.catalog_duplicates import visible_occurrences
-from wuwa_story.events.domain import PREVIEW_ROLES
+from wuwa_story.events.domain import is_preview_artwork
 from wuwa_story.events.selectable_pools import group_selectable_pools, pool_key, proven_member_ids
 from wuwa_story.read_models.readers import entities
 
@@ -116,7 +116,8 @@ async def events_page(session, server, kind=None, version=None, locale="en", sum
             result = {key: value for key, value in run.items() if key != "server"}
             if summary:
                 result["artwork"] = [
-                    art for art in run.get("artwork", []) if art.get("role") in PREVIEW_ROLES
+                    art for art in run.get("artwork", [])
+                    if is_preview_artwork(run.get("source_id"), art)
                 ]
                 result["detail_url"] = (
                     f"/events/{entry.entity_id}/detail?server={server}&locale={locale}"
