@@ -11,6 +11,7 @@ import {
 } from "./QuestSequenceFragments";
 import { playableSequenceAudio } from "./QuestSequenceAudio";
 import {
+  hasConfirmed3dSequence,
   hasEngineCinematicTracks,
   illustrationSections,
 } from "./sequenceIllustrations";
@@ -88,6 +89,7 @@ export function QuestSceneDetails({
   else if (hasMedia) sceneType = "audio";
 
   const { label: sceneLabel, status, intro } = sceneContent[sceneType];
+  const confirmed3d = hasConfirmed3dSequence(media);
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -124,7 +126,8 @@ export function QuestSceneDetails({
           <CircleHelp size={20} />
         </button>
       </header>
-      <p className={styles.status}>{status}</p>
+      <p className={styles.status}>{confirmed3d && !hasIllustrations && !hasVideo
+        ? "3D scene playback is not supported on this site." : status}</p>
       {open && (
         <dialog
           ref={dialog}
@@ -161,7 +164,7 @@ export function QuestSceneDetails({
             </Button>
           </header>
           <p className={styles.dialogIntro}>{intro}</p>
-          {isEngineCinematic && (
+          {confirmed3d && (
             <p className={styles.engineExplanation}>
               This sequence is rendered in real-time by the Unreal Engine client
               using 3D character models and camera tracks.

@@ -35,6 +35,16 @@ test('engine classification requires both actual camera and skeletal tracks', ()
   assert.equal(exports.hasEngineCinematicTracks(media(null, [{ kind: 'camera' }])), false);
   assert.equal(exports.hasEngineCinematicTracks(media(null, [{ kind: 'camera' }, { kind: 'skeletal_animation' }])), true);
 });
+
+test('3D notice requires authored camera and skeletal animation in the same scene', () => {
+  const camera = { kind: 'camera', status: 'authored', source: '/Game/Scene.1', scene_source: '/Game/Scene.0' };
+  const animation = { kind: 'skeletal_animation', status: 'authored', source: '/Game/Scene.2', scene_source: '/Game/Scene.0' };
+  assert.equal(exports.hasConfirmed3dSequence(media(null, [camera, animation])), true);
+  assert.equal(exports.hasConfirmed3dSequence(media(null, [camera, { ...animation, scene_source: '/Game/Other.0' }])), false);
+  assert.equal(exports.hasConfirmed3dSequence(media(null, [camera, { ...animation, status: 'unresolved' }])), false);
+  assert.equal(exports.hasConfirmed3dSequence(media(null, [camera, { ...animation, source: undefined }])), false);
+  assert.equal(exports.hasConfirmed3dSequence(media(null, [{ kind: 'illustration', status: 'published' }])), false);
+});
 const composition = (state, reasons = []) => ({
   schema_version: 1,
   state,
