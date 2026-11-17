@@ -164,6 +164,14 @@ jobs:
           tests/test_read_model_builders.py tests/test_read_model_relations.py
           tests/test_read_model_worker.py tests/test_character_search_indexes.py
           tests/test_api_dockerfile.py -q
+      - name: Validate manual event periods on PostgreSQL
+        # The console fixture creates and drops its own isolated PostgreSQL database.
+        working-directory: packages/server
+        env:
+          WUWA_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/visual_test
+        run: >-
+          uv run pytest tests/test_admin_console.py -k event_period
+          tests/test_admin_event_periods.py -q
       - name: Validate production projection budget
         run: >-
           uv run --project packages/server python -m unittest

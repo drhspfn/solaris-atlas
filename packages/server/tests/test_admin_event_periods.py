@@ -24,6 +24,7 @@ async def test_period_dates_use_utc_and_keep_unknown_values():
     def parse(raw):
         return field.parse_form_data(None, FormData({"starts_at": raw}), RequestAction.CREATE)
     assert await parse("") is None
+    assert await field.serialize_value(None, None, RequestAction.EDIT) is None
     assert await parse("1900-01-02T03:04") == datetime(1900, 1, 2, 3, 4, tzinfo=UTC)
     assert await parse("2026-11-01T08:00:00+02:00") == datetime(2026, 11, 1, 6, tzinfo=UTC)
     assert await field.serialize_value(None, datetime(2026, 11, 1, 8, tzinfo=UTC), RequestAction.EDIT) == "2026-11-01T08:00:00"

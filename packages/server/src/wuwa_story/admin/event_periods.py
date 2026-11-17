@@ -28,6 +28,8 @@ class UTCDateTimeField(DateTimeField):
         return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
     async def serialize_value(self, request, value, action):
+        if value is None:
+            return None
         value = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
         return value.replace(tzinfo=None).isoformat() if action == RequestAction.EDIT else value.isoformat()
 
