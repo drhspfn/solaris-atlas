@@ -803,15 +803,13 @@ async def test_event_snapshot_membership_does_not_filter_its_independent_periods
         (3, "asia", "3.100", "run:3", None, None, {}),
     ]
     sections.browse_events.side_effect = [
-        {"events": [{"id": 7, "occurrence_id": 1}]},
-        {"events": [{"id": 7, "occurrence_id": 2}]},
-        {"events": [{"id": 7, "occurrence_id": 3}]},
+        {"events": [{"id": 7, "occurrence_id": identity} for identity in (1, 2, 3)]},
         {"events": [{"id": 7, "occurrence_id": None}]},
     ]
     entry = await builders.build_entity(context.session, "event", 7, 2, snapshot)
     assert [run["occurrence_id"] for run in entry["payload"]["occurrences"]] == [1, 2, 3]
     assert entry["payload"]["occurrences"][0]["game_version"] == "3.10"
-    assert sections.browse_events.await_count == 4
+    assert sections.browse_events.await_count == 2
 
 
 @pytest.mark.asyncio

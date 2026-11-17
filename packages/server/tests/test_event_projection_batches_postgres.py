@@ -24,6 +24,7 @@ from wuwa_story.db.repositories.event_browsing import SqlAlchemyEventRepository
 from wuwa_story.events.domain import CLIENT_SOURCE
 from wuwa_story.events.repository import EVENT_RUN_BATCH_SIZE
 from wuwa_story.events.service import EventService
+from wuwa_story.read_models import source_sections
 from wuwa_story.read_models.context import source_build
 from wuwa_story.read_models.source_sections import _request_caches
 
@@ -32,7 +33,7 @@ pytestmark = pytest.mark.skipif(not os.getenv("WUWA_TEST_DATABASE_URL"), reason=
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("version", [None, "3.8.0"])
-async def test_51_periods_share_one_header_and_keep_exact_source_presentation(console_database, version):
+async def test_51_periods_share_one_header_and_keep_exact_source_presentation(console_database, version, monkeypatch):
     engine = create_async_engine(console_database, poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     suffix = uuid4().hex
@@ -134,5 +135,25 @@ async def test_51_periods_share_one_header_and_keep_exact_source_presentation(co
         assert measurements[0][1] == 52 and measurements[1][1] == 1
         assert measurements[1][0] < measurements[0][0] / 3
         print(f"event batch version={version or 'current'}: legacy queries/headers/seconds={measurements[0]}; batch={measurements[1]}")
+        # Exercise the actual builder after the independent-period semantic patch:
+        # known periods from other versions and unversioned manual dates all survive.
+        payloads = []
+        for batched in (False, True):
+            async def browse(server, kind, selected, locale, db, _batched=batched, **kwargs):
+                service = EventService(SqlAlchemyEventRepository(db, "test"), lambda key: key, lambda url: url)
+                if not _batched and (identities := kwargs.pop("occurrence_ids", None)) is not None:
+                    rows = []
+                    for period in identities:
+                        rows.extend((await service.browse(server, version=selected, locale=locale,
+                            **kwargs, occurrence_id=period))["events"])
+                    return {"events": rows}
+                return await service.browse(server, kind, selected, locale, **kwargs)
+            monkeypatch.setattr(source_sections, "browse_events", browse)
+            async with factory() as db:
+                with source_build(), _request_caches(db):
+                    payloads.append(await source_sections._event_payload(db, identity, "ja", version or "current"))
+        assert payloads[0] == payloads[1]
+        assert len(payloads[1]["occurrences"]) + len(payloads[1]["unversioned_occurrences"]) == 51
+        assert {row["game_version"] for row in payloads[1]["occurrences"]} >= {"3.7.0", "3.9.0"}
     finally:
         await engine.dispose()
