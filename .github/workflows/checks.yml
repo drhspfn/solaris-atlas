@@ -147,6 +147,7 @@ jobs:
         run: >-
           uv run pytest tests/test_visual_memory_*.py tests/test_admin_visual_memory.py
           tests/test_agent_chat_roles.py tests/test_mcp_media_tools.py tests/test_mcp_character_tools.py
+          tests/test_mcp_transport.py tests/test_api_health.py
           -q
       - name: Validate import, search and migration tests
         working-directory: packages/server
