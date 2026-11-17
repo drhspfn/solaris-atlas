@@ -320,6 +320,21 @@ async def test_end_only_period_capture_is_not_overwritten(database):
         assert len(rows) == 2  # A conflicting capture is not treated as the same period.
 
 
+@pytest.mark.asyncio
+async def test_import_preserves_manual_period_with_unknown_dates(database):
+    async with database() as session:
+        period = await session.scalar(select(GameEventOccurrence).where(
+            GameEventOccurrence.event_id == 1, GameEventOccurrence.server == "europe"))
+        period.source_occurrence_id = "manual:reviewed"
+        period.source_data = {"schedule_source": "manual"}
+        period.banner_path = "/Game/Reviewed"
+        await session.flush()
+        await store_client_events(session, {"100": record("First"), "101": record("Second")},
+                                  "3.8.0", "pinned")
+        assert period.source_data == {"schedule_source": "manual"}
+        assert period.banner_path == "/Game/Reviewed"
+
+
 async def retained_capture(session):
     capture = {**record("First"), "table": "Activity", "asset_version": "3.8.0", "download_id": "pinned",
                "schedule_status": "server_controlled", "title_key": "Activity_100_Title"}
