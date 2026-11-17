@@ -234,7 +234,7 @@ export function QuestPageClient({
     if (citedLine) transcriptSelection.set("focus_line", citedLine);
 
     Promise.all([
-      api<any>(`/quests/${encodeURIComponent(questKey)}/profile?${selection}`, {
+      api<any>(`/quests/${encodeURIComponent(questKey)}/profile?${selection}&view=reader`, {
         signal: controller.signal,
       }),
       api<any>(

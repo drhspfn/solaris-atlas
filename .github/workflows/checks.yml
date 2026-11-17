@@ -116,6 +116,26 @@ jobs:
       - name: Apply migrations
         working-directory: packages/server
         run: uv run alembic upgrade head
+      - name: Verify compact quest profile on PostgreSQL
+        working-directory: packages/server
+        env:
+          WUWA_QUEST_READER_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/quest_reader_ci_verification
+        run: |
+          uv run python - <<'PY'
+          import asyncio
+          import asyncpg
+
+          async def create_database():
+              conn = await asyncpg.connect(host="localhost", port=5432, user="postgres",
+                                           password="postgres", database="visual_test")
+              try:
+                  await conn.execute("CREATE DATABASE quest_reader_ci_verification")
+              finally:
+                  await conn.close()
+
+          asyncio.run(create_database())
+          PY
+          uv run pytest tests/test_quest_reader_profile.py -q
       - name: Validate visual memory, permissions and video processing
         working-directory: packages/server
         run: >-

@@ -505,7 +505,7 @@ const backend = createServer(async (request, response) => {
         ],
       }),
     );
-  } else if (request.url === '/quests/139000037/profile?locale=en') {
+  } else if (request.url === '/quests/139000037/profile?locale=en&view=reader') {
     response.end(
       JSON.stringify({
         quest: testQuest,

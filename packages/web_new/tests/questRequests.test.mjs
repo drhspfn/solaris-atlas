@@ -264,6 +264,7 @@ test("matching version, locale and focus reuse SSR; changed selections fetch and
       assert.equal(searchParams.get("include_raw"), "false");
       assert.equal(searchParams.get("limit"), "2000");
     }
+    if (path.includes("/profile?")) assert.equal(searchParams.get("view"), "reader");
   }
   assert.notEqual(h.states[0], h.initialProfile);
   h.setQuery("game_version=2.0.0&locale=ru&line=dialogue%3A999");

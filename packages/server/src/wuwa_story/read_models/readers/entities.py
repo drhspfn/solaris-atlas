@@ -4,7 +4,8 @@ from collections import Counter
 from types import SimpleNamespace
 
 from fastapi import HTTPException
-from sqlalchemy import case, literal, or_, select, union_all
+from sqlalchemy import case, cast, func, literal, or_, select, union_all
+from sqlalchemy.dialects.postgresql import JSONB
 
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.i18n import Locale
@@ -47,7 +48,15 @@ class ProjectedPayload(dict):
     """Already-addressed public data; decorators must not hydrate the source graph."""
 
 
-async def profile_page(session, kind, identity, locale="en", game_version=None):
+QUEST_READER_PROFILE_FIELDS = ("quest", "scenes", "explicit_links", "item_requirements")
+
+
+def quest_reader_profile(payload):
+    """Fields used by the quest reader; the default profile stays unchanged."""
+    return {key: payload.get(key) for key in QUEST_READER_PROFILE_FIELDS}
+
+
+async def profile_page(session, kind, identity, locale="en", game_version=None, *, reader=False):
     if kind == "quest" and numeric_id(identity) is not None:
         identity = f"quest:{identity}"
     return ProjectedPayload(
@@ -58,6 +67,7 @@ async def profile_page(session, kind, identity, locale="en", game_version=None):
             locale,
             game_version or "current",
             selector="profile",
+            reader=reader,
         )
     )
 
@@ -178,7 +188,7 @@ async def projection_entry(session, kind, identity, locale="en", snapshot_key="c
 
 
 async def page_payload(
-    session, kind, identity, locale="en", snapshot_key="current", *, selector="profile"
+    session, kind, identity, locale="en", snapshot_key="current", *, selector="profile", reader=False
 ):
     """Select one JSON section in PostgreSQL; selector=None explicitly requests the whole payload."""
     if selector not in {
@@ -199,6 +209,15 @@ async def page_payload(
     coverage = await _require_scope(session, kind, snapshot_key)
     model = ENTITY_READ_MODELS[kind]
     content = model.payload if selector is None else model.payload[selector]
+    if reader:
+        if kind != "quest" or selector != "profile":
+            raise HTTPException(400, "Reader profile is only available for quests")
+        fields = [item for key in QUEST_READER_PROFILE_FIELDS for item in (key, content[key])]
+        content = case(
+            ((func.jsonb_typeof(content) == "object") & (content != cast(literal("{}"), JSONB)),
+             func.jsonb_build_object(*fields, type_=JSONB)),
+            else_=None,
+        )
     statement = _identity_statement(
         model,
         identity,
