@@ -75,21 +75,44 @@ async def test_enqueue_identity_pins_complete_plan(monkeypatch):
 async def test_two_selected_variants_enqueue_one_logical_job(monkeypatch):
     from wuwa_story.api.routes import cutscene_analysis as api
 
-    refs = [SimpleNamespace(owner_node_id=1), SimpleNamespace(owner_node_id=2)]
+    refs = [SimpleNamespace(owner_node_id=10015), SimpleNamespace(owner_node_id=10016)]
     db = SimpleNamespace(scalars=AsyncMock(return_value=refs), commit=AsyncMock(), rollback=AsyncMock())
     monkeypatch.setattr(api, "get_agent_settings", lambda: SimpleNamespace(vision_enabled=True))
     monkeypatch.setattr(api, "_asset_cutscenes", AsyncMock(return_value={
-        1: [{"node_id": 9}], 2: [{"node_id": 9}]}))
-    monkeypatch.setattr(api, "_logical_plan", AsyncMock(return_value=({"plan": "test"}, refs[1], {1: refs[0], 2: refs[1]})))
+        10015: [{"node_id": 15537}], 10016: [{"node_id": 15537}]}))
+    monkeypatch.setattr(api, "_logical_plan", AsyncMock(return_value=(
+        {"plan": "test"}, refs[1], {10015: refs[0], 10016: refs[1]})))
     monkeypatch.setattr(api, "_existing_whole_scene_job", AsyncMock(return_value=None))
     run = SimpleNamespace(id=3)
     enqueue = AsyncMock(return_value=run)
     monkeypatch.setattr(api, "enqueue_logical_visual_job", enqueue)
     monkeypatch.setattr(api, "public_job", lambda item: {"id": item.id})
-    result = await api.create_visual_jobs(api.VisualRequest(asset_node_ids=[1, 2], game_version="3.8.0"), db)
+    result = await api.create_visual_jobs(api.VisualRequest(asset_node_ids=[10015, 10016], game_version="3.8.0"), db)
     assert result == {"jobs": [{"id": 3}]}
     enqueue.assert_awaited_once()
     db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_15537_existing_variant_returns_one_reused_job_without_enqueue(monkeypatch):
+    from wuwa_story.api.routes import cutscene_analysis as api
+
+    refs = [SimpleNamespace(owner_node_id=10015), SimpleNamespace(owner_node_id=10016)]
+    db = SimpleNamespace(scalars=AsyncMock(return_value=refs), commit=AsyncMock(), rollback=AsyncMock())
+    monkeypatch.setattr(api, "get_agent_settings", lambda: SimpleNamespace(vision_enabled=True))
+    monkeypatch.setattr(api, "_asset_cutscenes", AsyncMock(return_value={
+        10015: [{"node_id": 15537}], 10016: [{"node_id": 15537}]}))
+    monkeypatch.setattr(api, "_logical_plan", AsyncMock(return_value=(
+        {"cutscene_node_id": 15537}, refs[1], {10015: refs[0], 10016: refs[1]})))
+    run = SimpleNamespace(id=40961, target_node_id=10016)
+    monkeypatch.setattr(api, "_existing_whole_scene_job", AsyncMock(return_value=(run, SimpleNamespace(id=1358077))))
+    enqueue = AsyncMock()
+    monkeypatch.setattr(api, "enqueue_logical_visual_job", enqueue)
+    monkeypatch.setattr(api, "public_job", lambda item: {"id": item.id})
+    result = await api.create_visual_jobs(api.VisualRequest(asset_node_ids=[10015, 10016], game_version="3.8.0"), db)
+    assert result == {"jobs": [{"id": 40961, "reused_report_id": 1358077,
+                                "cutscene_node_id": 15537, "reused_from_asset_node_id": 10016}]}
+    enqueue.assert_not_awaited()
 
 
 @pytest.mark.asyncio
