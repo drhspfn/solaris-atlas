@@ -315,9 +315,9 @@ async def test_event_history_keeps_all_servers_and_unknown_versions_separate(
     context, monkeypatch, snapshot
 ):
     context.session.execute.return_value = [
-        (1, "asia", "3.10"),
-        (2, "region_4", None),
-        (3, "america", "3.9"),
+        (1, "asia", "3.10", "run:1", None, None),
+        (2, "region_4", None, "run:2", None, None),
+        (3, "america", "3.9", "run:3", None, None),
     ]
 
     async def event_response(server, _kind, _version, locale, session, *, event_id, occurrence_id):
@@ -384,7 +384,7 @@ async def test_event_without_runs_does_not_invent_a_server_or_occurrence(context
 
 @pytest.mark.asyncio
 async def test_regional_event_retains_authoritative_undated_fallback_in_calendar(context):
-    context.session.execute.return_value = [(1, "asia", "3.10")]
+    context.session.execute.return_value = [(1, "asia", "3.10", "run:1", None, None)]
     context_event = {
         "id": 7,
         "title": "Localized event",
@@ -517,7 +517,7 @@ async def test_cutscene_card_uses_the_public_preview_identity(context):
 
 @pytest.mark.asyncio
 async def test_ambiguous_event_render_fails_without_picking_a_run(context, monkeypatch):
-    context.session.execute.return_value = [(1, "asia", "3.10")]
+    context.session.execute.return_value = [(1, "asia", "3.10", "run:1", None, None)]
     monkeypatch.setattr(
         sections,
         "browse_events",
@@ -770,9 +770,9 @@ async def test_quest_repeated_full_page_fails_instead_of_looping_or_publishing_t
 @pytest.mark.parametrize("snapshot", ["3.10", "3.10.0", "3.10.45"])
 async def test_event_snapshot_matches_schedule_major_minor_not_prefix(context, snapshot):
     context.session.execute.return_value = [
-        (1, "asia", "3.10"),
-        (2, "asia", "3.1"),
-        (3, "asia", "3.100"),
+        (1, "asia", "3.10", "run:1", None, None),
+        (2, "asia", "3.1", "run:2", None, None),
+        (3, "asia", "3.100", "run:3", None, None),
     ]
     sections.browse_events.side_effect = [
         {"events": [{"id": 7, "occurrence_id": 1}]},

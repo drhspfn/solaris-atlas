@@ -11,6 +11,7 @@ from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
 from wuwa_story.db.models.graph import Node
 from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
+from wuwa_story.events.catalog_duplicates import visible_occurrences
 from wuwa_story.events.domain import (
     CLIENT_SOURCE,
     Event,
@@ -76,6 +77,19 @@ async def read_event_runs(
         ]
     else:
         rows = list((await session.execute(statement)).all())
+    if version is None and event_id is None:
+        placeholders = {
+            occurrence.id for _, occurrence in rows
+            if occurrence and occurrence.source_occurrence_id.startswith("client:")
+            and occurrence.starts_at is None and occurrence.ends_at is None
+        }
+        keep = visible_occurrences(
+            [(event.id, occurrence.id if occurrence else None,
+              occurrence.game_version if occurrence else None) for event, occurrence in rows],
+            placeholders,
+        )
+        rows = [(event, occurrence) for event, occurrence in rows
+                if not occurrence or occurrence.id not in placeholders or occurrence.id in keep]
     return rows
 
 
