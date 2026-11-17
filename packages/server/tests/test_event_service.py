@@ -453,7 +453,7 @@ async def test_http_routes_use_overridden_service_and_map_domain_errors(monkeypa
             "/events?server=asia&kind=banner&version=3.7&locale=fr&summary=true"
         )
         assert response.status_code == 200 and response.json() == {
-            "events": [], "snapshot_presentation": "current_and_recorded_occurrences"}
+            "events": [], "snapshot_presentation": "versioned_catalog_capture"}
         missing = await client.get("/events/7/detail?server=america&occurrence_id=42&locale=fr")
     service.browse.assert_awaited_once_with(
         "asia", "banner", "3.7.0", "fr", summary=True)

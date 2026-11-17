@@ -33,7 +33,7 @@ async def test_snapshot_routes_only_complete_membership_to_source(monkeypatch):
         assert (await client.get("/events/snapshots")).json() == {"versions": ["3.10.0", "3.8.0", "3.7.1"]}
         response = await client.get("/events?version=3.8.0")
         assert response.status_code == 200
-        assert response.json()["snapshot_presentation"] == "current_and_recorded_occurrences"
+        assert response.json()["snapshot_presentation"] == "versioned_catalog_capture"
         assert service.browse.await_args.args[2] == "3.8.0"
         session.scalars.return_value = ["3.8.0"]
         assert (await client.get("/events?version=3.8")).status_code == 200
@@ -62,7 +62,7 @@ async def test_snapshot_uses_current_projection_when_selected(monkeypatch):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/events?server=asia&version=3.8.0&summary=true")
     assert response.status_code == 200
-    assert response.json() == {"events": [{"id": 7}], "snapshot_presentation": "current_and_recorded_occurrences"}
+    assert response.json() == {"events": [{"id": 7}], "snapshot_presentation": "versioned_catalog_capture"}
     assert reader.await_args.args[1:] == ("asia", None, "3.8.0", "en", True)
     service.browse.assert_not_awaited()
 

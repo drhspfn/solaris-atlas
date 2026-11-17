@@ -3,8 +3,9 @@
 from types import SimpleNamespace
 from typing import Any
 
-from sqlalchemy import and_, case, cast, func, or_, select, tuple_
-from sqlalchemy.dialects.postgresql import JSONB, JSONPATH
+from fastapi import HTTPException
+from sqlalchemy import Text, and_, case, cast, func, literal, or_, select, tuple_
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, JSONPATH
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.db.models.game_events import (
@@ -53,11 +54,10 @@ async def read_event_runs(
     if kind:
         statement = statement.where(GameEvent.event_kind == kind)
     if version:
-        statement = statement.where(GameEvent.id.in_(
-            select(GameEventSnapshotMember.event_id)
-            .join(GameEventSnapshot, GameEventSnapshot.version == GameEventSnapshotMember.version)
-            .where(GameEventSnapshotMember.version == version, GameEventSnapshot.complete.is_(True))
-        ))
+        statement = statement.join(GameEventSnapshotMember, and_(
+            GameEventSnapshotMember.event_id == GameEvent.id, GameEventSnapshotMember.version == version
+        )).join(GameEventSnapshot, GameEventSnapshot.version == GameEventSnapshotMember.version).where(
+            GameEventSnapshot.complete.is_(True))
     if event_id is not None:
         if occurrence_id is not None:
             root = select(func.coalesce(GameEvent.canonical_event_id, GameEvent.id)).where(
@@ -69,7 +69,7 @@ async def read_event_runs(
             GameEventOccurrence.id == occurrence_id if occurrence_id is not None
             else GameEventOccurrence.id.is_(None)
         )
-    if summary:
+    if summary or version:
         # Project JSON in PostgreSQL: joined ORM rows otherwise transfer and decode
         # the complete prefab catalog once per occurrence before we can trim it.
         columns: list[Any] = []
@@ -77,10 +77,13 @@ async def read_event_runs(
         for model in (GameEvent, GameEventOccurrence):
             fields = [column.key for column in model.__table__.columns]
             names.append(fields)
+            source = model.source_data
+            if version:
+                source = func.jsonb_set(func.coalesce(source, cast({}, JSONB)),
+                    cast(literal("{client}"), ARRAY(Text)), GameEventSnapshotMember.client_capture, type_=JSONB)
             columns.extend(
-                _summary_source(model.source_data, locale) if name == "source_data"
-                else getattr(model, name) for name in fields
-            )
+                (_summary_source(source, locale) if summary else source) if name == "source_data"
+                else getattr(model, name) for name in fields)
         projected = (await session.execute(statement.with_only_columns(*columns))).all()
         split = len(names[0])
         rows: list[Any] = [
@@ -91,6 +94,10 @@ async def read_event_runs(
         ]
     else:
         rows = list((await session.execute(statement)).all())
+    if version and any(not isinstance(event.source_data, dict) or not isinstance(
+        event.source_data.get("client"), dict) or not event.source_data["client"].get("download_id")
+        for event, _ in rows):
+        raise HTTPException(503, "The selected event snapshot capture is not ready")
     if event_id is None:
         placeholders = {
             occurrence.id for _, occurrence in rows

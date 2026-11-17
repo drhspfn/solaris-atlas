@@ -83,6 +83,11 @@ class EventService:
         )
         artwork = {run.key: _artwork(run.event, run.occurrence) for run in runs}
         announcements = await self._announcements(runs, event_id)
+        if version:
+            # Selected snapshots may use a pinned notice revision, never today's
+            # unrelated notice artwork as a replacement for missing old media.
+            announcements.latest.clear()
+            announcements.banners.clear()
         presentations = {run.key: _presentation(run.event, run.occurrence, locale) for run in runs}
         reward_keys = {
             f"item:{reward['id']}"
@@ -112,6 +117,9 @@ class EventService:
                          announcements, reward_addresses, images, spine)
             for run in runs
         ]
+        if version and summary:
+            for row in rendered:
+                row["detail_url"] += f"&version={version}"
         if event_id is None:
             rendered = group_selectable_pools(rendered, server, locale)
             rendered = catalog_rows(rendered)
@@ -132,9 +140,11 @@ class EventService:
         server: str,
         occurrence_id: int | None = None,
         locale: str = "en",
+        version: str | None = None,
     ) -> dict[str, Any]:
         response = await self.browse(
             server,
+            version=version,
             locale=locale,
             event_id=event_id,
             occurrence_id=occurrence_id,
@@ -152,6 +162,7 @@ class EventService:
             if len(identities) <= 64:
                 for sibling_id, sibling_occurrence_id in identities:
                     sibling = await self.browse(server, locale=locale, summary=True,
+                        version=version,
                         event_id=sibling_id, occurrence_id=sibling_occurrence_id,
                         _include_pool_match=True)
                     candidates.extend(sibling["events"])

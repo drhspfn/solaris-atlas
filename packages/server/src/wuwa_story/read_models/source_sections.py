@@ -24,7 +24,7 @@ from wuwa_story.db.models.core import (
     QuestAction,
     QuestNode,
 )
-from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
+from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence, GameEventSnapshotMember
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.raw import SourceRecord
@@ -406,7 +406,7 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
         response = await browse_events(
             server,
             None,
-            None,
+            snapshot_key if selected_version is not None else None,
             locale,
             session,
             event_id=entity_id,
@@ -428,9 +428,11 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
             unversioned.append(run)
         else:
             selected.append(run)
-    if snapshot_key != "current" and not selected:
-        raise HTTPException(404, "No event occurrence recorded for this version")
-    # With no runs there is no server or historical version to invent.
+    if selected_version is not None and not selected:
+        member = await session.get(GameEventSnapshotMember, (snapshot_key, entity_id))
+        if member is None:
+            raise HTTPException(404, "Event is not in the selected catalog snapshot")
+    # A catalog member exists independently of whether a period was recorded.
     summary = {
         "id": event.id,
         "title": (selected[0].get("title") if selected else None) or event.title,
@@ -443,7 +445,8 @@ async def _event_payload(session, entity_id, locale, snapshot_key):
     # Capture the source LEFT JOIN fallback even for events with regional runs:
     # another server may have no occurrence. This never selects a regional run.
     response = await browse_events(
-        "", None, None, locale, session, event_id=entity_id, occurrence_id=None
+        "", None, snapshot_key if selected_version is not None else None,
+        locale, session, event_id=entity_id, occurrence_id=None
     )
     matching = [
         run for run in response["events"] if run["id"] == entity_id and run["occurrence_id"] is None

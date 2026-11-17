@@ -23,8 +23,9 @@ def _time(value):
         raise entities._unready() from None
 
 
-async def event_detail(session, event_id, server, occurrence_id, locale="en"):
-    payload = await entities.page_payload(session, "game_event", event_id, locale, selector=None)
+async def event_detail(session, event_id, server, occurrence_id, locale="en", version=None):
+    payload = await entities.page_payload(session, "game_event", event_id, locale, snapshot_key=version, selector=None) if version else await entities.page_payload(
+        session, "game_event", event_id, locale, selector=None)
     runs = payload.get("occurrences")
     event = payload.get("event")
     if not isinstance(runs, list) or not isinstance(event, dict):
@@ -39,7 +40,7 @@ async def event_detail(session, event_id, server, occurrence_id, locale="en"):
                 GameEventOccurrence.id == occurrence_id, GameEventOccurrence.server == server,
                 func.coalesce(GameEvent.canonical_event_id, GameEvent.id) == root))
         if type(owner) is int and owner != event_id:
-            return await event_detail(session, owner, server, occurrence_id, locale)
+            return await event_detail(session, owner, server, occurrence_id, locale, version)
     if occurrence_id is None:
         if (
             not any(run.get("server") == server for run in runs)
@@ -103,7 +104,7 @@ async def events_page(session, server, kind=None, version=None, locale="en", sum
         session,
         "game_event",
         locale,
-        "current",
+        version or "current",
         selector="calendar" if summary else None,
         card=summary,
     )
@@ -139,6 +140,8 @@ async def events_page(session, server, kind=None, version=None, locale="en", sum
                 )
                 if run.get("occurrence_id") is not None:
                     result["detail_url"] += f"&occurrence_id={run['occurrence_id']}"
+                if version:
+                    result["detail_url"] += f"&version={version}"
             events.append(result)
     placeholders = {event["occurrence_id"] for event in events
                     if event.get("_catalog_placeholder") is True}

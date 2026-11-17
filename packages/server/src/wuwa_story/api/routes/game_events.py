@@ -71,7 +71,7 @@ async def list_game_events(
             response = await read_projections.events_page(session, server, kind, version, locale, summary)
         else:
             response = await service.browse(server, kind, version, locale, summary=summary)
-        return {**response, "snapshot_presentation": "current_and_recorded_occurrences"}
+        return {**response, "snapshot_presentation": "versioned_catalog_capture"}
     if read_projections.should_route_to_projection("game_event", None, locale=locale):
         return await read_projections.events_page(session, server, kind, version, locale, summary)
     return await service.browse(server, kind, version, locale, summary=summary)
@@ -89,12 +89,19 @@ async def game_event_detail(
     server: str = Query(default="europe", pattern="^(asia|europe|america)$"),
     occurrence_id: int | None = Query(default=None),
     locale: str = Query(default="en", pattern=r"^[a-zA-Z-]{2,16}$"),
+    version: str | None = Query(default=None, pattern=r"^\d+\.\d+\.\d+$"),
     session: AsyncSession = Depends(get_session),
     service: EventService = Depends(get_event_service),
 ) -> dict[str, Any]:
-    if read_projections.should_route_to_projection("game_event", "current", locale=locale):
-        return await read_projections.event_detail(session, event_id, server, occurrence_id, locale)
+    if version:
+        snapshot = await session.get(GameEventSnapshot, version)
+        if snapshot is None or not snapshot.complete:
+            raise HTTPException(404, "Event catalog snapshot not available")
+    if read_projections.should_route_to_projection("game_event", version or "current", locale=locale):
+        return await read_projections.event_detail(session, event_id, server, occurrence_id, locale, version) if version else await read_projections.event_detail(
+            session, event_id, server, occurrence_id, locale)
     try:
-        return await service.detail(event_id, server, occurrence_id, locale)
+        return await service.detail(event_id, server, occurrence_id, locale, version=version) if version else await service.detail(
+            event_id, server, occurrence_id, locale)
     except EventRunNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
