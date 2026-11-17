@@ -101,6 +101,19 @@ async def test_recurring_schedule_failure_is_reported_without_losing_notice_work
 
 
 @pytest.mark.asyncio
+async def test_notice_refresh_reports_calculated_and_superseded_cycles(monkeypatch):
+    session = AsyncMock()
+    importer = AsyncMock(return_value={"source": "community", "revision": "a" * 40,
+        "occurrences": [{}], "calculated_cycles": [{}, {}], "superseded_cycle_ids": [12]})
+    monkeypatch.setattr(notices, "import_recurring_schedules", importer)
+    report, failure = await notices.refresh_recurring_schedules(session)
+    assert failure is None and report == {"source": "community", "revision": "a" * 40,
+                                          "updated": 1, "calculated": 2, "superseded": 1}
+    importer.assert_awaited_once_with(session, apply=True)
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_recurring_failure_makes_notice_job_retryable(monkeypatch, tmp_path):
     definition = tmp_path / "files" / "LauncherNoticeDefine.js"
     definition.parent.mkdir()

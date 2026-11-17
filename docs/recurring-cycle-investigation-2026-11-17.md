@@ -89,5 +89,28 @@ The calendar retains a newer undated recurring client version when the matching
 dated run belongs to another version. Banner placeholders retain their existing
 cross-version deduplication. Do not derive Matrix phase dates from its
 multi-version season or infer a live ShipTower phase from the highest client
-season ID; confirm a current server cadence before extrapolating the 2025
-Whimpering Wastes schedule.
+season ID. The targeted importer also calculates current and next occurrences
+from a trusted stored `season.cycle.weeks` anchor. These windows and their ends
+are estimates, not live server confirmations. They preserve the anchor, stop at
+an explicit later schedule, and remove only unexpired generated windows
+superseded by that schedule. If the source corrects an anchor's start, end, or
+rule, the same Notice-job transaction recalculates its unexpired windows from
+the corrected anchor and retains its source revision. A declared phase never
+overrides a notice-backed or explicitly authored phase with the same season.
+Each Notice import advances the bounded window; the CLI can also be rerun.
+Refresh affected projections afterwards.
+
+An offline calculation from the read-only Europe anchors at 2026-11-17 17:00
+UTC yields Whimpering Wastes phase 23 (October 26 03:00–November 23 03:00 UTC)
+and phase 24 (November 23 03:00–December 21 03:00 UTC). Hazard Revisited yields
+phase 42 (November 9–December 7 03:00 UTC) and phase 43 (December 7–January 4
+03:00 UTC). These are extrapolations of the recorded four-week cadence.
+
+The user subsequently reported game screenshots from November 17 showing about
+5 days 8 hours remaining for ships and 19 days 8 hours for Hazard Revisited.
+Those rounded countdowns are consistent with the calculated November 23 and
+December 7 Europe boundaries. The reported Matrix countdown, about 1 day 8
+hours until unlock and 34 days 1 hour remaining, is consistent with the
+community phase-7 window from November 19 to December 21. The screenshots are
+independent observations supplied by the user, not an authenticated server API
+or proof of exact timestamps; calculated cycles remain marked estimated.
