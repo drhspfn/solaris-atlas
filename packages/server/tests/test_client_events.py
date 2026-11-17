@@ -3,7 +3,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
+from wuwa_story.db.models.game_events import (
+    GameEvent, GameEventOccurrence, GameEventSnapshot, GameEventSnapshotMember,
+)
 from wuwa_story.ingestion.client_events import store_client_events
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE, SOURCE
 
@@ -24,6 +26,7 @@ async def test_client_import_adds_unlisted_events_and_preserves_exact_historical
     session.scalars.side_effect = [[old], [occurrence]]
     added = []
     session.add = added.append
+    session.add_all = added.extend
 
     async def flush():
         for index, row in enumerate(added):
@@ -44,6 +47,10 @@ async def test_client_import_adds_unlisted_events_and_preserves_exact_historical
     assert len([row for row in added if isinstance(
         row, GameEventOccurrence)]) == 5
     assert result["artwork_paths"] == ["/Game/Actual"]
+    assert [(row.version, row.download_id) for row in added if isinstance(row, GameEventSnapshot)] == [
+        ("3.7.0", "a" * 64)
+    ]
+    assert {row.event_id for row in added if isinstance(row, GameEventSnapshotMember)} == {7, created[0].id}
 
 
 @pytest.mark.asyncio
@@ -55,11 +62,13 @@ async def test_reimport_reuses_client_identity_and_retains_discovered_prefab_ima
             for server in ["asia", "europe", "america"]]
     session = AsyncMock()
     session.scalars.side_effect = [[event], rows]
-    session.add = lambda _: pytest.fail(
-        "reimport must not duplicate events or occurrences")
+    added = []
+    session.add = added.append
+    session.add_all = added.extend
     await store_client_events(session, {"100": record()}, "3.7.0", "a" * 64)
     assert event.source_data["client"]["prefab_artwork"] == [image]
     assert rows[0].source_data["client"]["download_id"] == "a" * 64
+    assert not any(isinstance(row, (GameEvent, GameEventOccurrence)) for row in added)
 
 
 @pytest.mark.asyncio
@@ -73,9 +82,28 @@ async def test_new_download_does_not_overwrite_dated_run_snapshots():
             for server in ["asia", "europe", "america"]]
     session = AsyncMock()
     session.scalars.side_effect = [[event], rows]
-    session.add = lambda _: pytest.fail("must reuse canonical event and dated runs")
+    added = []
+    session.add = added.append
+    session.add_all = added.extend
     await store_client_events(session, {"100": record("Rerun title")}, "3.7.1", "new")
     assert event.title == "Rerun title"
     for row in rows:
         assert row.banner_path == "/Game/FirstRun"
         assert row.source_data["client"] == old_client
+    assert not any(isinstance(row, (GameEvent, GameEventOccurrence)) for row in added)
+
+
+@pytest.mark.asyncio
+async def test_partial_import_does_not_publish_an_incomplete_snapshot():
+    event = SimpleNamespace(id=7, source=CLIENT_SOURCE, source_id="activity:100", source_data={})
+    rows = [SimpleNamespace(event_id=7, server=server, source_data={})
+            for server in ["asia", "europe", "america"]]
+    session = AsyncMock()
+    session.scalars.side_effect = [[event], rows]
+    added = []
+    session.add = added.append
+    session.add_all = added.extend
+    result = await store_client_events(session, {"100": record(), "101": {"locales": {}}}, "3.8.0", "new")
+    assert result["unresolved"]
+    assert not any(isinstance(row, (GameEventSnapshot, GameEventSnapshotMember)) for row in added)
+    assert "DELETE FROM core.game_event_snapshot" in str(session.execute.call_args.args[0])

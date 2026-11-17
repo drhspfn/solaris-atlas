@@ -1,8 +1,10 @@
 """Persist client-authored events independently of the historical timetable."""
 
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 
-from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
+from wuwa_story.db.models.game_events import (
+    GameEvent, GameEventOccurrence, GameEventSnapshot, GameEventSnapshotMember,
+)
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE, SERVER_KEYS, SOURCE
 
 
@@ -65,6 +67,15 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
     if not events:
         raise ValueError("No localized client events could be imported")
     await session.flush()
+    # Replace membership atomically under the existing catalog import lock.
+    # An incomplete extraction is not an authoritative snapshot.
+    await session.execute(delete(GameEventSnapshot).where(GameEventSnapshot.version == asset_version))
+    if not missing:
+        session.add(GameEventSnapshot(version=asset_version, download_id=download_id))
+        await session.flush()
+        session.add_all([
+            GameEventSnapshotMember(version=asset_version, event_id=event.id) for event in events
+        ])
     occurrences = list(await session.scalars(select(GameEventOccurrence).where(
         GameEventOccurrence.event_id.in_([e.id for e in events]),
         GameEventOccurrence.game_version == version)))
