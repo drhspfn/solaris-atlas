@@ -17,6 +17,7 @@ from wuwa_story.agents.cutscene_vision import (
     wipe_cutscene_analysis,
 )
 from wuwa_story.agents.settings import get_agent_settings
+from wuwa_story.agents.visual_enqueue_lock import lock_visual_sources
 from wuwa_story.api.routes.story.cutscene_audio import audio_bundles
 from wuwa_story.api.routes.story.media import cutscene_videos
 from wuwa_story.auth.dependencies import require_admin, require_csrf
@@ -300,6 +301,22 @@ async def _existing_whole_scene_job(session, plan, references):
     return None
 
 
+async def _guard_partial_legacy_jobs(session, version, references):
+    # A partial asset-level run is not a reusable logical report, but starting
+    # the whole scene concurrently could bill the same video twice.
+    for asset_id, ref in references.items():
+        source = await session.get(FileObject, ref.file_id)
+        if source is None or source.sha256 is None:
+            raise ValueError("A playback source is no longer content-addressed")
+        previous = await session.scalar(select(ProcessingRun.id).join(Processor).where(
+            Processor.key == "cutscene_vision", ProcessingRun.target_node_id == asset_id,
+            ProcessingRun.metadata_json["asset_version"].astext == version,
+            ProcessingRun.metadata_json["source_sha256"].astext == source.sha256.hex(),
+        ).limit(1))
+        if previous:
+            raise ValueError("A legacy analysis of a scene part already exists; reconcile it first")
+
+
 @router.get("/assets")
 async def assets(
     q: str = Query("", max_length=128),
@@ -488,6 +505,7 @@ async def create_visual_jobs(request: VisualRequest, session: AsyncSession = Dep
         covered = set().union(*(refs.keys() for _, _, refs in prepared)) if prepared else set()
         if any(ref.owner_node_id not in covered for ref in references if associations.get(ref.owner_node_id)):
             raise ValueError("Selected asset does not belong to its published playback flow")
+        await lock_visual_sources(session, covered | scene_ids, request.game_version)
         jobs = []
         for plan, ref, source_refs in prepared:
             reused = await _existing_whole_scene_job(session, plan, source_refs)
@@ -497,6 +515,7 @@ async def create_visual_jobs(request: VisualRequest, session: AsyncSession = Dep
                              "cutscene_node_id": plan["cutscene_node_id"],
                              "reused_from_asset_node_id": run.target_node_id})
             else:
+                await _guard_partial_legacy_jobs(session, request.game_version, source_refs)
                 run = await enqueue_logical_visual_job(session, plan, ref, settings)
                 jobs.append(public_job(run))
         jobs.extend([public_job(await enqueue_visual_job(session, ref, settings)) for ref in legacy])

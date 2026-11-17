@@ -277,6 +277,19 @@ async def enqueue_visual_job(
 ):
     if not settings.vision_enabled:
         return None
+    version = (reference.metadata_json or {}).get("asset_version")
+    if reference.owner_node_id and version:
+        from wuwa_story.agents.visual_enqueue_lock import lock_visual_sources
+
+        await lock_visual_sources(session, [reference.owner_node_id], version)
+        logical = await session.scalar(select(ProcessingRun.id).join(Processor).where(
+            Processor.key == "cutscene_vision",
+            ProcessingRun.metadata_json["asset_version"].astext == version,
+            or_(ProcessingRun.metadata_json["selected_asset_node_ids"].contains([reference.owner_node_id]),
+                ProcessingRun.metadata_json["ignored_alternative_asset_node_ids"].contains([reference.owner_node_id])),
+        ).limit(1))
+        if logical:
+            raise ValueError("A logical scene analysis already exists for this video; reconcile it first")
     file = await session.get(FileObject, reference.file_id)
     if file is None or file.sha256 is None:
         raise ValueError("Visual analysis needs a content-addressed published video")

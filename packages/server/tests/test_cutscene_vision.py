@@ -80,7 +80,7 @@ async def test_enqueue_reuses_existing_visual_report_for_title(monkeypatch):
     report = SimpleNamespace(id=25, file_id=2, metadata_json={"events": [{"time": 1}]})
     monkeypatch.setattr(vision, "visual_reference", AsyncMock(return_value=report))
     db = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id=2, sha256=b"source")),
-                         execute=AsyncMock(), scalar=AsyncMock(side_effect=[3, None]),
+                         execute=AsyncMock(), scalar=AsyncMock(side_effect=[None, 3, None]),
                          add=Mock(), flush=AsyncMock())
     reference = SimpleNamespace(id=1, file_id=2, owner_node_id=5, reference_type="cutscene_video",
                                 metadata_json={"asset_version": "3.7.0"})

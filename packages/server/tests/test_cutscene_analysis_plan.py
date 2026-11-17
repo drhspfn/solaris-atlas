@@ -83,6 +83,9 @@ async def test_two_selected_variants_enqueue_one_logical_job(monkeypatch):
     monkeypatch.setattr(api, "_logical_plan", AsyncMock(return_value=(
         {"plan": "test"}, refs[1], {10015: refs[0], 10016: refs[1]})))
     monkeypatch.setattr(api, "_existing_whole_scene_job", AsyncMock(return_value=None))
+    locking = AsyncMock()
+    monkeypatch.setattr(api, "lock_visual_sources", locking)
+    monkeypatch.setattr(api, "_guard_partial_legacy_jobs", AsyncMock())
     run = SimpleNamespace(id=3)
     enqueue = AsyncMock(return_value=run)
     monkeypatch.setattr(api, "enqueue_logical_visual_job", enqueue)
@@ -90,6 +93,7 @@ async def test_two_selected_variants_enqueue_one_logical_job(monkeypatch):
     result = await api.create_visual_jobs(api.VisualRequest(asset_node_ids=[10015, 10016], game_version="3.8.0"), db)
     assert result == {"jobs": [{"id": 3}]}
     enqueue.assert_awaited_once()
+    locking.assert_awaited_once_with(db, {15537, 10015, 10016}, "3.8.0")
     db.commit.assert_awaited_once()
 
 
@@ -106,6 +110,7 @@ async def test_15537_existing_variant_returns_one_reused_job_without_enqueue(mon
         {"cutscene_node_id": 15537}, refs[1], {10015: refs[0], 10016: refs[1]})))
     run = SimpleNamespace(id=40961, target_node_id=10016)
     monkeypatch.setattr(api, "_existing_whole_scene_job", AsyncMock(return_value=(run, SimpleNamespace(id=1358077))))
+    monkeypatch.setattr(api, "lock_visual_sources", AsyncMock())
     enqueue = AsyncMock()
     monkeypatch.setattr(api, "enqueue_logical_visual_job", enqueue)
     monkeypatch.setattr(api, "public_job", lambda item: {"id": item.id})
