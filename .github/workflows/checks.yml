@@ -158,6 +158,8 @@ jobs:
         run: >-
           uv run pytest tests/test_selectable_pool_calendar.py tests/test_event_service.py
           tests/test_event_official_roster.py tests/test_event_catalog_provenance.py
+          tests/test_event_catalog_duplicates.py tests/test_recurring_events.py
+          tests/test_notices.py tests/test_notice_trials.py
           tests/test_event_browsing.py tests/test_projection_readers.py
           tests/test_read_model_builders.py tests/test_read_model_relations.py
           tests/test_read_model_worker.py tests/test_character_search_indexes.py
