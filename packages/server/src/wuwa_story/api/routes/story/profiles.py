@@ -2,7 +2,7 @@
 
 from collections import Counter
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import JSON, case, or_, select
@@ -807,11 +807,21 @@ async def quest_profile(
     locale: str = "en",
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
+    view: Literal["full", "reader"] = "full",
 ) -> dict[str, Any]:
     if read_projections.should_route_to_projection("quest", game_version, locale=locale):
+        if view == "reader":
+            return await read_projections.profile_page(
+                session, "quest", game_quest_id, locale, game_version, reader=True
+            )
         return await read_projections.profile_page(session, "quest", game_quest_id, locale, game_version)
     try:
-        return await usecases.quest_profile(session, game_quest_id, locale, game_version)
+        result = await usecases.quest_profile(session, game_quest_id, locale, game_version)
+        if view == "reader":
+            from wuwa_story.read_models.readers.entities import quest_reader_profile
+
+            return quest_reader_profile(result)
+        return result
     except StoryBrowsingError as error:
         raise HTTPException(status_code=error.status_code, detail=error.detail) from error
 

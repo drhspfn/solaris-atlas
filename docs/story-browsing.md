@@ -58,6 +58,10 @@ For the initial UI, use `/characters/{key}/profile`,
 `/quests/{game_quest_id}/profile`. The detailed query parameters and response
 fields are documented in [frontend-api-v1.md](frontend-api-v1.md).
 
+The quest reader can request `/quests/{id}/profile?view=reader` to receive only
+`quest`, `scenes`, `explicit_links`, and `item_requirements`. Omitting the
+parameter preserves the complete profile for existing API clients.
+
 Use `/nodes/{canonical_key}/related` to page through meaningful graph neighbors.
 Raw `source_reference` rows are summarized by source table by default, so the
 main response does not bury character, quest, item, or area links in hundreds of

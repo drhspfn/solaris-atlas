@@ -31,7 +31,7 @@ function selectionQuery(selection: ReturnType<typeof questSelection>) {
 export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
   const key = decodeRouteKey((await params).key);
   const selection = selectionQuery(questSelection((await searchParams) ?? {}));
-  const profile = await serverApi<any>(`/quests/${encodeURIComponent(key)}/profile?${selection}`);
+  const profile = await serverApi<any>(`/quests/${encodeURIComponent(key)}/profile?${selection}&view=reader`);
   const quest = profile?.quest;
   const title = quest?.name?.content || `Quest ${key}`;
   const description = `Story transcript, flow states, player choices and audio records for ${title} in Solaris Atlas.`;
@@ -64,7 +64,7 @@ export default async function QuestTranscriptPage({ params, searchParams }: Prop
 
   // Server pre-fetch initial quest data for instant SSR
   const [profile, transcript, continuity, media] = await Promise.all([
-    serverApi<any>(`/quests/${encodeURIComponent(key)}/profile?${selection}`),
+    serverApi<any>(`/quests/${encodeURIComponent(key)}/profile?${selection}&view=reader`),
     serverApi<any>(
       `/quests/${encodeURIComponent(key)}/transcript?${transcriptSelection}&limit=${APP_SETTINGS.limits.transcript}&include_raw=false`,
       { cache: 'no-store' },
