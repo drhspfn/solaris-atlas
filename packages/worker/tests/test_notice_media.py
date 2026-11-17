@@ -52,6 +52,7 @@ async def test_notice_images_are_archived_and_failures_keep_the_text(
     monkeypatch.setattr(notices, "tool_path", lambda _: "fmodel")
     monkeypatch.setattr(notices, "fetch_notice_feed", AsyncMock(return_value=("feed", "page", {})))
     monkeypatch.setattr(notices, "store_notices", AsyncMock(return_value={"notices": 1}))
+    monkeypatch.setattr(notices, "refresh_recurring_schedules", AsyncMock(return_value=({"updated": 0}, None)))
     monkeypatch.setattr(notices, "S3Storage", Mock(return_value=storage))
     monkeypatch.setattr(notices, "FileRegistrationService", Mock(return_value=registration))
     client = httpx.AsyncClient
@@ -84,3 +85,37 @@ async def test_notice_images_are_archived_and_failures_keep_the_text(
         assert status == "partial" and report["missing"] == 1
         assert notice.content["banner_url"] == source
         registration.register_file.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_recurring_schedule_failure_is_reported_without_losing_notice_work(monkeypatch):
+    session = AsyncMock()
+    monkeypatch.setattr(notices, "import_recurring_schedules", AsyncMock(
+        side_effect=httpx.ConnectError("upstream unavailable")))
+    result, failure = await notices.refresh_recurring_schedules(session)
+    assert result is None
+    assert failure == {"expected": "recurring_schedule", "status": "recurring_schedule_failed",
+                       "error": "ConnectError"}
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_recurring_failure_makes_notice_job_retryable(monkeypatch, tmp_path):
+    definition = tmp_path / "files" / "LauncherNoticeDefine.js"
+    definition.parent.mkdir()
+    definition.write_text("constants", encoding="utf-8")
+    session = AsyncMock()
+    session.scalars.return_value = []
+    storage = Mock(ensure_bucket=AsyncMock())
+    monkeypatch.setattr(notices, "export_assets", AsyncMock(return_value=tmp_path / "receipt.json"))
+    monkeypatch.setattr(notices, "tool_path", lambda _: "fmodel")
+    monkeypatch.setattr(notices, "fetch_notice_feed", AsyncMock(return_value=("feed", "page", {})))
+    monkeypatch.setattr(notices, "store_notices", AsyncMock(return_value={"notices": 1}))
+    monkeypatch.setattr(notices, "S3Storage", Mock(return_value=storage))
+    monkeypatch.setattr(notices, "FileRegistrationService", Mock())
+    failure = {"expected": "recurring_schedule", "status": "recurring_schedule_failed", "error": "ConnectError"}
+    monkeypatch.setattr(notices, "refresh_recurring_schedules", AsyncMock(return_value=(None, failure)))
+    report, status = await notices.import_notices(tmp_path, session)
+    assert status == "partial" and report["notices"] == 1 and report["missing"] == 1
+    assert report["media_report"]["entries"] == [failure]

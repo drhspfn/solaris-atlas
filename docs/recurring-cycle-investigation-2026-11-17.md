@@ -63,12 +63,21 @@ phase 6 as 3.8 would be incorrect.
 
 `python -m wuwa_story.ingestion.recurring_events` reports missing schedules for
 existing recurring client events, using the existing community timetable source
-and a pinned commit. Add `--apply` to insert them. It does not create events or
-rewrite dated history; its rows retain the community source, commit, source URL,
-original times and version. Existing recurrence definitions, including the
+and a pinned commit. Add `--apply` to insert or update them. It does not create
+events or delete history. Explicit corrections to the same trusted upstream
+phase update that occurrence in place, including legacy keys with an `@start`
+suffix. Ambiguous matches and notice-backed schedules are left untouched. Rows
+retain the community source, commit, source URL, original times and version.
+Existing recurrence definitions, including the
 Whimpering Wastes four-week cadence, are retained. The operator must refresh the
 affected event projections after applying. The standard client catalog import
 continues to use client data only.
+
+The official Notice job also runs this separate community refresh after the
+official data and images have been committed. A community fetch or write failure
+marks the Notice job partial with a `recurring_schedule_failed` report entry;
+retrying the Notice job retries the community refresh without rolling back the
+official import. No player credentials are used.
 
 A local dry run against read-only production records for event IDs 851, 853
 and 856 and pinned revision `23b472a98235dcf64b33d9805563abf85c9609d3`
