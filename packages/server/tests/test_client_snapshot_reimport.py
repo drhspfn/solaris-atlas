@@ -5,7 +5,7 @@ import pytest_asyncio
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from wuwa_story.db.models.game_events import GameEventSnapshot, GameEventSnapshotMember
+from wuwa_story.db.models.game_events import GameEvent, GameEventSnapshot, GameEventSnapshotMember
 from wuwa_story.ingestion.client_events import store_client_events
 
 
@@ -35,7 +35,7 @@ async def database():
             version TEXT PRIMARY KEY, download_id TEXT NOT NULL, complete BOOLEAN NOT NULL)"""))
         await connection.execute(text("""CREATE TABLE core.game_event_snapshot_member (
             version TEXT NOT NULL REFERENCES game_event_snapshot(version) ON DELETE CASCADE,
-            event_id INTEGER NOT NULL, PRIMARY KEY(version,event_id))"""))
+            event_id INTEGER NOT NULL, client_capture JSON, PRIMARY KEY(version,event_id))"""))
         await connection.execute(text("""INSERT INTO core.game_event
             (id, source, source_id, title, event_kind, source_url, source_revision, source_data)
             VALUES (1,'wuwa-game-client','activity:100','First','limited','https://example.test','old','{}'),
@@ -46,7 +46,7 @@ async def database():
                    (1,'existing','3.8','america','{}'), (2,'existing','3.8','asia','{}'),
                    (2,'existing','3.8','europe','{}'), (2,'existing','3.8','america','{}')"""))
         await connection.execute(text("INSERT INTO core.game_event_snapshot VALUES ('3.8.0','pinned',1)"))
-        await connection.execute(text("INSERT INTO core.game_event_snapshot_member VALUES ('3.8.0',1),('3.8.0',2)"))
+        await connection.execute(text("INSERT INTO core.game_event_snapshot_member (version,event_id) VALUES ('3.8.0',1),('3.8.0',2)"))
     yield async_sessionmaker(engine, class_=LocalSession, expire_on_commit=False, autoflush=False)
     await engine.dispose()
 
@@ -69,6 +69,15 @@ async def test_partial_reimport_preserves_complete_snapshot_and_members(database
                                            "3.8.0", "pinned")
         await session.commit()
         assert result["unresolved"]
+        assert await snapshot(session) == ("pinned", True, {1, 2})
+
+
+@pytest.mark.asyncio
+async def test_partial_reimport_cannot_add_members_to_complete_snapshot(database):
+    async with database() as session:
+        with pytest.raises(ValueError, match="differs"):
+            await store_client_events(session, {"100": record("First"), "999": record("Unexpected"),
+                                                "101": {"locales": {}}}, "3.8.0", "pinned")
         assert await snapshot(session) == ("pinned", True, {1, 2})
 
 
@@ -100,6 +109,9 @@ async def test_incomplete_snapshot_can_be_completed_only_by_same_download(databa
     async with database() as session:
         await session.execute(text("UPDATE core.game_event_snapshot SET complete=0 WHERE version='3.8.0'"))
         await session.execute(text("DELETE FROM core.game_event_snapshot_member WHERE event_id=2"))
+        first = await session.get(GameEventSnapshotMember, ("3.8.0", 1))
+        first.client_capture = {**record("First"), "asset_version": "3.8.0", "download_id": "pinned",
+                                "schedule_status": "server_controlled"}
         await session.commit()
         with pytest.raises(ValueError, match="different download"):
             await store_client_events(session, {"100": record("Wrong")}, "3.8.0", "other")
@@ -111,3 +123,53 @@ async def test_incomplete_snapshot_can_be_completed_only_by_same_download(databa
         # mask the value persisted by the transaction.
         session.expire_all()
         assert await snapshot(session) == ("pinned", True, {1, 2})
+        assert (await session.get(GameEventSnapshotMember, ("3.8.0", 1))).client_capture["locales"]["en"]["title"] == "First"
+        assert (await session.get(GameEventSnapshotMember, ("3.8.0", 2))).client_capture["download_id"] == "pinned"
+
+
+@pytest.mark.asyncio
+async def test_versioned_capture_is_idempotent_and_conflicting_payload_fails_closed(database):
+    async with database() as session:
+        records = {"100": record("First"), "101": record("Second")}
+        await store_client_events(session, records, "3.8.0", "pinned")
+        await session.commit()
+        first = await session.get(GameEventSnapshotMember, ("3.8.0", 1))
+        assert first.client_capture["asset_version"] == "3.8.0"
+        assert first.client_capture["download_id"] == "pinned"
+        original = first.client_capture.copy()
+        event = await session.get(GameEvent, 1)
+        event.source_data = {**event.source_data, "client": {**event.source_data["client"],
+                             "prefab_artwork": [{"path": "/Game/Enriched"}]}}
+        await session.commit()
+        await store_client_events(session, records, "3.8.0", "pinned")
+        await session.commit()
+        assert first.client_capture == original
+        assert event.source_data["client"]["prefab_artwork"] == [{"path": "/Game/Enriched"}]
+        with pytest.raises(ValueError, match="capture differs"):
+            await store_client_events(session, {"100": record("Different"), "101": record("Second")},
+                                      "3.8.0", "pinned")
+        assert first.client_capture == original
+        assert (await session.get(GameEvent, 1)).title == "First"
+
+
+@pytest.mark.asyncio
+async def test_older_import_retains_newer_current_and_separate_captures(database):
+    async with database() as session:
+        await store_client_events(session, {"100": record("New"), "101": record("New 2")},
+                                  "3.8.0", "pinned")
+        await session.commit()
+        event = await session.get(GameEvent, 1)
+        event.source_data = {**event.source_data, "client": {**event.source_data["client"],
+                             "prefab_artwork": [{"path": "/Game/NewOnly"}]}}
+        await session.commit()
+        await store_client_events(session, {"100": record("Old"), "101": record("Old 2")},
+                                  "3.7.0", "older-download")
+        await session.commit()
+        assert (await session.get(GameEvent, 1)).title == "New"
+        old = await session.get(GameEventSnapshotMember, ("3.7.0", 1))
+        new = await session.get(GameEventSnapshotMember, ("3.8.0", 1))
+        assert old.client_capture["locales"]["en"]["title"] == "Old"
+        assert old.client_capture["download_id"] == "older-download"
+        assert "prefab_artwork" not in old.client_capture
+        assert new.client_capture["locales"]["en"]["title"] == "New"
+        assert new.client_capture["download_id"] == "pinned"

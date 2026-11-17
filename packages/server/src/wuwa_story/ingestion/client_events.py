@@ -1,6 +1,8 @@
 """Persist client-authored events independently of the historical timetable."""
 
-from sqlalchemy import delete, select, text
+import re
+
+from sqlalchemy import select, text
 
 from wuwa_story.db.models.game_events import (
     GameEvent,
@@ -15,6 +17,22 @@ def client_identity(key: str) -> str:
     return key if key.startswith("gacha:") else f"activity:{key}"
 
 
+def _version_key(value):
+    if not isinstance(value, str) or not re.fullmatch(r"\d+(?:\.\d+)+", value):
+        return None
+    parts = [int(part) for part in value.split(".")]
+    while len(parts) > 2 and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
+
+
+_ENRICHMENT_FIELDS = {"prefab_artwork", "prefab_spine_resources", "missing_resources", "animation_import"}
+
+
+def _capture_core(capture):
+    return {key: value for key, value in capture.items() if key not in _ENRICHMENT_FIELDS}
+
+
 async def store_client_events(session, records: dict, asset_version: str, download_id: str) -> dict:
     if not records:
         raise ValueError("The game client contains no event catalog records")
@@ -23,6 +41,15 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
     snapshot = await session.get(GameEventSnapshot, asset_version, populate_existing=True)
     if snapshot and snapshot.download_id != download_id:
         raise ValueError("Existing event snapshot belongs to a different download")
+    members = list(await session.scalars(select(GameEventSnapshotMember).where(
+        GameEventSnapshotMember.version == asset_version
+    ).with_for_update())) if snapshot else []
+    members_by_id = {member.event_id: member for member in members}
+    for member in members:
+        capture = member.client_capture
+        if capture is not None and (not isinstance(capture, dict)
+            or capture.get("asset_version") != asset_version or capture.get("download_id") != download_id):
+            raise ValueError("Existing event capture belongs to a different version or download")
     existing = list(await session.scalars(select(GameEvent).where(
         GameEvent.source.in_([CLIENT_SOURCE, SOURCE])).order_by(GameEvent.id).with_for_update()))
     indexed = {
@@ -34,16 +61,28 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
         group, _, identifier = event.source_id.partition(":")
         legacy.setdefault(f"gacha:{identifier}" if group ==
                           "1" else f"activity:{identifier}", event)
-    if snapshot and snapshot.complete and all(record.get("locales", {}).get("en") for record in records.values()):
-        members = set(await session.scalars(select(GameEventSnapshotMember.event_id).where(
-            GameEventSnapshotMember.version == asset_version
-        )))
+    for key, record in records.items():
+        if not record.get("locales", {}).get("en"):
+            continue
+        event = indexed.get(client_identity(key)) or legacy.get(client_identity(key))
+        member = members_by_id.get(event.id) if event else None
+        if snapshot and snapshot.complete and member is None:
+            raise ValueError("Existing complete event snapshot differs from the imported catalog")
+        if member and member.client_capture is not None:
+            incoming = {**record, "asset_version": asset_version, "download_id": download_id,
+                        "schedule_status": "server_controlled"}
+            if _capture_core(member.client_capture) != _capture_core(incoming):
+                raise ValueError("Existing event capture differs from the imported catalog")
+    if snapshot and all(record.get("locales", {}).get("en") for record in records.values()):
         matches = [indexed.get(client_identity(key)) or legacy.get(client_identity(key)) for key in records]
-        if (any(event is None for event in matches) or len(matches) != len(members)
-                or {event.id for event in matches} != members):
+        matched_ids = {event.id for event in matches if event is not None}
+        if (not set(members_by_id) <= matched_ids or
+            (snapshot.complete and (any(event is None for event in matches)
+             or len(matches) != len(members_by_id) or matched_ids != set(members_by_id)))):
             raise ValueError("Existing complete event snapshot differs from the imported catalog")
     version = ".".join(asset_version.split(".")[:2])
     events = []
+    presentations = []
     missing = []
     for key, record in records.items():
         identity = client_identity(key)
@@ -67,36 +106,42 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
             for field in ("prefab_artwork", "prefab_spine_resources", "missing_resources", "animation_import"):
                 if field in previous:
                     presentation[field] = previous[field]
+        old_version, new_version = _version_key(previous.get("asset_version")), _version_key(asset_version)
+        older_import = old_version is not None and new_version is not None and new_version < old_version
         event.source, event.source_id = CLIENT_SOURCE, identity
-        event.title, event.description = english["title"], english.get(
-            "description")
-        event.event_kind = record["event_kind"]
-        event.banner_path = record.get("banner_path")
-        event.rewards = english.get("rewards") or []
-        event.source_url = "https://wutheringwaves.kurogames.com/"
-        event.source_revision = download_id
-        event.source_data = {**provenance,
-                             "client": presentation}
+        if not older_import:
+            event.title, event.description = english["title"], english.get("description")
+            event.event_kind = record["event_kind"]
+            event.banner_path = record.get("banner_path")
+            event.rewards = english.get("rewards") or []
+            event.source_url = "https://wutheringwaves.kurogames.com/"
+            event.source_revision = download_id
+            event.source_data = {**provenance, "client": presentation}
         events.append(event)
+        presentations.append(presentation)
     if not events:
         raise ValueError("No localized client events could be imported")
     await session.flush()
-    # Keep an authoritative snapshot when a reimport is incomplete. Complete
-    # snapshots were checked above and need no membership rewrite.
-    if not (snapshot and snapshot.complete):
-        await session.execute(delete(GameEventSnapshot).where(GameEventSnapshot.version == asset_version))
-        session.add(GameEventSnapshot(version=asset_version, download_id=download_id, complete=not missing))
+    if snapshot is None:
+        snapshot = GameEventSnapshot(version=asset_version, download_id=download_id, complete=not missing)
+        session.add(snapshot)
         await session.flush()
-        session.add_all([
-            GameEventSnapshotMember(version=asset_version, event_id=event.id) for event in events
-        ])
+    elif not snapshot.complete and not missing:
+        snapshot.complete = True
+    for event, presentation in zip(events, presentations, strict=True):
+        member = members_by_id.get(event.id)
+        if member is None:
+            session.add(GameEventSnapshotMember(version=asset_version, event_id=event.id,
+                                                client_capture=presentation))
+        elif member.client_capture is None:
+            member.client_capture = presentation
     occurrences = list(await session.scalars(select(GameEventOccurrence).where(
         GameEventOccurrence.event_id.in_([e.id for e in events]),
         GameEventOccurrence.game_version == version).order_by(GameEventOccurrence.id).with_for_update()))
     by_event = {}
     for occurrence in occurrences:
         by_event.setdefault(occurrence.event_id, []).append(occurrence)
-    for event in events:
+    for event, presentation in zip(events, presentations, strict=True):
         rows = by_event.get(event.id, [])
         servers = {row.server for row in rows}
         for server in SERVER_KEYS:
@@ -112,9 +157,9 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
             # Media discovered later for the same download remains visible via the API.
             if getattr(row, "starts_at", None) and snapshot:
                 continue
-            row.banner_path = event.banner_path
+            row.banner_path = presentation.get("banner_path")
             row.source_data = {**(row.source_data or {}),
-                               "client": event.source_data["client"]}
+                               "client": presentation}
     await session.flush()
     return {"events": len(events), "catalog_records": len(records), "unresolved": missing,
             "resource_events": [e.source_id for e in events if any(

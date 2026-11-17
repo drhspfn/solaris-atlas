@@ -130,4 +130,4 @@ async def test_partial_import_does_not_publish_an_incomplete_snapshot():
     assert result["unresolved"]
     assert [row.complete for row in added if isinstance(row, GameEventSnapshot)] == [False]
     assert [row.event_id for row in added if isinstance(row, GameEventSnapshotMember)] == [7]
-    assert "DELETE FROM core.game_event_snapshot" in str(session.execute.call_args.args[0])
+    assert all("DELETE" not in str(call.args[0]) for call in session.execute.await_args_list)

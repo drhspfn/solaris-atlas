@@ -11,7 +11,7 @@ from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import select, text
 from wuwa_story.db.models.game_events import GameEvent, GameEventSnapshot, GameEventSnapshotMember
 from wuwa_story.db.session import SessionFactory
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
@@ -104,14 +104,19 @@ async def backfill(session, plan, identities, *, apply=False):
     ids = set(mapped.values())
     if snapshot and snapshot.complete and (missing or existing != ids):
         raise ValueError("Existing complete snapshot differs from verified catalog")
+    if snapshot and not missing and not existing <= ids:
+        raise ValueError("Existing snapshot membership differs from verified catalog")
     result = {"version": plan["version"], "download_id": plan["id"], "catalog_records": len(identities),
               "matched": len(mapped), "missing": missing, "applied": False}
     if not apply or missing or snapshot and snapshot.complete:
         return result
-    await session.execute(delete(GameEventSnapshot).where(GameEventSnapshot.version == plan["version"]))
-    session.add(GameEventSnapshot(version=plan["version"], download_id=plan["id"], complete=True))
-    await session.flush()
-    session.add_all([GameEventSnapshotMember(version=plan["version"], event_id=event_id) for event_id in sorted(ids)])
+    if snapshot is None:
+        session.add(GameEventSnapshot(version=plan["version"], download_id=plan["id"], complete=True))
+        await session.flush()
+    else:
+        snapshot.complete = True
+    session.add_all([GameEventSnapshotMember(version=plan["version"], event_id=event_id)
+                     for event_id in sorted(ids - existing)])
     await session.flush()
     result["applied"] = True
     return result
