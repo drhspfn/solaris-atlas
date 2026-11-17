@@ -570,6 +570,7 @@ export function EventsPage({
                         </strong>
                         <small>
                           {kindLabels[event.kind]}
+                          {event.ends_at ? ` · Ends ${formatDate(event.ends_at)}` : ""}
                           {event.catalog_version
                             ? ` · Client ${event.catalog_version}`
                             : ""}

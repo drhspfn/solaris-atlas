@@ -130,3 +130,13 @@ test('event detail dates and reward quantities retain valid UTF-8 typography', (
   assert(html.includes(' \u00d72'));
   h.close();
 });
+
+
+test('details display a known end without inventing an opening date', () => {
+  const h = harness();
+  h.props.event = { ...summary, ends_at: '2026-12-21T10:59:00Z' };
+  const date = nodes(h.render()).find((n) => n.props?.className === 'events-detail-dates');
+  assert.match(date.props.children, /Start date not recorded/);
+  assert.match(date.props.children, /Dec 21, 2026/);
+  h.close();
+});
