@@ -28,6 +28,7 @@ import {
   matchesEventType,
   kindLabels,
   layoutTimeline,
+  calendarPatch,
   isPermanentListing,
   monthKey,
   monthStart,
@@ -74,10 +75,13 @@ export function EventsPage({
   const [retry, setRetry] = useState(0);
   const [search, setSearch] = useState("");
   const [month, setMonth] = useState(monthKey(Date.now()));
+  const [patchPeriod, setPatchPeriod] = useState(true);
   const [now, setNow] = useState<number | null>(null);
   const [localTime, setLocalTime] = useState(false);
   const [localZone, setLocalZone] = useState("UTC");
   const [catalogLimit, setCatalogLimit] = useState(24);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLimit, setHistoryLimit] = useState(24);
   const chart = useRef<HTMLDivElement>(null);
   const pendingTime = useRef<number | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
@@ -126,7 +130,9 @@ export function EventsPage({
   }, [server, version, initialData, retry]);
   useEffect(() => {
     setCatalogLimit(24);
+    setHistoryLimit(24);
   }, [search, kind, chosen]);
+  useEffect(() => setPatchPeriod(true), [version]);
 
   const groups = useMemo(() => groupEvents(events), [events]);
   const matching = groups.filter((runs) =>
@@ -155,14 +161,23 @@ export function EventsPage({
           60000
       : 0;
   };
-  const boundaries = Array.from({ length: 43 }, (_, index) => {
-    const midnight = monthStart(month) + index * DAY;
+  const patch = calendarPatch(events, versions, now ?? Date.now(), version);
+  const firstDay = patchPeriod && patch.start !== null
+    ? Math.floor((patch.start + zoneOffset(patch.start)) / DAY) * DAY
+    : monthStart(month);
+  const lastDay = patchPeriod && patch.end !== null
+    ? Math.floor((patch.end + zoneOffset(patch.end)) / DAY) * DAY + DAY
+    : monthStart(shiftMonth(month, 1));
+  const dayCount = Math.max(1, Math.round((lastDay - firstDay) / DAY));
+  const boundaries = Array.from({ length: dayCount + 1 }, (_, index) => {
+    const midnight = firstDay + index * DAY;
     return midnight - zoneOffset(midnight);
   });
   const start = boundaries[0],
-    end = boundaries[42];
+    end = boundaries[dayCount];
   visible.sort((a, b) => compareEventGroups(a, b, start, end, now ?? start));
-  const timeline = layoutTimeline(visible.flat(), start, end, boundaries);
+  const patchRuns = new Set(patch.events);
+  const timeline = layoutTimeline(visible.flat().filter(event => !patchPeriod || patchRuns.has(event)), start, end, boundaries);
   const permanent = visible
     .map((runs) => runs.filter(isPermanentListing))
     .filter((runs) => runs.length);
@@ -196,6 +211,7 @@ export function EventsPage({
   const jumpTo = (event: GameEvent) => {
     if (Number.isFinite(startTime(event))) {
       pendingTime.current = startTime(event);
+      setPatchPeriod(false);
       setMonth(monthKey(startTime(event)));
       if (chart.current)
         chart.current.scrollLeft = Math.max(
@@ -210,6 +226,7 @@ export function EventsPage({
     );
   const today = now === null ? -1 : timePosition(now, boundaries);
   const changeMonth = (value: string) => {
+    setPatchPeriod(false);
     setMonth(value);
     if (chart.current) chart.current.scrollLeft = 0;
   };
@@ -221,7 +238,7 @@ export function EventsPage({
         ? Math.max(0, timePosition(time, boundaries) - DAY_WIDTH * 2)
         : 0;
     pendingTime.current = null;
-  }, [month, timeZone, loading]);
+  }, [month, patchPeriod, start, end, timeZone, loading]);
 
   return (
     <main className="page-container events-page">
@@ -357,30 +374,32 @@ export function EventsPage({
           <div>
             <button
               aria-label="Previous month"
-              onClick={() => changeMonth(shiftMonth(month, -1))}
+              onClick={() => changeMonth(shiftMonth(monthKey(firstDay), -1))}
             >
               <ChevronLeft size={18} />
             </button>
             <Select
-              label="Calendar month"
+              label="Calendar period"
               width="auto"
-              value={month}
-              onChange={changeMonth}
-              options={availableMonths.map((value) => ({
+              value={patchPeriod ? "current" : month}
+              onChange={value => value === "current" ? setPatchPeriod(true) : changeMonth(value)}
+              options={[{ value: "current", label: `${version ? "Selected" : "Current"} patch${patch.version ? ` · v${patch.version}` : ""}` }, ...availableMonths.map((value) => ({
                 value,
                 label: monthFormat.format(monthStart(value)),
-              }))}
+              }))]}
             />
             <button
               aria-label="Next month"
-              onClick={() => changeMonth(shiftMonth(month, 1))}
+              onClick={() => changeMonth(shiftMonth(monthKey(firstDay), 1))}
             >
               <ChevronRight size={18} />
             </button>
             <button
               onClick={() => {
                 pendingTime.current = Date.now();
-                changeMonth(monthKey(Date.now()));
+                setVersion("");
+                setPatchPeriod(true);
+                setMonth(monthKey(Date.now()));
                 if (chart.current)
                   chart.current.scrollLeft = Math.max(
                     0,
@@ -393,6 +412,7 @@ export function EventsPage({
           </div>
         </header>
         <p className="events-calendar-help">
+          {patchPeriod && patch.version ? `Showing patch ${patch.version}. Choose a month for recorded history. ` : ""}
           Scroll across for dates and down for events. Select a bar for details.
           Times: {timeZoneLabel(timeZone, now ?? 0)}.
         </p>
@@ -410,14 +430,14 @@ export function EventsPage({
                 className="events-chart"
                 style={
                   {
-                    width: 42 * DAY_WIDTH,
+                    width: dayCount * DAY_WIDTH,
                     "--day-width": `${DAY_WIDTH}px`,
                   } as CSSProperties
                 }
               >
                 <div className="events-axis">
-                  {Array.from({ length: 42 }, (_, index) => {
-                    const day = new Date(monthStart(month) + index * DAY);
+                  {Array.from({ length: dayCount }, (_, index) => {
+                    const day = new Date(firstDay + index * DAY);
                     return (
                       <div
                         key={index}
@@ -449,7 +469,7 @@ export function EventsPage({
                     );
                   })}
                 </div>
-                {today >= 0 && today < 42 * DAY_WIDTH && (
+                {today >= 0 && today < dayCount * DAY_WIDTH && (
                   <div className="events-now" style={{ left: today }}>
                     <span>Now</span>
                   </div>
@@ -534,9 +554,10 @@ export function EventsPage({
       {!!recorded.length && (
         <section className="events-run-index">
           <h2>Run history</h2>
-          <p>Jump to any recorded run, including previous cycles.</p>
-          <div>
-            {recorded.map((event) => (
+          <details onToggle={event => setHistoryOpen(event.currentTarget.open)}>
+            <summary>Browse {recorded.length} recorded runs</summary>
+          {historyOpen && <div className="events-run-list">
+            {[...recorded].sort((a, b) => startTime(b) - startTime(a)).slice(0, historyLimit).map((event) => (
               <button
                 key={event.occurrence_id ?? `${event.id}-${event.starts_at}`}
                 onClick={(click) => {
@@ -557,7 +578,11 @@ export function EventsPage({
                 </small>
               </button>
             ))}
-          </div>
+          </div>}
+          {historyOpen && historyLimit < recorded.length && (
+            <button className="events-load-more" onClick={() => setHistoryLimit(limit => limit + 24)}>Show more runs</button>
+          )}
+          </details>
         </section>
       )}
       {[

@@ -143,6 +143,29 @@ export function groupEvents(events: GameEvent[]) {
 export function isPermanentListing(event: GameEvent) {
   return event.kind === 'permanent' && !event.ends_at;
 }
+function patchVersion(value: string | null | undefined) {
+  return value?.match(/^\d+\.\d+(?:\.\d+)*$/)?.[0].split('.').slice(0, 2).join('.') ?? null;
+}
+export function calendarPatch(events: GameEvent[], versions: string[], now: number, selected = '') {
+  const latest = (values: (string | null)[]) => values.filter((value): value is string => !!value)
+    .sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).at(-1);
+  // An unreleased client snapshot must not replace the patch currently running.
+  const eventPatch = (event: GameEvent) => patchVersion(event.game_version || event.catalog_version);
+  const active = events.filter(event => Number.isFinite(endTime(event)) && startTime(event) <= now && endTime(event) > now);
+  const version = patchVersion(selected) || latest(active.map(eventPatch))
+    || latest(versions.map(patchVersion)) || latest(events.map(event => patchVersion(event.game_version)));
+  const runs = events.filter(event => eventPatch(event) === version && version !== null);
+  // Snapshot membership alone does not date an old unversioned occurrence.
+  const dated = runs.filter(event => Number.isFinite(startTime(event)) && Number.isFinite(endTime(event)) &&
+    (event.game_version || event.start_estimate || (startTime(event) <= now && endTime(event) > now)));
+  return {
+    version,
+    start: dated.length ? Math.min(...dated.map(startTime)) : null,
+    end: dated.length ? Math.max(...dated.map(endTime)) : null,
+    events: events.filter(event => eventPatch(event) === version ||
+      !eventPatch(event) || (!selected && Number.isFinite(endTime(event)) && startTime(event) <= now && endTime(event) > now)),
+  };
+}
 export function layoutTimeline(
   events: GameEvent[],
   start: number,
