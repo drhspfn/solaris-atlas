@@ -68,7 +68,7 @@ function loadStory(name) {
   return exports;
 }
 const { QuestEncounter, EncounterCinematicBoundary } = loadStory('QuestEncounter');
-const { QuestSequenceFragments, playableEncounterFragments } = loadStory('QuestSequenceFragments');
+const { QuestSequenceFragments, playableEncounterFragments, hasSequenceComponents } = loadStory('QuestSequenceFragments');
 const { QuestSceneDetails } = loadStory('QuestSceneDetails');
 const { QuestRuntimeBlock, runtimeBlockAnchor, runtimeBlockSlots } = loadStory('QuestRuntimeBlock');
 
@@ -412,6 +412,28 @@ test('scene cards describe actual available media for placeholder and illustrate
     assert.doesNotMatch(scene(mixed), /Rendered by the game engine/);
     assert.match(scene({ ...engine, sections: [...engine.sections, ...fragment.sections] }), /Cinematic scene/);
   }
+});
+
+test('verified 3D scenes explain unsupported playback without hiding other media', () => {
+  const camera = { kind: 'camera', status: 'authored', source: '/Game/Scene.1', scene_source: '/Game/Scene.0' };
+  const animation = { kind: 'skeletal_animation', status: 'authored', source: '/Game/Scene.2', scene_source: '/Game/Scene.0' };
+  const media = { schema_version: 1, complete_video: false, sections: [camera, animation] };
+  const markup = value => renderToStaticMarkup(React.createElement(QuestSequenceFragments, { media: value }));
+  assert.equal(hasSequenceComponents(media), true);
+  assert.equal(hasSequenceComponents({ ...media, sections: [camera, { ...animation, scene_source: '/Game/Other.0' }] }), false);
+  assert.match(markup(media), /3D scene playback is not supported on this site/);
+  assert.doesNotMatch(markup({ ...media, sections: [camera, { ...animation, scene_source: '/Game/Other.0' }] }), /3D scene playback/);
+  assert.doesNotMatch(markup({ ...media, sections: [{ kind: 'illustration', status: 'published',
+    file_id: 3, url: 'https://cdn.test/scene.png' }] }), /3D scene playback/);
+  const mixed = { ...media, sections: [...media.sections,
+    { kind: 'movie_fragment', status: 'published', file_id: 8, url: 'https://cdn.test/video.webm' }] };
+  const mixedMarkup = markup(mixed);
+  assert.match(mixedMarkup, /3D scene playback is not supported/);
+  assert.match(mixedMarkup, /Video components/);
+  const card = renderToStaticMarkup(React.createElement(QuestSceneDetails, {
+    event: { kind: 'sequence', sequence_media: media, source, reference: 'asset:scene' }, display,
+  }));
+  assert.match(card, /3D scene playback is not supported on this site/);
 });
 
 test('open scene information describes available media and retains source details', () => {

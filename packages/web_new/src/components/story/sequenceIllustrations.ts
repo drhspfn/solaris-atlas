@@ -6,6 +6,20 @@ export function hasEngineCinematicTracks(media?: SequenceMedia) {
     media.sections.some((section) => ["skeletal_animation", "skeletal_animation_asset"].includes(section.kind));
 }
 
+export function hasConfirmed3dSequence(media?: SequenceMedia) {
+  if (media?.schema_version !== 1 || media.complete_video !== false || !Array.isArray(media.sections)) return false;
+  const cameras = new Set(media.sections.filter((section) =>
+    section.kind === "camera" && section.status === "authored" &&
+    typeof section.source === "string" && !!section.source &&
+    typeof section.scene_source === "string" && !!section.scene_source,
+  ).map((section) => section.scene_source));
+  return media.sections.some((section) =>
+    section.kind === "skeletal_animation" && section.status === "authored" &&
+    typeof section.source === "string" && !!section.source &&
+    typeof section.scene_source === "string" && cameras.has(section.scene_source),
+  );
+}
+
 export function illustrationSections(media?: SequenceMedia) {
   if (media?.schema_version !== 1 || !Array.isArray(media.sections)) return [];
   return media.sections.filter(

@@ -16,11 +16,12 @@ import {
   playableSequenceAudio,
 } from "./QuestSequenceAudio";
 import { QuestSequenceIllustrations } from "./QuestSequenceIllustrations";
-import { hasEngineCinematicTracks, illustrationSections } from "./sequenceIllustrations";
+import { hasConfirmed3dSequence, hasEngineCinematicTracks, illustrationSections } from "./sequenceIllustrations";
 
 export function hasSequenceComponents(media?: SequenceMedia) {
   return (
     !!media?.composition ||
+    hasConfirmed3dSequence(media) ||
     illustrationSections(media).length > 0 ||
     playableEncounterFragments(media).length > 0 ||
     playableSequenceAudio(media).length > 0
@@ -140,6 +141,9 @@ export function QuestSequenceFragments({ media }: { media?: SequenceMedia }) {
   }));
   return (
     <>
+      {hasConfirmed3dSequence(media) && (
+        <p className={styles.status}>3D scene playback is not supported on this site. Available scene media is shown below.</p>
+      )}
       {engineWithoutIllustrations ? null : unboundScene ? (
         <p className={styles.status}>Scene illustrations are unavailable.</p>
       ) : (
