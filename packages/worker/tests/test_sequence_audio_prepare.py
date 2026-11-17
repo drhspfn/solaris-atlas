@@ -152,6 +152,39 @@ async def test_section_failure_retains_video_and_marks_publication_partial(prepa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('bank_name,rendered', [
+    ('play_all_sound_M0334.bnk', True),
+    ('play_all_sound_M0335.bnk', False),
+])
+async def test_cooked_bank_name_case_preserves_exact_source_path(prepared, monkeypatch, bank_name, rendered):
+    root, voice, bundle, tools, _, _ = prepared
+    cooked = audio.prefetch_events.return_value[next(iter(audio.prefetch_events.return_value))][0]
+    event = json.loads(cooked.read_text())
+    bank = 'Event/en/' + bank_name
+    event[0]['EventCookedData']['EventLanguageMap'][0]['Value']['SoundBanks'][0]['SoundBankPathName'] = bank
+    cooked.write_text(json.dumps(event))
+    package = 'Client/Content/Aki/WwiseAudio_Generated/' + bank
+    monkeypatch.setattr(audio, 'indexed_audio_paths', lambda *_: [package, '1.wem', '2.wem'])
+
+    async def export(args, log, *_):
+        log.write_text('exact export')
+        assert args[-1] == package
+        path = Path(args[3]) / package
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'localized bank')
+
+    monkeypatch.setattr(entity_media, 'tool', export)
+    output, _ = await audio.prepare_sequence_audio(root, bundle, tools['fmodel'], tools['converter'], voice)
+    with zipfile.ZipFile(output) as archive:
+        section = json.loads(archive.read('controls.json'))['media']['sections'][1]
+        assert (section['status'] == 'rendered') is rendered
+        if rendered:
+            assert any(proof['package_path'] == package for proof in section['tracks'][0]['source_media'])
+        else:
+            assert section['diagnostics'][0]['message'] == 'Unsupported cooked sequence bank path'
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('error', [BlockingIOError('busy'), TimeoutError('retry'), subprocess.CalledProcessError(137, 'decoder')])
 async def test_transient_audio_failures_propagate_to_existing_retry(prepared, monkeypatch, error):
     root, voice, bundle, tools, _, _ = prepared
