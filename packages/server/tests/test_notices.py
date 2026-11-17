@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -10,6 +10,7 @@ from wuwa_story.ingestion.notices import (
     notice_period,
     parse_notice,
     safe_notice_url,
+    selectable_banner_matches,
     store_notices,
     version_start_estimate,
 )
@@ -331,6 +332,69 @@ async def test_version_estimate_is_shared_across_categories_and_preserves_notice
         assert row.source_data["schedule_source"] == "feed"
         assert row.source_data["schedule_revision"]
     assert session.scalars.await_count == 4
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("kind", "gacha_type", "subjects", "pool"), [
+    ("Resonators", 13, ["Camellya", "Roccia", "Phoebe", "Brant"], 100096),
+    ("Weapons", 14, ["Red Spring", "Tragicomedy", "Luminous Hymn", "Unflickering Valor"], 200096),
+])
+async def test_selectable_banner_schedule_requires_complete_same_release_pool(kind, gacha_type, subjects, pool):
+    content = {"title": f"[Reverbs Ⅱ] Reverb {kind[:-1]} Convene", "text":
+        f"selectable 5-Star {kind}: {', '.join(subjects)}, and 4-Star {kind}: A, B, C receive boosted drop rates!"}
+    events = [SimpleNamespace(id=i, source_id=f"gacha:{pool * 10 + i}", title=name,
+        event_kind="banner", source_data={"client": {"gacha_type": gacha_type,
+        "asset_version": "3.8.0", "locales": {"en": {"featured_names": [name], "title": name}}}})
+        for i, name in enumerate(subjects, 1)]
+    rows = [(22, {"Id": pool * 10 + i, "GachaId": pool}) for i in range(1, 5)]
+    session = AsyncMock()
+    session.execute.return_value = MagicMock(all=lambda: rows)
+    matched, evidence = await selectable_banner_matches(session, content, events)
+    assert matched == events
+    assert evidence == {"basis": "gacha_pool", "release_id": 22, "gacha_id": pool}
+    assert await selectable_banner_matches(session, content, events[:-1]) == ([], None)
+    assert await selectable_banner_matches(session, content, [*events, events[0]]) == ([], None)
+    rows[-1] = (22, {"Id": pool * 10 + 4, "GachaId": pool + 1})
+    assert await selectable_banner_matches(session, content, events) == ([], None)
+    rows[-1] = (22, {"Id": pool * 10 + 4, "GachaId": pool})
+    rows.append((22, {"Id": pool * 10 + 5, "GachaId": pool}))
+    assert await selectable_banner_matches(session, content, events) == ([], None)
+
+
+@pytest.mark.asyncio
+async def test_reverb_import_creates_one_estimated_run_per_selection_and_server():
+    events = [SimpleNamespace(id=i, source_id=f"gacha:{1000960+i}", title=name,
+        event_kind="banner", banner_path=None, source_data={"client": {"gacha_type": 13,
+        "asset_version": "3.8.0", "locales": {"en": {"featured_names": [name], "title": name}}}})
+        for i, name in enumerate(["Camellya", "Roccia", "Phoebe", "Brant"], 1)]
+    session = AsyncMock()
+    session.scalars.side_effect = [events] + [[SimpleNamespace(id=99, ends_at=datetime(2026, 11, 11, tzinfo=UTC), game_version="3.7")]] * 3
+    rows = [(22, {"Id": 1000960+i, "GachaId": 100096}) for i in range(1, 5)]
+    session.execute.return_value = MagicMock(all=lambda: rows)
+    session.scalar.return_value = None
+    added = []
+    session.add = added.append
+    async def flush():
+        for row in added:
+            if isinstance(row, GameNotice):
+                row.id = 42
+    session.flush.side_effect = flush
+    raw = raw_notice(tabTitle="[Starpath Reverbs Ⅱ] Reverb Resonator Convene", content=
+        "<p>selectable 5-Star Resonators: Camellya, Roccia, Phoebe, Brant, and 4-Star Resonators: Sanhua, Danjin, Chixia receive boosted drop rates!</p>"
+        "<p>✦Duration✦</p><p>Version 3.8 update - 2026-12-21 11:59 (server time)</p><p>✦Rules✦</p>")
+    result = await store_notices(session, "feed", "board", {"game": [raw]})
+    runs = [row for row in added if not isinstance(row, GameNotice)]
+    assert result == {"notices": 1, "linked": 1, "dated_runs": 12}
+    assert {row.event_id for row in runs} == {1, 2, 3, 4}
+    assert all(row.starts_at == datetime(2026, 11, 11, tzinfo=UTC) for row in runs)
+    assert all(row.source_data["notice_match"]["gacha_id"] == 100096 for row in runs)
+    assert all(row.source_data["start_estimate"]["occurrence_id"] == 99 for row in runs)
+    notice = next(row for row in added if isinstance(row, GameNotice))
+    session.scalars.side_effect = [events] + [[SimpleNamespace(id=99, ends_at=datetime(2026, 11, 11, tzinfo=UTC), game_version="3.7")]] * 3
+    session.scalar.side_effect = [notice, *runs]
+    added.clear()
+    assert await store_notices(session, "feed", "board", {"game": [raw]}) == result
+    assert added == []
 
 
 @pytest.mark.asyncio
