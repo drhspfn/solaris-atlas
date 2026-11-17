@@ -24,12 +24,12 @@ import {
   countdown,
   eventColor,
   groupEvents,
+  catalogEvent,
   compareEventGroups,
   matchesEventType,
   kindLabels,
   layoutTimeline,
   calendarPatch,
-  isPermanentListing,
   monthKey,
   monthStart,
   shiftMonth,
@@ -178,17 +178,6 @@ export function EventsPage({
   visible.sort((a, b) => compareEventGroups(a, b, start, end, now ?? start));
   const patchRuns = new Set(patch.events);
   const timeline = layoutTimeline(visible.flat().filter(event => !patchPeriod || patchRuns.has(event)), start, end, boundaries);
-  const permanent = visible
-    .map((runs) => runs.filter(isPermanentListing))
-    .filter((runs) => runs.length);
-  const catalog = visible
-    .map((runs) =>
-      runs.filter(
-        (event) =>
-          !Number.isFinite(startTime(event)) && !isPermanentListing(event),
-      ),
-    )
-    .filter((runs) => runs.length);
   const recorded = visible.flatMap((runs) =>
     runs.filter((event) => Number.isFinite(startTime(event))),
   );
@@ -587,15 +576,9 @@ export function EventsPage({
       )}
       {[
         {
-          title: "Permanent content",
-          rows: permanent,
-          description: "Permanent modes and events without a closing date.",
-        },
-        {
-          title: "Dates not recorded",
-          rows: catalog,
-          description:
-            "These events are in the game catalog. Server schedule unavailable; their presence does not confirm that they are currently running.",
+          title: "Events",
+          rows: visible,
+          description: "Open an event to see its recorded periods and media. Events without a schedule are not necessarily running.",
         },
       ].map(
         ({ title, rows, description }) =>
@@ -605,7 +588,7 @@ export function EventsPage({
               <p>{description}</p>
               <div className="events-catalog-grid">
                 {rows.slice(0, catalogLimit).map((runs) => {
-                  const event = runs[runs.length - 1];
+                  const event = catalogEvent(runs, now ?? Date.now());
                   return (
                     <button
                       key={event.id}
@@ -618,6 +601,9 @@ export function EventsPage({
                         </strong>
                         <small>
                           {kindLabels[event.kind]}
+                          {runs.filter(run => run.occurrence_id != null).length > 1
+                            ? ` · ${runs.filter(run => run.occurrence_id != null).length} periods`
+                            : ""}
                           {event.ends_at ? ` · Ends ${formatDate(event.ends_at)}` : ""}
                           {event.catalog_version
                             ? ` · Client ${event.catalog_version}`

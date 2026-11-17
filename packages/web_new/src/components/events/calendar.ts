@@ -141,6 +141,15 @@ export function groupEvents(events: GameEvent[]) {
     ),
   );
 }
+export function catalogEvent(periods: GameEvent[], now: number) {
+  const active = periods.filter((period) => startTime(period) <= now && endTime(period) > now);
+  if (active.length) return active.at(-1)!;
+  const future = periods.filter((period) => startTime(period) > now);
+  if (future.length) return future.reduce((a, b) => startTime(a) < startTime(b) ? a : b);
+  const recorded = periods.filter((period) => Number.isFinite(startTime(period)));
+  if (recorded.length) return recorded.reduce((a, b) => startTime(a) > startTime(b) ? a : b);
+  return periods.at(-1)!;
+}
 export function isPermanentListing(event: GameEvent) {
   return event.kind === 'permanent' && !event.ends_at;
 }

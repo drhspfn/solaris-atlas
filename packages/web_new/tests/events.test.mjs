@@ -4,6 +4,7 @@ import {
   DAY,
   DAY_WIDTH,
   groupEvents,
+  catalogEvent,
   layoutRuns,
   countdown,
   shiftMonth,
@@ -16,6 +17,22 @@ import {
   isPermanentListing,
   calendarPatch,
 } from '../src/components/events/calendar.ts';
+
+test('one event keeps all independent periods, including unknown starts and historic dates', () => {
+  const periods = [
+    { id: 7, occurrence_id: 1, starts_at: '1900-01-01', ends_at: '1900-02-01' },
+    { id: 7, occurrence_id: 2, starts_at: null, ends_at: '2026-12-01' },
+    { id: 7, occurrence_id: 3, starts_at: null, ends_at: '2026-12-15' },
+    { id: 7, occurrence_id: 4, starts_at: '2026-11-01', ends_at: '2026-11-30' },
+  ];
+  const groups = groupEvents(periods);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].length, 4);
+  assert.equal(catalogEvent(groups[0], Date.parse('2026-11-17')).occurrence_id, 4);
+  assert.equal(catalogEvent(groups[0], Date.parse('1899-01-01')).occurrence_id, 1);
+  assert.equal(catalogEvent(groups[0], Date.parse('2027-01-01')).occurrence_id, 4);
+  assert.equal(groupEvents([...periods, { ...periods[0], id: 8 }]).length, 2);
+});
 
 test('calendar groups characters, weapons and modes; soonest closing runs come first', () => {
   const event = (id, kind, title, end) => ({
