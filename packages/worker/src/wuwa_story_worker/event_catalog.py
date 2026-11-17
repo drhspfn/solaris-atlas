@@ -110,15 +110,19 @@ def _activity_resources(config: Path, readers: Path, records: dict):
                                 record["artwork"].append({"path": path, "role": field, "table": name})
 
 
+def validate_event_schema(readers: Path) -> None:
+    for filename, fields in {"Activity": {"title": 46, "desc": 50, "bgresource": 52},
+                             "GachaViewInfo": {"showidlist": 36, "underbgtexturepath": 24}}.items():
+        source = (readers / f"{filename}.js").read_text(encoding="utf-8-sig")
+        for method, offset in fields.items():
+            match = re.search(re.escape(method) + r"\([^)]*\)\{[^}]*?__offset\(this\.\w+,(\d+)\)", source)
+            if not match or int(match[1]) != offset:
+                raise ValueError(f"Unsupported {filename}.{method} client schema; update the event reader")
+
+
 def read_event_catalog(config: Path, readers: Path | None = None) -> dict[str, dict]:
     if readers is not None:
-        for filename, fields in {"Activity": {"title": 46, "desc": 50, "bgresource": 52},
-                                 "GachaViewInfo": {"showidlist": 36, "underbgtexturepath": 24}}.items():
-            source = (readers / f"{filename}.js").read_text(encoding="utf-8-sig")
-            for method, offset in fields.items():
-                match = re.search(re.escape(method) + r"\([^)]*\)\{[^}]*?__offset\(this\.\w+,(\d+)\)", source)
-                if not match or int(match[1]) != offset:
-                    raise ValueError(f"Unsupported {filename}.{method} client schema; update the event reader")
+        validate_event_schema(readers)
     records = {}
     with open_db(config / "db_activity.db") as db:
         for identifier, blob in db.execute("SELECT Id, BinData FROM activity"):

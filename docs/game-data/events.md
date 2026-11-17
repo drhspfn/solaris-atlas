@@ -71,11 +71,18 @@ snapshot matches; an ambiguous version returns 409 and an unavailable snapshot
 returns 404. Versioned event lists use source reads, including when historical
 read projections are enabled.
 
-Migration 0035 creates empty snapshot tables; it does not infer old catalog
+Migration 0036 creates empty snapshot tables; it does not infer old catalog
 membership from schedule versions or mutable presentation data. Historical
 recovery requires the original retained client catalog and a membership-only
 backfill; the normal import also changes current event presentation and should
-not be used blindly for older clients. An import with unresolved event localization
+not be used blindly for older clients. `python -m wuwa_story_worker.event_snapshot_backfill`
+accepts `--plan`, `--config-manifest` and `--readers-manifest` from the same
+completed client download. It verifies the plan, export identity, checksums,
+schema and every Activity/GachaViewInfo ID before mapping existing event IDs.
+The default is a read-only report; `--apply` writes membership only when every
+ID resolves. A different download or conflicting complete snapshot is rejected.
+The two export manifests must already exist; this command does not extract
+archives, create events or change their presentation. An import with unresolved event localization
 does not publish a complete snapshot. Media package errors alone do not affect
 catalog membership. Snapshot membership is replaced atomically on reimport.
 
