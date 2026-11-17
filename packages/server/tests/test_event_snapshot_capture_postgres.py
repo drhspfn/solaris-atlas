@@ -4,7 +4,7 @@ import os
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -66,6 +66,9 @@ async def test_snapshot_capture_applies_to_events_and_periods_without_mutating_c
             await db.commit()
 
         async with factory() as db:
+            dirty = await db.scalars(text("SELECT snapshot_key FROM ops.read_projection_dirty "
+                                          "WHERE kind='game_event' AND entity_id=:identity"), {"identity": event_id})
+            assert {"current", "3.8.0"} <= set(dirty)
             for summary in (True, False):
                 rows = await read_event_runs(db, server="europe", version="3.8.0", summary=summary)
                 periods = [(event, occurrence) for event, occurrence in rows if event.id == event_id]
