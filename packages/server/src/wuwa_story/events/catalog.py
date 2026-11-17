@@ -17,7 +17,7 @@ def catalog_rows(rows):
         # A client catalog capture describes an event; it is not a scheduled run.
         periods = [row for row in sources if not row.get("_catalog_placeholder")
                    and row.get("occurrence_id") is not None]
-        def capture_version(row):
+        def capture_version(row, identity=identity):
             value = row.get("catalog_version") or ""
             version = tuple(int(part) for part in value.split(".")) if value and all(
                 part.isdecimal() for part in value.split(".")) else ()
