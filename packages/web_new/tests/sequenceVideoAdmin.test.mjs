@@ -11,6 +11,7 @@ const event = {
 
 function harness({ role = "admin", initial = event, response, fail } = {}) {
   let user = role ? { role } : null;
+  let context = { questKey: "123-quest", version: "3.7", onChange: (...args) => changes.push(args) };
   let states = [], refs = [], stateIndex = 0, refIndex = 0, refreshes = 0;
   const requests = [], changes = [];
   const jsx = (type, props) => ({ type, props: props ?? {} });
@@ -39,6 +40,8 @@ function harness({ role = "admin", initial = event, response, fail } = {}) {
     "@/api/client": { api, ApiError },
     "@/auth/AuthProvider": { useAuth: () => ({ user, refresh: async () => { refreshes++; } }) },
     "@/components/ui/Button": { Button: "button" },
+    "lucide-react": { Youtube: "svg", X: "svg" },
+    "./SequenceVideoContext": { useSequenceVideoContext: () => context },
     "./SequenceVideoAdmin.module.css": { default: {} },
   };
   const source = readFileSync(new URL("../src/components/story/SequenceVideoAdmin.tsx", import.meta.url), "utf8");
@@ -50,7 +53,8 @@ function harness({ role = "admin", initial = event, response, fail } = {}) {
   const props = { questKey: "123-quest", version: "3.7", event: initial,
     onChange: (...args) => changes.push(args) };
   return {
-    admin: (manifest) => exports.SequenceVideoAdmin({ questKey: props.questKey, manifest, onChange: props.onChange }),
+    admin: (scene = initial) => { stateIndex = 0; refIndex = 0; return exports.SequenceVideoAdmin({ event: scene }); },
+    setContext: (value) => { context = value; },
     render: () => { stateIndex = 0; refIndex = 0; return exports.SequenceVideoForm(props); },
     setRole: (role) => { user = role ? { role } : null; },
     requests, changes, get refreshes() { return refreshes; },
@@ -68,16 +72,29 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 test("only an administrator sees editable occurrences for a resolved snapshot", () => {
   const h = harness({ role: "user" });
-  const manifest = { game_version: "3.7", events: [event] };
-  assert.equal(h.admin(manifest), null);
+  assert.equal(h.admin(), null);
   h.setRole(null);
-  assert.equal(h.admin(manifest), null);
+  assert.equal(h.admin(), null);
   h.setRole("admin");
-  assert.equal(h.admin({ events: [event] }), null);
-  assert.ok(h.admin(manifest));
-  const ambiguous = all(h.admin({ game_version: "3.7", events: [{ ...event, occurrence_id: undefined }] }));
-  assert.ok(ambiguous.some((node) => typeof node.props.children === "string"
-    && node.props.children.includes("cannot be edited")));
+  h.setContext(null);
+  assert.equal(h.admin(), null);
+  h.setContext({ questKey: "123-quest", version: "3.7", onChange() {} });
+  assert.ok(h.admin());
+  assert.equal(h.admin({ ...event, occurrence_id: undefined }), null);
+});
+
+test("recording editor opens for the selected scene and closes on Escape", () => {
+  const h = harness();
+  let tree = h.admin();
+  const trigger = all(tree).find((node) => node.props["aria-label"] === "Add YouTube recording");
+  trigger.props.onClick();
+  tree = h.admin();
+  const dialog = all(tree).find((node) => node.type === "dialog");
+  assert.ok(dialog);
+  let prevented = false;
+  dialog.props.onCancel({ preventDefault() { prevented = true; } });
+  assert.ok(prevented);
+  assert.equal(all(h.admin()).some((node) => node.type === "dialog"), false);
 });
 
 test("save sends the exact occurrence and updates the displayed recording", async () => {
