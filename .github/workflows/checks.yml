@@ -173,6 +173,7 @@ jobs:
           tests/test_event_catalog_duplicates.py tests/test_recurring_events.py
           tests/test_client_events.py tests/test_client_snapshot_reimport.py
           tests/test_event_canonical_catalog.py
+          tests/test_event_projection_batches.py
           tests/test_selectable_pool_import.py
           tests/test_notices.py tests/test_notice_trials.py
           tests/test_event_browsing.py tests/test_projection_readers.py
@@ -188,6 +189,7 @@ jobs:
           uv run pytest tests/test_admin_console.py -k event_period tests/test_admin_event_periods.py -q
           uv run pytest tests/test_notice_period_identity_postgres.py -q
           uv run pytest tests/test_event_snapshot_capture_postgres.py -q
+          uv run pytest tests/test_event_projection_batches_postgres.py -q
       - name: Validate recurring publication lock ordering on PostgreSQL
         working-directory: packages/server
         env:

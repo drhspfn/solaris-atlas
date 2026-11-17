@@ -32,6 +32,7 @@ async def browse_events(
     summary: bool = False,
     event_id: int | None = None,
     occurrence_id: int | None = None,
+    occurrence_ids: list[int] | None = None,
 ) -> dict[str, Any]:
     """Source renderer shared with background publishers; no HTTP handler calls."""
     return await build_event_service(session).browse(
@@ -42,4 +43,5 @@ async def browse_events(
         summary=summary,
         event_id=event_id,
         occurrence_id=occurrence_id,
+        **({"occurrence_ids": occurrence_ids} if occurrence_ids is not None else {}),
     )

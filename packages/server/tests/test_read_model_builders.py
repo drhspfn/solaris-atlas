@@ -323,16 +323,17 @@ async def test_event_history_keeps_all_servers_and_unknown_versions_separate(
         (3, "america", "3.9", "run:3", None, None, {}),
     ]
 
-    async def event_response(server, _kind, _version, locale, session, *, event_id, occurrence_id):
+    async def event_response(server, _kind, _version, locale, session, *, event_id,
+                             occurrence_id=None, occurrence_ids=None):
         return {
             "events": [
                 {
                     "id": event_id,
-                    "occurrence_id": occurrence_id,
+                    "occurrence_id": identity,
                     "starts_at": datetime(2026, 1, 2, tzinfo=UTC),
-                    "preview_url": f"https://cdn/{occurrence_id}",
-                    "artwork": [{"url": f"https://cdn/{occurrence_id}", "role": "content"}],
-                }
+                    "preview_url": f"https://cdn/{identity}",
+                    "artwork": [{"url": f"https://cdn/{identity}", "role": "content"}],
+                } for identity in occurrence_ids or [occurrence_id]
             ]
         }
 
@@ -383,6 +384,29 @@ async def test_event_without_runs_does_not_invent_a_server_or_occurrence(context
     render.assert_awaited_once_with(
         "", None, None, "ja", context.session, event_id=7, occurrence_id=None
     )
+
+
+@pytest.mark.asyncio
+async def test_event_builder_batches_periods_without_reordering_or_oversized_reads(context, monkeypatch):
+    runs = [(identity, server, "3.10", f"manual:{identity}", None, None, {})
+            for identity in range(1, 66) for server in ("asia", "europe", "america")]
+    context.session.execute.return_value = runs
+
+    async def render(server, kind, version, locale, session, *, event_id,
+                     occurrence_ids=None, occurrence_id=None):
+        return {"events": [{"id": event_id, "occurrence_id": identity, "artwork": []}
+                           for identity in reversed(occurrence_ids or [occurrence_id])]}
+
+    browse = AsyncMock(side_effect=render)
+    monkeypatch.setattr(sections, "browse_events", browse)
+    result = await sections._event_payload(context.session, 7, "ja", "current")
+    assert [(run["occurrence_id"], run["server"]) for run in result["occurrences"]] == [
+        (row[0], row[1]) for row in runs]
+    batches = [call.kwargs["occurrence_ids"] for call in browse.await_args_list
+               if "occurrence_ids" in call.kwargs]
+    assert len(batches) == 15  # 3 servers * ceil(65/16), instead of 195 full renders.
+    assert max(map(len, batches)) == sections.EVENT_RUN_BATCH_SIZE
+    assert browse.await_count == 16  # Plus the authoritative undated fallback.
 
 
 @pytest.mark.asyncio
@@ -779,15 +803,13 @@ async def test_event_snapshot_membership_does_not_filter_its_independent_periods
         (3, "asia", "3.100", "run:3", None, None, {}),
     ]
     sections.browse_events.side_effect = [
-        {"events": [{"id": 7, "occurrence_id": 1}]},
-        {"events": [{"id": 7, "occurrence_id": 2}]},
-        {"events": [{"id": 7, "occurrence_id": 3}]},
+        {"events": [{"id": 7, "occurrence_id": identity} for identity in (1, 2, 3)]},
         {"events": [{"id": 7, "occurrence_id": None}]},
     ]
     entry = await builders.build_entity(context.session, "event", 7, 2, snapshot)
     assert [run["occurrence_id"] for run in entry["payload"]["occurrences"]] == [1, 2, 3]
     assert entry["payload"]["occurrences"][0]["game_version"] == "3.10"
-    assert sections.browse_events.await_count == 4
+    assert sections.browse_events.await_count == 2
 
 
 @pytest.mark.asyncio

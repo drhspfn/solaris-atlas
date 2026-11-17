@@ -142,8 +142,10 @@ async def test_projection_builder_retains_exact_pool_evidence(monkeypatch):
                             event_kind="banner", description=None, source_url="https://example.test")
     session = SimpleNamespace(get=AsyncMock(return_value=event), execute=AsyncMock(return_value=[
         (6301, "europe", None, "notice:42@update", None, "end", source)]))
-    async def browse(server, kind, version, locale, session, *, event_id, occurrence_id):
-        return {"events": [{"id": event_id, "occurrence_id": occurrence_id, "title": "Banner"}]}
+    async def browse(server, kind, version, locale, session, *, event_id,
+                     occurrence_id=None, occurrence_ids=None):
+        return {"events": [{"id": event_id, "occurrence_id": identity, "title": "Banner"}
+                           for identity in occurrence_ids or [occurrence_id]]}
     monkeypatch.setattr(source_sections, "browse_events", browse)
     payload = await source_sections._event_payload(session, 1, "en", "current")
     assert payload["occurrences"][0]["_pool_match"] == {
