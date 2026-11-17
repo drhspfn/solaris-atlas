@@ -191,10 +191,25 @@ async def test_wipe_cutscene_analysis_deletes_db_and_orphan_s3_objects():
 
 @pytest.mark.asyncio
 async def test_wipe_rejects_active_run_before_any_delete():
+    import hashlib
+
     session = SimpleNamespace(scalar=AsyncMock(side_effect=[True, 9, False]),
                               scalars=AsyncMock(return_value=[77]), execute=AsyncMock())
     storage = SimpleNamespace(delete=AsyncMock())
     with pytest.raises(ValueError, match="currently running"):
         await wipe_cutscene_analysis(session, storage, asset_id=55, game_version="2.1")
+    assert session.execute.await_count == 1  # source admission lock only
+    key = int.from_bytes(hashlib.sha256(b"cutscene-vision-source:2.1:55").digest()[:7], "big")
+    assert session.execute.await_args.args[1] == {"key": key}
+    storage.delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_wipe_requires_version_before_locks_or_deletion():
+    session = SimpleNamespace(scalar=AsyncMock(), scalars=AsyncMock(), execute=AsyncMock())
+    storage = SimpleNamespace(delete=AsyncMock())
+    with pytest.raises(ValueError, match="specific asset version"):
+        await wipe_cutscene_analysis(session, storage, asset_id=55)
+    session.scalar.assert_not_awaited()
     session.execute.assert_not_awaited()
     storage.delete.assert_not_awaited()

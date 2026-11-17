@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from wuwa_story.agents.contracts import CutsceneDescription
 from wuwa_story.agents.settings import AgentSettings
 from wuwa_story.agents.video_context import video_context_snapshot
+from wuwa_story.agents.visual_enqueue_lock import lock_visual_sources
 from wuwa_story.db.models.agents import AgentCall
 from wuwa_story.db.models.graph import Edge
 from wuwa_story.db.models.lore import LoreChunk
@@ -441,6 +442,9 @@ async def wipe_cutscene_analysis(
     game_version: str | None = None,
 ) -> dict[str, int | str | None]:
     """Delete cutscene analysis reports, runs, generated edges/lore, previews, atlases, and orphan S3 objects."""
+    if not game_version:
+        raise ValueError("Select a specific asset version before deleting analysis")
+    await lock_visual_sources(session, [asset_id], game_version)
     locked = await session.scalar(
         text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": -asset_id - 1_000_000}
     )
