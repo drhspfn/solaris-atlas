@@ -140,3 +140,13 @@ test('details display a known end without inventing an opening date', () => {
   assert.match(date.props.children, /Dec 21, 2026/);
   h.close();
 });
+
+
+test('details identify an estimated version start', () => {
+  const h = harness();
+  h.props.event = { ...summary, starts_at: '2026-11-11T10:59:59Z', ends_at: '2026-12-21T10:59:00Z',
+    start_estimate: {basis: 'previous_version_banner_end', occurrence_id: 1, version: '3.7', server: 'europe'} };
+  const date = nodes(h.render()).find((n) => n.props?.className === 'events-detail-dates');
+  assert.match(date.props.children, /Estimated start/);
+  h.close();
+});

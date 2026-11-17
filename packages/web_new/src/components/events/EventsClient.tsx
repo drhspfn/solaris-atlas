@@ -473,7 +473,7 @@ export function EventsPage({
                           onClick={(click) =>
                             openEvent(event, click.currentTarget)
                           }
-                          aria-label={`${gameTextPlainText(event.title, display)}, ${formatDate(event.starts_at)} to ${event.ends_at ? formatDate(event.ends_at) : "end date unavailable"}`}
+                          aria-label={`${gameTextPlainText(event.title, display)}, ${event.start_estimate ? "estimated start " : ""}${formatDate(event.starts_at)} to ${event.ends_at ? formatDate(event.ends_at) : "end date unavailable"}`}
                         >
                           <EventArtwork event={event} />
                           <span className="events-bar-copy">
@@ -484,6 +484,7 @@ export function EventsPage({
                               />
                             </strong>
                             <small>
+                              {event.start_estimate ? "Estimated start · " : ""}
                               {event.game_version
                                 ? `v${event.game_version} · `
                                 : ""}

@@ -114,7 +114,7 @@ export function EventDetails({
         <h2 id="event-modal-title"><PlayerText value={event.title} display={display} /></h2>
         <p className="events-detail-dates">
           {event.starts_at
-            ? `${format(event.starts_at)} → ${event.ends_at ? format(event.ends_at) : event.kind === 'permanent' ? 'Permanent' : 'End date unavailable'} (${timeZoneLabel(timeZone, new Date(event.starts_at).getTime())})`
+            ? `${event.start_estimate ? "Estimated start · " : ""}${format(event.starts_at)} → ${event.ends_at ? format(event.ends_at) : event.kind === 'permanent' ? 'Permanent' : 'End date unavailable'} (${timeZoneLabel(timeZone, new Date(event.starts_at).getTime())})`
             : event.ends_at
               ? `Start date not recorded · Ends ${format(event.ends_at)} (${timeZoneLabel(timeZone, new Date(event.ends_at).getTime())})`
               : 'Opening dates are supplied by the game server, not the client catalog.'}

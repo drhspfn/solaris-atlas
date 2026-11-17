@@ -37,6 +37,7 @@ export type GameEvent = {
   game_version: string | null;
   catalog_version?: string;
   starts_at: string | null;
+  start_estimate?: { basis: string; occurrence_id: number; version: string; server: string } | null;
   ends_at: string | null;
   season: { start?: number; cycle?: { weeks?: number } } | null;
   rewards:
