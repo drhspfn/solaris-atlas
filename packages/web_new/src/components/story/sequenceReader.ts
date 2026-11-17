@@ -2,6 +2,7 @@ import type { SequenceMedia } from "./encounterTransitions";
 import { sequenceInterval } from "./sequenceComponents";
 import { illustrationSections } from "./sequenceIllustrations";
 import { mediaViewerUrl } from "../ui/mediaViewerUtils";
+import { validLoopRegion, type LoopRegion } from "./regionLoop";
 
 type Line = {
   id?: string;
@@ -105,13 +106,15 @@ export function enrichSequenceLines<T extends Line>(lines: T[], sources: Sequenc
 
 export function sequenceBackgroundMusic(media?: SequenceMedia) {
   if (!media || media.schema_version !== 1) return undefined;
-  const tracks = new Map<string, { url: string; loop: boolean }>();
+  const tracks = new Map<string, { url: string; loop: boolean; loop_region?: LoopRegion }>();
   for (const section of media.sections) {
     if (section.kind !== 'audio_event' || !Array.isArray(section.tracks)) continue;
     for (const track of section.tracks) {
       if (track && typeof track === 'object' && track.role === 'music' && track.status === 'published' &&
           typeof track.url === 'string' && mediaViewerUrl(track.url)) {
-        const music = { url: track.url, loop: track.loop === true };
+        if (track.loop_region != null && (track.loop !== true || !validLoopRegion(track.loop_region))) continue;
+        const music = { url: track.url, loop: track.loop === true,
+          ...(track.loop_region ? { loop_region: track.loop_region as LoopRegion } : {}) };
         tracks.set(JSON.stringify(music), music);
       }
     }

@@ -281,7 +281,8 @@ def audio_bundle():
         'clock': {'numerator': 30, 'denominator': 1}, 'range': {'authored': 'unchanged'},
         'parameters': {'bSyncAudio': True, 'FadeDuration': 8000}, 'url': 'https://unverified/section',
         'tracks': [{'file_id': 20, 'file': 'audio/zh/male.ogg', 'status': 'published',
-                    'language': 'zh', 'rover': 'male', 'url': 'https://unverified/track'},
+                    'language': 'zh', 'rover': 'male', 'url': 'https://unverified/track',
+                    'loop_region': {'start_sample': 23226, 'end_sample': 3112259, 'sample_rate': 48000}},
                    {'file_id': 21, 'file': 'audio/ja/female.ogg', 'status': 'published',
                     'language': 'ja', 'rover': 'female'}]}]
     return row

@@ -10,7 +10,8 @@ from wuwa_story_worker.sequence_fragments import publish_sequence_fragments
 
 
 def audio_bundle(tmp_path, *, corrupt=False, entry='audio/event/en/shared.ogg'):
-    track = {'language': 'en', 'rover': None, 'file': entry, 'status': 'rendered'}
+    track = {'language': 'en', 'rover': None, 'file': entry, 'status': 'rendered',
+             'loop_region': {'start_sample': 23226, 'end_sample': 3112259, 'sample_rate': 48000}}
     section = {'kind': 'audio_event', 'source': '/Game/M0334_All.407',
                'reference': '/Game/Aki/WwiseAudio/Events/play_all_sound_m0334',
                'clock': {'numerator': 30, 'denominator': 1}, 'range': {'authored': True},
@@ -43,6 +44,7 @@ async def test_scene_soundtrack_publication_keeps_exact_owner_bundle_and_event(t
     section, = result['sections']
     assert section['range'] == authored['range'] and section['sync_audio'] is True
     assert section['tracks'][0]['status'] == 'published' and section['tracks'][0]['file_id'] == 91
+    assert section['tracks'][0]['loop_region'] == authored['tracks'][0]['loop_region']
     assert result['complete_video'] is False
     assert reference.metadata_json['bundle_file_id'] == 90
     assert reference.metadata_json['section_source'] == '/Game/M0334_All.407'
