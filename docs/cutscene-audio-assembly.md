@@ -111,7 +111,23 @@ For the inspected 3.8.0 source, entity 185750044 posts
 `play_vo_level_2_6_younuo_fly_01` before `Fly_M0294` and `Fly_M0312`;
 the authored wait sums are 11.3 and 29.8 seconds respectively. The 3.8.0
 archive index contains the corresponding Wwise event `.uasset` and `.uexp`;
-the localized bank, WEMs, and actual game playback have not been verified.
+the retained 3.8.0 voice index also contains EN/JA/KO/ZH localized banks.
+Each inspected bank contains one zero-delay Play action for one localized WEM.
+The WEM RIFF chunks contain no `cue ` or `LIST` marker chunks; the four streams
+have different durations (about 68.6–69.4 seconds). No video-relative timestamp
+can be deduced from the bank or these media headers.
+
+The 3.8.0 client JavaScript maps `PlayEffect2` to `LevelEventSpawnEffectV2` and
+`Wait` to `LevelEventWaitTime`. The dissolve handler calls
+`VideoBpController.PlayEffect`, which can load the MediaSource asynchronously.
+The global PostAkEvent calls `AudioSystem.PostEvent`, which queues asynchronous
+event loading and posting. Waits advance on ticks with context time dilation;
+the controller also advances actions via a next-tick callback. Consequently,
+the authored waits are not a precise offset between decoded media clocks.
+Disabled, asynchronous, or editor-disabled actions must not produce a claimed
+sequential wait sum. Establishing an actual offset requires paired observations
+of the audio playback position and video first-frame time in the same run and
+timebase; neither filenames, durations, nor action wait sums establish it.
 
 Unsupported source data can produce partial audio diagnostics while retaining
 video. Infrastructure `OSError`/`RuntimeError`, dependency deferrals, timeouts,
