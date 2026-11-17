@@ -172,6 +172,7 @@ export function calendarPatch(events: GameEvent[], versions: string[], now: numb
   const runs = events.filter(event => eventPatch(event) === version && version !== null);
   // Snapshot membership alone does not date an old unversioned occurrence.
   const dated = runs.filter(event => Number.isFinite(startTime(event)) && Number.isFinite(endTime(event)) &&
+    event.start_estimate?.basis !== 'declared_recurrence' &&
     (event.game_version || event.schedule_evidence || event.start_estimate ||
       (startTime(event) <= now && endTime(event) > now)));
   return {

@@ -213,6 +213,17 @@ test('undated latest patches remain undated and empty groups allocate no lanes',
   assert.deepEqual(layoutTimeline(patch.events, 0, DAY), []);
 });
 
+test('calculated recurring periods stay visible without stretching the current patch window', () => {
+  const current = { ...run(1, 1, '2026-11-11', '2026-12-21'), game_version: '3.8' };
+  const cycle = { ...run(2, 2, '2026-10-26', '2026-11-23', 'recurring'), game_version: null,
+    catalog_version: '3.8.0', start_estimate: { basis: 'declared_recurrence' } };
+  const next = { ...cycle, occurrence_id: 3, starts_at: '2026-12-07', ends_at: '2027-01-04' };
+  const patch = calendarPatch([current, cycle, next], ['3.8.0'], Date.parse('2026-11-17'));
+  assert.equal(patch.start, Date.parse('2026-11-11'));
+  assert.equal(patch.end, Date.parse('2026-12-21'));
+  assert.equal(patch.events.length, 3);
+});
+
 test('a notice version dates its run without relabeling the captured catalog', () => {
   const event = { ...run(1, 1, '2026-11-11', '2026-12-21'), game_version: null,
     catalog_version: '3.9.0', schedule_evidence: { update_version: '3.8', notice_id: 42, notice_revision: 'a'.repeat(64) } };
