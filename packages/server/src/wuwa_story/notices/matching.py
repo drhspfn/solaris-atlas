@@ -28,6 +28,15 @@ def notice_candidates[T: MatchingEvent](
     title = re.search(r"\[([^]]+)\]", content["title"])
     name = normalized(title[1]) if title else None
     featured = re.search(r"5-Star (Resonator|Weapon):\s*([^,\n]+)", content["text"])
+    selectable = re.search(
+        r"selectable 5-Star (Resonators|Weapons):\s*(.*?),\s*and 4-Star ",
+        content["text"],
+    )
+    selectable_names = (
+        {normalized(n) for n in re.split(r",|\band\b", selectable[2]) if n.strip()}
+        if selectable
+        else set()
+    )
     rate_up = re.search(
         r"4-Star (?:Resonators|Weapons):\s*(.*?)\s+receive boosted drop rates",
         content["text"],
@@ -40,7 +49,8 @@ def notice_candidates[T: MatchingEvent](
     )
     matches = []
     for event in events:
-        english = (event.source_data or {}).get("client", {}).get("locales", {}).get("en", {})
+        client = (event.source_data or {}).get("client", {})
+        english = client.get("locales", {}).get("en", {})
         exact_title = name and normalized(english.get("title", event.title)) == name
         exact_featured = (
             featured
@@ -50,7 +60,14 @@ def notice_candidates[T: MatchingEvent](
             )
             and ((featured[1] == "Weapon") == ("Weapon Convene" in english.get("title", "")))
         )
-        if exact_title or exact_featured:
+        exact_selection = (
+            selectable
+            and event.event_kind == "banner"
+            and client.get("gacha_type") == (13 if selectable[1] == "Resonators" else 14)
+            and len(english.get("featured_names", [])) == 1
+            and normalized(english["featured_names"][0]) in selectable_names
+        )
+        if exact_title or exact_featured or (not match_roster and exact_selection):
             matches.append(event)
     if match_roster and len(matches) > 1 and rate_up_names:
         matches = [

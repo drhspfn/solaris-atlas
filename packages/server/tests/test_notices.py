@@ -149,6 +149,58 @@ def test_current_poster_can_identify_subject_without_assigning_ambiguous_schedul
     assert not _notice_overlaps(notice, occurrence)
 
 
+def test_38_featured_banners_do_not_guess_between_repeat_client_rows():
+    def event(identifier, subject, roster):
+        return SimpleNamespace(id=identifier, title=f"{subject} · Resonator Convene",
+            event_kind="banner", source_data={"client": {"locales": {"en": {
+                "title": f"{subject} · Resonator Convene", "featured_names": [subject],
+                "up_names": roster,
+            }}}})
+
+    def notice(subject):
+        return {"title": "[Campaign] Featured Resonator Convene", "text":
+            f"During the event, 5-Star Resonator: {subject}, 4-Star Resonators: Youhu, Aalto, and Yangyang receive boosted drop rates!"}
+
+    lily = event(1945, "Lily", ["Sanhua", "Baizhi", "Chixia"])
+    qiuyuan = [event(i, "Qiuyuan", ["Sanhua", "Baizhi", "Chixia"])
+               for i in (786, 1862, 1947)]
+    assert notice_matches(notice("Lily"), [lily, *qiuyuan]) == [lily]
+    assert notice_matches(notice("Qiuyuan"), [lily, *qiuyuan]) == []
+
+
+@pytest.mark.parametrize(
+    ("kind", "names", "gacha_type"),
+    [
+        ("Resonators", "Camellya, Roccia, Phoebe, Brant", 13),
+        ("Weapons", "Red Spring, Tragicomedy, Luminous Hymn, Unflickering Valor", 14),
+    ],
+)
+def test_reverb_selectable_subjects_link_only_matching_client_types_for_presentation(
+    kind, names, gacha_type
+):
+    from wuwa_story.ingestion.notices import notice_candidates
+
+    subject = names.split(", ")[0]
+    content = {
+        "title": "[Reverbs II] Reverb Convene",
+        "text": f"During the event, selectable 5-Star {kind}: {names}, and 4-Star {kind}: A, B, C receive boosted drop rates!",
+    }
+
+    def event(identifier, featured, client_type):
+        return SimpleNamespace(
+            id=identifier, title=featured, event_kind="banner",
+            source_data={"client": {"gacha_type": client_type, "locales": {"en": {
+                "title": featured, "featured_names": [featured], "up_names": ["X", "Y", "Z"],
+            }}}},
+        )
+
+    selected = event(1, subject, gacha_type)
+    ordinary = event(2, subject, 2 if gacha_type == 13 else 3)
+    other = event(3, "Unlisted", gacha_type)
+    assert notice_candidates(content, [selected, ordinary, other], match_roster=False) == [selected]
+    assert notice_matches(content, [selected]) == []
+
+
 def test_archived_notice_images_use_public_cdn_without_changing_official_sources(monkeypatch):
     from wuwa_story.config import settings
     from wuwa_story.ingestion.notices import public_notice_image

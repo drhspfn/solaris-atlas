@@ -132,6 +132,23 @@ async def test_undated_calendar_and_detail_keep_public_contract(event, repositor
 
 
 @pytest.mark.asyncio
+async def test_reverb_notice_is_visible_on_matching_undated_event(event, repository, service):
+    event.source_data["client"].update({
+        "gacha_type": 14,
+        "locales": {"en": {"title": "Red Spring · Weapon Convene", "featured_names": ["Red Spring"]}},
+    })
+    repository.runs.return_value = [EventRun(event, None)]
+    repository.announcements.return_value = [EventAnnouncement(
+        43, "tideforge", "Tideforge Reverbs II", [], None,
+        {"title": "[Tideforge Reverbs Ⅱ] Reverb Weapon Convene", "text":
+         "During the event, selectable 5-Star Weapons: Red Spring, Tragicomedy, Luminous Hymn, Unflickering Valor, and 4-Star Weapons: Commando of Conviction, Variation, Jinzhou Keeper receive boosted drop rates!"},
+    )]
+    payload = await service.detail(7, "europe")
+    assert [notice["id"] for notice in payload["notices"]] == [43]
+    assert payload["starts_at"] is None and payload["ends_at"] is None
+
+
+@pytest.mark.asyncio
 async def test_historical_capture_and_notice_identity_remain_scoped(event, repository, service):
     occurrence = EventOccurrence(
         id=42,
