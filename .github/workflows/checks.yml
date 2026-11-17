@@ -174,9 +174,15 @@ jobs:
         working-directory: packages/server
         env:
           WUWA_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/visual_test
+        run: |
+          uv run pytest tests/test_admin_console.py -k event_period tests/test_admin_event_periods.py -q
+          uv run pytest tests/test_notice_period_identity_postgres.py -q
+      - name: Validate recurring publication lock ordering on PostgreSQL
+        working-directory: packages/server
+        env:
+          WUWA_READ_REFRESH_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/event_read_refresh_verification
         run: >-
-          uv run pytest tests/test_admin_console.py -k event_period
-          tests/test_admin_event_periods.py -q
+          uv run pytest tests/test_event_asset_dependencies_postgres.py::test_recurring_preclaims_busy_asset_gate_before_row_locks -q
       - name: Validate production projection budget
         run: >-
           uv run --project packages/server python -m unittest

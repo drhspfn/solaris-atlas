@@ -58,7 +58,12 @@ async def read_event_runs(
             .where(GameEventSnapshotMember.version == version, GameEventSnapshot.complete.is_(True))
         ))
     if event_id is not None:
-        statement = statement.where(GameEvent.id == event_id)
+        if occurrence_id is not None:
+            root = select(func.coalesce(GameEvent.canonical_event_id, GameEvent.id)).where(
+                GameEvent.id == event_id).scalar_subquery()
+            statement = statement.where(func.coalesce(GameEvent.canonical_event_id, GameEvent.id) == root)
+        else:
+            statement = statement.where(GameEvent.id == event_id)
         statement = statement.where(
             GameEventOccurrence.id == occurrence_id if occurrence_id is not None
             else GameEventOccurrence.id.is_(None)

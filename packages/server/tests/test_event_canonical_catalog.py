@@ -1,4 +1,10 @@
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+
 from wuwa_story.events.catalog import catalog_rows
+from wuwa_story.read_models.readers import entities, events
 
 
 def test_source_aliases_form_one_event_with_all_real_periods():
@@ -29,3 +35,18 @@ def test_equal_names_never_bind_unrelated_events():
         {"id": 1, "occurrence_id": 10, "title": "Same"},
         {"id": 2, "occurrence_id": 20, "title": "Same"},
     ])] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_canonical_detail_accepts_a_period_owned_by_a_source_alias(monkeypatch):
+    async def payload(session, kind, identity, locale, selector=None):
+        return {"event": {"id": identity, "canonical_event_id": 7}, "occurrences": [] if identity == 7 else [
+            {"id": 8, "source_event_id": 8, "canonical_event_id": 7,
+             "occurrence_id": 99, "server": "europe", "starts_at": None, "ends_at": None},
+        ]}
+
+    monkeypatch.setattr(entities, "page_payload", payload)
+    session = SimpleNamespace(scalar=AsyncMock(return_value=8))
+    result = await events.event_detail(session, 7, "europe", 99)
+    assert result["id"] == 7 and result["source_event_id"] == 8 and result["occurrence_id"] == 99
+    assert "coalesce" in str(session.scalar.await_args.args[0])

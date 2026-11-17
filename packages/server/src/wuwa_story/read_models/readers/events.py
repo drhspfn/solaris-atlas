@@ -1,9 +1,9 @@
 """Event occurrence and announcement response projections."""
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from wuwa_story.db.models.game_events import GameEventSnapshotMember
+from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence, GameEventSnapshotMember
 from wuwa_story.db.repositories.read_models import ENTITY_READ_MODELS
 from wuwa_story.events.catalog import catalog_rows
 from wuwa_story.events.catalog_duplicates import visible_occurrences
@@ -29,6 +29,17 @@ async def event_detail(session, event_id, server, occurrence_id, locale="en"):
     event = payload.get("event")
     if not isinstance(runs, list) or not isinstance(event, dict):
         raise entities._unready()
+    if event.get("canonical_event_id") is not None and occurrence_id is not None and not any(
+        run.get("server") == server and run.get("occurrence_id") == occurrence_id for run in runs
+    ):
+        root = select(func.coalesce(GameEvent.canonical_event_id, GameEvent.id)).where(
+            GameEvent.id == event_id).scalar_subquery()
+        owner = await session.scalar(select(GameEventOccurrence.event_id).join(
+            GameEvent, GameEvent.id == GameEventOccurrence.event_id).where(
+                GameEventOccurrence.id == occurrence_id, GameEventOccurrence.server == server,
+                func.coalesce(GameEvent.canonical_event_id, GameEvent.id) == root))
+        if type(owner) is int and owner != event_id:
+            return await event_detail(session, owner, server, occurrence_id, locale)
     if occurrence_id is None:
         if (
             not any(run.get("server") == server for run in runs)
