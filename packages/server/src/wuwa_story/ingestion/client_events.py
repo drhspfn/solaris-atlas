@@ -28,21 +28,33 @@ def _version_key(value):
 
 _ENRICHMENT_FIELDS = {"prefab_artwork", "prefab_spine_resources", "missing_resources", "animation_import",
                       "_capture_provenance"}
+_DERIVED_FIELDS = {"artwork", "resources", "activity_module", "compiler_checksum"}
 
 
 def _capture_core(capture):
     return {key: value for key, value in capture.items() if key not in _ENRICHMENT_FIELDS}
 
 
+def _capture_identity(capture):
+    return {key: value for key, value in _capture_core(capture).items()
+            if key not in _DERIVED_FIELDS and key != "source_checksum"}
+
+
+def _same_authored_capture(existing, incoming):
+    old_checksum, new_checksum = existing.get("source_checksum"), incoming.get("source_checksum")
+    return (_capture_identity(existing) == _capture_identity(incoming)
+            and (not old_checksum or old_checksum == new_checksum))
+
+
 def _covers_catalog_capture(row, presentation, version):
     snapshot = (row.source_data or {}).get("client") or {}
     scheduled = bool(getattr(row, "starts_at", None) or getattr(row, "ends_at", None))
     if scheduled:
-        return bool(snapshot) and _capture_core(snapshot) == _capture_core(presentation)
+        return bool(snapshot) and _same_authored_capture(snapshot, presentation)
     source_id = getattr(row, "source_occurrence_id", "")
     if source_id.startswith("client:"):
         return (source_id == f"client:{presentation['asset_version']}" and
-                (not snapshot or _capture_core(snapshot) == _capture_core(presentation)))
+                (not snapshot or _same_authored_capture(snapshot, presentation)))
     return (getattr(row, "game_version", version) == version and
             (not snapshot or _capture_core(snapshot) == _capture_core(presentation)))
 
@@ -89,8 +101,13 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
                 raise ValueError("Existing event capture belongs to a different source identity")
             incoming = {**record, "asset_version": asset_version, "download_id": download_id,
                         "schedule_status": "server_controlled"}
-            if _capture_core(member.client_capture) != _capture_core(incoming):
+            if not _same_authored_capture(member.client_capture, incoming):
                 raise ValueError("Existing event capture differs from the imported catalog")
+            changed = any(member.client_capture.get(field) != incoming.get(field)
+                          for field in _DERIVED_FIELDS - {"compiler_checksum"})
+            checksum = incoming.get("compiler_checksum")
+            if changed and (not isinstance(checksum, str) or not re.fullmatch(r"[0-9a-f]{64}", checksum)):
+                raise ValueError("Derived capture changes require compiler provenance")
     if snapshot and all(record.get("locales", {}).get("en") for record in records.values()):
         matches = [indexed.get(client_identity(key)) or legacy.get(client_identity(key)) for key in records]
         matched_ids = {event.id for event in matches if event is not None}
@@ -120,7 +137,9 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
         provenance = dict(event.source_data or {})
         if event.source == SOURCE:
             provenance.update(legacy_source=event.source, legacy_source_id=event.source_id)
-        if previous.get("download_id") == download_id:
+        if (previous.get("download_id") == download_id
+            and previous.get("resources") == record.get("resources")
+            and previous.get("artwork") == record.get("artwork")):
             for field in ("prefab_artwork", "prefab_spine_resources", "missing_resources", "animation_import"):
                 if field in previous:
                     presentation[field] = previous[field]
@@ -155,6 +174,18 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
                                                 client_capture=capture))
         elif member.client_capture is None:
             member.client_capture = capture
+        else:
+            updated = dict(member.client_capture)
+            for field in _DERIVED_FIELDS:
+                if field == "compiler_checksum" and not capture.get(field):
+                    continue
+                if field in capture:
+                    updated[field] = capture[field]
+                else:
+                    updated.pop(field, None)
+            if "source_checksum" in capture:
+                updated["source_checksum"] = capture["source_checksum"]
+            member.client_capture = updated
     occurrences = list(await session.scalars(select(GameEventOccurrence).where(
         GameEventOccurrence.event_id.in_([e.id for e in events]),
         or_(GameEventOccurrence.game_version == version,

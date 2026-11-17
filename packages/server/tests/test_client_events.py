@@ -78,7 +78,9 @@ async def test_client_import_preserves_manual_unknown_start_and_locks_occurrence
 async def test_reimport_reuses_client_identity_and_retains_discovered_prefab_images():
     image = {"path": "/Game/FromPrefab", "role": "prefab_texture"}
     event = SimpleNamespace(id=7, source=CLIENT_SOURCE, source_id="activity:100",
-                            source_data={"client": {"download_id": "a" * 64, "prefab_artwork": [image]}})
+                            source_data={"client": {"download_id": "a" * 64, "prefab_artwork": [image],
+                                                    "resources": record()["resources"],
+                                                    "artwork": record()["artwork"]}})
     rows = [SimpleNamespace(event_id=7, server=server, source_data={})
             for server in ["asia", "europe", "america"]]
     session = AsyncMock()

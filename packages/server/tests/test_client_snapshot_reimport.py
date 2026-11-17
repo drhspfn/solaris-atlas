@@ -161,6 +161,38 @@ async def test_versioned_capture_is_idempotent_and_conflicting_payload_fails_clo
 
 
 @pytest.mark.asyncio
+async def test_recompile_corrects_derived_resources_without_rewriting_period(database):
+    old = {**record("First"), "source_checksum": "a" * 64, "compiler_checksum": "b" * 64,
+           "resources": [{"path": "/Game/ShipTower"}], "artwork": [{"path": "/Game/ShipTower"}],
+           "activity_module": "NewTowerClimbing"}
+    corrected = {**old, "compiler_checksum": "c" * 64, "resources": [], "artwork": []}
+    second = record("Second")
+    async with database() as session:
+        await store_client_events(session, {"100": old, "101": second}, "3.8.0", "pinned")
+        period = await session.scalar(select(GameEventOccurrence).where(
+            GameEventOccurrence.event_id == 1, GameEventOccurrence.server == "europe"))
+        period.starts_at = datetime(2026, 1, 1, tzinfo=UTC)
+        saved_period = dict(period.source_data)
+        event = await session.get(GameEvent, 1)
+        event.source_data = {"client": {**event.source_data["client"], "prefab_artwork": ["stale"]}}
+        await store_client_events(session, {"100": corrected, "101": second}, "3.8.0", "pinned")
+        capture = (await session.get(GameEventSnapshotMember, ("3.8.0", 1))).client_capture
+        assert capture["resources"] == [] and capture["artwork"] == []
+        assert capture["compiler_checksum"] == "c" * 64
+        assert capture["source_checksum"] == "a" * 64
+        assert period.source_data == saved_period
+        assert "prefab_artwork" not in event.source_data["client"]
+        await store_client_events(session, {"100": corrected, "101": second}, "3.8.0", "pinned")
+        with pytest.raises(ValueError, match="capture differs"):
+            await store_client_events(session, {"100": {**corrected, "source_checksum": "d" * 64},
+                                                "101": second}, "3.8.0", "pinned")
+        with pytest.raises(ValueError, match="compiler provenance"):
+            await store_client_events(session, {"100": {**corrected, "resources": ["unexpected"],
+                                                        "compiler_checksum": None}, "101": second},
+                                      "3.8.0", "pinned")
+
+
+@pytest.mark.asyncio
 async def test_older_import_retains_newer_current_and_separate_captures(database):
     async with database() as session:
         await store_client_events(session, {"100": record("New"), "101": record("New 2")},

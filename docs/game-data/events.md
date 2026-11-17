@@ -188,8 +188,13 @@ This does not assign an ambiguous banner's schedule or replace its featured rost
 
 Migration 0038 adds nullable client presentation data to each snapshot member.
 Deploy the migration before the importer. Existing readers and rows remain valid;
-imports preserve captured versions and reject conflicting imports for the same
-version and download. A dated occurrence is not rewritten by catalog import.
+imports preserve captured versions and reject conflicting authored data for the
+same version and download. The worker records the source row's SHA-256 and its
+event-catalog module SHA-256. A recompilation may replace derived resource and
+artwork bindings when its compiler checksum is supplied; it cannot change the
+source row checksum or authored fields. Older captures without checksums can gain
+one on reimport after the other authored fields match. A dated occurrence is not
+rewritten by catalog import.
 An identical, dated capture can cover its catalog entry without creating another
 unknown-date occurrence. Existing placeholders and conflicting captures remain.
 

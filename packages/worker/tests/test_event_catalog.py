@@ -1,4 +1,5 @@
 import sqlite3
+from hashlib import sha256
 
 import flatbuffers
 import pytest
@@ -56,6 +57,12 @@ def test_client_keys_override_numeric_id_and_filename_guesses(tmp_path):
     }
     assert activity["banner_path"] == "/Game/Aki/Artwork/Event"
     weapon = client_event_record(catalog, "1:200087")
+    for filename, table, key, row in [("db_activity.db", "activity", 102000009, activity),
+                                      ("db_gacha.db", "gachaviewinfo", 200087, weapon)]:
+        with sqlite3.connect(tmp_path / filename) as db:
+            (raw,) = db.execute(f"SELECT BinData FROM {table} WHERE Id = ?", (key,)).fetchone()
+        assert row["source_checksum"] == sha256(raw).hexdigest()
+        assert len(row["compiler_checksum"]) == 64
     assert weapon["locales"]["en"]["title"] == "Unspoken Rue · Weapon Convene"
     assert weapon["featured_ids"] == [21020107]
     assert client_event_record(catalog, "2:999") is None

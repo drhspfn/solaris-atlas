@@ -6,6 +6,7 @@ Supplementary images follow explicit ActivityId foreign keys, never filenames.
 
 import re
 import struct
+from hashlib import sha256
 from pathlib import Path
 
 from flatbuffers.table import Table
@@ -124,6 +125,7 @@ def read_event_catalog(config: Path, readers: Path | None = None) -> dict[str, d
     if readers is not None:
         validate_event_schema(readers)
     records = {}
+    compiler_checksum = sha256(Path(__file__).read_bytes()).hexdigest()
     with open_db(config / "db_activity.db") as db:
         for identifier, blob in db.execute("SELECT Id, BinData FROM activity"):
             row = table(blob)
@@ -137,6 +139,7 @@ def read_event_catalog(config: Path, readers: Path | None = None) -> dict[str, d
             activity_type = integer(row, 1)
             records[str(identifier)] = {
                 "table": "Activity", "config_file": "db_activity.db",
+                "source_checksum": sha256(blob).hexdigest(), "compiler_checksum": compiler_checksum,
                 "title_key": text(row, 21) or text(row, 20), "name_key": text(row, 20),
                 "description_key": text(row, 23), "theme_key": text(row, 22),
                 "banner_path": texture_path(text(row, 24)),
@@ -162,6 +165,7 @@ def read_event_catalog(config: Path, readers: Path | None = None) -> dict[str, d
             ]], "GachaViewInfo", identifier)
             records[f"gacha:{identifier}"] = {
                 "table": "GachaViewInfo", "config_file": "db_gacha.db",
+                "source_checksum": sha256(blob).hexdigest(), "compiler_checksum": compiler_checksum,
                 "title_key": "", "title_keys": title_keys, "summary_key": text(row, 2),
                 "description_key": text(row, 3), "gacha_type": integer(row, 1),
                 "banner_path": texture_path(text(row, 10)), "event_kind": "banner",
