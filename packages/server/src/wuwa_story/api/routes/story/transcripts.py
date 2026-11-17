@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.api import read_projections
 from wuwa_story.api.public_addresses import public_addresses
+from wuwa_story.api.routes.story.character_archive import _load_term_explanations
+from wuwa_story.api.routes.story.shared import _release_id
 from wuwa_story.db.repositories.nodes import get_node
 from wuwa_story.db.session import get_session
 from wuwa_story.story import usecases
@@ -64,7 +66,7 @@ async def quest_transcript(
             session, game_quest_id, character, q, locale, game_version, limit, offset, focus_line, include_raw,
         )
     try:
-        return await usecases.quest_transcript(
+        result = await usecases.quest_transcript(
             session,
             game_quest_id,
             character,
@@ -77,5 +79,15 @@ async def quest_transcript(
             include_raw,
             node_lookup=get_node,
         )
+        texts = []
+        for line in result["lines"]:
+            for text in [line.get("text"), *(choice.get("text") for choice in line.get("player_choices", []))]:
+                if isinstance(text, dict):
+                    texts.append(text.get("content") or text.get("inline_text"))
+                elif isinstance(text, str):
+                    texts.append(text)
+        release_id = await _release_id(session, game_version)
+        result["terms"] = await _load_term_explanations(session, release_id, locale, texts) if release_id else {}
+        return result
     except StoryBrowsingError as error:
         raise HTTPException(status_code=error.status_code, detail=error.detail) from error

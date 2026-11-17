@@ -292,13 +292,14 @@ async def test_quest_materializes_all_transcript_pages(context):
     context.node_type.key = "quest"
     first = [{"id": f"line:{i}"} for i in range(2000)]
     sections.transcripts.quest_transcript.side_effect = [
-        {"lines": first, "scenes": ["source-scene"]},
-        {"lines": [{"id": "line:2000"}]},
+        {"lines": first, "scenes": ["source-scene"], "terms": {"1": {"title": "First"}}},
+        {"lines": [{"id": "line:2000"}], "terms": {"700034": {"title": "World of the Dead"}}},
     ]
     result = await builders.build_entity(context.session, "quest", 7, 2, "3.10")
     transcript = result["payload"]["transcript"]
     assert len(transcript["lines"]) == transcript["lines_returned"] == 2001
     assert transcript["scenes"] == ["source-scene"]
+    assert set(transcript["terms"]) == {"1", "700034"}
     calls = sections.transcripts.quest_transcript.await_args_list
     assert [call.kwargs["offset"] for call in calls] == [0, 2000]
     assert all(

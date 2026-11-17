@@ -608,6 +608,7 @@ test('published video components are actually reachable inside their flow disclo
 
 
 test('quest reader nests cinematic dialogue once and preserves cited line addresses', () => {
+  const termTexts = [];
   const sequenceMedia = { schema_version: 1, complete_video: false, sections: [
     { kind: 'movie_fragment', status: 'published', file_id: 33, url: 'https://cdn.test/M0334.webm' },
   ] };
@@ -642,7 +643,10 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
     '@/components/story/questReading': loadStory('questReading'),
     '@/components/story/sequenceReader': loadStory('sequenceReader'),
     '@/components/story/cutscenePlacement': loadStory('cutscenePlacement'),
-    '@/components/dialogue/PlayerText': { PlayerText: ({ value, fallback }) => typeof value === 'string' ? value : value?.content || fallback },
+    '@/components/dialogue/PlayerText': { PlayerText: ({ value, fallback, terms }) => {
+      if (value?.content?.includes('<te href=700034>')) termTexts.push(terms);
+      return typeof value === 'string' ? value : value?.content || fallback;
+    } },
     '@/data/localized': { localizedText },
     '@/components/story/runtimeActivity': { isSourceOnlyActivity, sidebarActivityTitle },
     './questSidebarModel': { activityDestination, dialogueSearchIndex },
@@ -660,7 +664,7 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
   vm.runInNewContext(code, { exports, URLSearchParams,
     require: id => mocks[id] ?? (id === 'react/jsx-runtime' ? require(id) : dummy) });
   const lines = [
-    { id: 'before', flow_state: 'Before', story_position: [0], text: { content: 'Before the encounter' },
+    { id: 'before', flow_state: 'Before', story_position: [0], text: { content: 'Before the encounter <te href=700034>world of the dead</te>' },
       action: { name: 'ShowTalk' }, source_type: 'flow_state', game_ids: { talk_item_id: 77 },
       provenance: { source_file: 'BinData/flowState/flowstate.json', source_row: 21 } },
     { id: 'dialogue:SHUTUP', flow_state: 'Flow28', action: { index: 0 }, text: { content: 'SHUT UP!' }, story_order_mapped: false,
@@ -672,13 +676,14 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
   const markup = renderToStaticMarkup(React.createElement(exports.QuestPageClient, {
     questKey: '114000031', initialSelection: { locale: 'en', gameVersion: '', citedLine: 'dialogue:SHUTUP' },
     initialProfile: { quest: { game_quest_id: 114000031, name: { content: 'Battle fixture' } } },
-    initialTranscript: { lines, limit: 100, offset: 0, story_blocks: [
+    initialTranscript: { lines, terms: { 700034: { title: 'World of the Dead' } }, limit: 100, offset: 0, story_blocks: [
       { id: 'gate', title: 'Battle', position: [2], condition_type: 'FinishDungeon', branches: [], flow_states: [], source, encounter: data },
       { id: 'technical', title: 'Story activity', position: [1], branches: [], flow_states: [], source },
       { id: 'conversation', title: 'Continue the story', condition_type: 'PlayFlow', position: [0],
         branches: [], flow_states: [{ state: 'Before', position: [0] }], source },
     ] }, initialMedia: { events: [], related_cutscenes: [] },
   }));
+  assert.equal(termTexts[0]?.[700034]?.title, 'World of the Dead');
   for (const id of ['dialogue:SHUTUP', 'dialogue:THATNOTHOME', 'dialogue:repeat']) {
     assert.equal(markup.split(`data-dialogue-key="${id}"`).length - 1, 1);
   }

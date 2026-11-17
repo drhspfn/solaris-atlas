@@ -234,6 +234,7 @@ async def _quest_payload(session, key, locale, version):
 async def _quest_transcript(session, key, locale, version, *, include_raw):
     transcript = None
     lines = []
+    terms = {}
     seen = set()
     while True:
         page = await transcripts.quest_transcript(
@@ -250,6 +251,7 @@ async def _quest_transcript(session, key, locale, version, *, include_raw):
         )
         if transcript is None:
             transcript = page
+        terms.update(page.get("terms") or {})
         identities = [line["id"] for line in page["lines"]]
         if len(set(identities)) != len(identities) or seen.intersection(identities):
             raise ValueError("Quest transcript pagination did not advance")
@@ -264,6 +266,7 @@ async def _quest_transcript(session, key, locale, version, *, include_raw):
             break
     return {
         **transcript,
+        "terms": terms,
         "lines": lines,
         "lines_returned": len(lines),
         "offset": 0,
