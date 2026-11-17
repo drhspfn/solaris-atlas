@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from wuwa_story.events.catalog import catalog_rows, is_catalog_capture
+from wuwa_story.events.selectable_pools import pool_match
 from wuwa_story.read_models.readers import entities, events
 
 
@@ -42,6 +43,7 @@ def test_manually_edited_capture_is_a_real_independent_period_even_without_dates
     assert not is_catalog_capture("client:3.8.0", None, None, {"schedule_source": "manual"})
     assert not is_catalog_capture("client:3.8.0", None, None, {"manual_schedule": True})
     assert not is_catalog_capture("manual:one", None, None, {})
+    assert pool_match({"schedule_source": "manual", "notice_match": {"basis": "gacha_pool"}}) is None
 
 
 @pytest.mark.asyncio
