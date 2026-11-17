@@ -14,7 +14,7 @@ from wuwa_story.search.lore import LoreSearchService
 logger = logging.getLogger(__name__)
 
 mcp = Server("solaris-atlas-lore")
-streamable_http = StreamableHTTPSessionManager(app=mcp, json_response=True)
+streamable_http = StreamableHTTPSessionManager(app=mcp, json_response=True, stateless=True)
 
 
 def _dump_json(obj: Any) -> str:
