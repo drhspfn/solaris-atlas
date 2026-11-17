@@ -20,7 +20,7 @@ from wuwa_story.ingestion.event_capture_backfill import backfill_event_captures
 
 class LocalSession(AsyncSession):
     async def execute(self, statement, *args, **kwargs):
-        if str(statement) == "SELECT pg_advisory_xact_lock(705, 1)":
+        if str(statement) in {"SELECT pg_advisory_xact_lock(705, 1)", "SELECT pg_advisory_xact_lock(705, 25)"}:
             return None  # SQLite has no advisory locks; production uses PostgreSQL.
         return await super().execute(statement, *args, **kwargs)
 

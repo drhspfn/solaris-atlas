@@ -13,6 +13,7 @@ async def bind_event_alias(session, alias_id: int, canonical_id: int, evidence: 
         raise ValueError("A game source or manual evidence reference is required")
     # The importer uses the same lock, so alias bindings cannot race catalog writes.
     await session.execute(text("SELECT pg_advisory_xact_lock(705, 1)"))
+    await session.execute(text("SELECT pg_advisory_xact_lock(705, 25)"))
     rows = list(await session.scalars(select(GameEvent).where(
         GameEvent.id.in_([alias_id, canonical_id])).order_by(GameEvent.id).with_for_update()))
     by_id = {row.id: row for row in rows}

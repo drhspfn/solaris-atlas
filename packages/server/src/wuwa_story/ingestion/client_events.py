@@ -211,6 +211,7 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
         raise ValueError("The game client contains no event catalog records")
     # Serialize catalog writes across replicas, but only for the short DB phase.
     await session.execute(text("SELECT pg_advisory_xact_lock(705, 1)"))
+    await session.execute(text("SELECT pg_advisory_xact_lock(705, 25)"))
     snapshot = await session.get(GameEventSnapshot, asset_version, populate_existing=True)
     if snapshot and snapshot.download_id != download_id:
         raise ValueError("Existing event snapshot belongs to a different download")
