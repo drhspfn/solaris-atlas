@@ -27,11 +27,13 @@ async def test_snapshot_routes_only_complete_membership_to_source(monkeypatch):
     service = SimpleNamespace(browse=AsyncMock(return_value={"events": []}))
     app.dependency_overrides[game_events.get_session] = lambda: session
     app.dependency_overrides[game_events.get_event_service] = lambda: service
-    projection = Mock(side_effect=AssertionError("snapshot must use source"))
+    projection = Mock(return_value=False)
     monkeypatch.setattr(game_events.read_projections, "should_route_to_projection", projection)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         assert (await client.get("/events/snapshots")).json() == {"versions": ["3.10.0", "3.8.0", "3.7.1"]}
-        assert (await client.get("/events?version=3.8.0")).status_code == 200
+        response = await client.get("/events?version=3.8.0")
+        assert response.status_code == 200
+        assert response.json()["snapshot_presentation"] == "current_and_recorded_occurrences"
         assert service.browse.await_args.args[2] == "3.8.0"
         session.scalars.return_value = ["3.8.0"]
         assert (await client.get("/events?version=3.8")).status_code == 200
@@ -42,7 +44,27 @@ async def test_snapshot_routes_only_complete_membership_to_source(monkeypatch):
         assert (await client.get("/events?version=3.7.0")).status_code == 404
         session.get.return_value = SimpleNamespace(complete=False)
         assert (await client.get("/events?version=3.7.0")).status_code == 404
-    projection.assert_not_called()
+    projection.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_uses_current_projection_when_selected(monkeypatch):
+    app = FastAPI()
+    app.include_router(game_events.router)
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(complete=True)
+    service = SimpleNamespace(browse=AsyncMock(side_effect=AssertionError("source must not run")))
+    app.dependency_overrides[game_events.get_session] = lambda: session
+    app.dependency_overrides[game_events.get_event_service] = lambda: service
+    monkeypatch.setattr(game_events.read_projections, "should_route_to_projection", Mock(return_value=True))
+    reader = AsyncMock(return_value={"events": [{"id": 7}]})
+    monkeypatch.setattr(game_events.read_projections, "events_page", reader)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/events?server=asia&version=3.8.0&summary=true")
+    assert response.status_code == 200
+    assert response.json() == {"events": [{"id": 7}], "snapshot_presentation": "current_and_recorded_occurrences"}
+    assert reader.await_args.args[1:] == ("asia", None, "3.8.0", "en", True)
+    service.browse.assert_not_awaited()
 
 
 def event():

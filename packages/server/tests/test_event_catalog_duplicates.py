@@ -34,8 +34,11 @@ async def test_projection_all_versions_filters_only_proven_placeholders(monkeypa
     monkeypatch.setattr(reader.entities, "_scope_entries", entries)
     all_events = (await reader.events_page(None, "europe"))["events"]
     assert [row["occurrence_id"] for row in all_events] == [1]
-    version_events = (await reader.events_page(None, "europe", version="3.8"))["events"]
-    assert [row["occurrence_id"] for row in version_events] == [2]
+    from unittest.mock import AsyncMock
+
+    session = SimpleNamespace(scalars=AsyncMock(return_value=[716]))
+    version_events = (await reader.events_page(session, "europe", version="3.8"))["events"]
+    assert [row["occurrence_id"] for row in version_events] == [1]
     assert "_catalog_placeholder" not in version_events[0]
 
 

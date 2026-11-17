@@ -3,6 +3,7 @@
 from fastapi import HTTPException
 from sqlalchemy import select
 
+from wuwa_story.db.models.game_events import GameEventSnapshotMember
 from wuwa_story.db.repositories.read_models import ENTITY_READ_MODELS
 from wuwa_story.events.catalog_duplicates import visible_occurrences
 from wuwa_story.events.domain import PREVIEW_ROLES
@@ -45,6 +46,11 @@ async def event_detail(session, event_id, server, occurrence_id, locale="en"):
 
 
 async def events_page(session, server, kind=None, version=None, locale="en", summary=False):
+    members = None
+    if version:
+        members = set(await session.scalars(select(GameEventSnapshotMember.event_id).where(
+            GameEventSnapshotMember.version == version
+        )))
     entries = await entities._scope_entries(
         session,
         "game_event",
@@ -53,6 +59,12 @@ async def events_page(session, server, kind=None, version=None, locale="en", sum
         selector="calendar" if summary else None,
         card=summary,
     )
+    if members is not None:
+        # A published current scope may still be catching up with a new import.
+        # Never return a silently incomplete catalog for an exact snapshot.
+        if not members <= {entry.entity_id for entry in entries}:
+            raise entities._unready()
+        entries = [entry for entry in entries if entry.entity_id in members]
     events = []
     for entry in entries:
         payload = entry.payload
@@ -63,8 +75,6 @@ async def events_page(session, server, kind=None, version=None, locale="en", sum
             continue
         server_runs = [run for run in runs if run.get("server") == server]
         selected = server_runs
-        if version:
-            selected = [run for run in selected if run.get("game_version") in (version, None)]
         if not server_runs:
             if "occurrence_id" not in event:
                 raise entities._unready()
@@ -81,16 +91,15 @@ async def events_page(session, server, kind=None, version=None, locale="en", sum
                 if run.get("occurrence_id") is not None:
                     result["detail_url"] += f"&occurrence_id={run['occurrence_id']}"
             events.append(result)
-    if version is None:
-        placeholders = {event["occurrence_id"] for event in events
-                        if event.get("_catalog_placeholder") is True}
-        keep = visible_occurrences(
-            [(event["id"], event.get("occurrence_id"), event.get("catalog_version"),
-              event.get("_client_signature"))
-             for event in events], placeholders,
-        )
-        events = [event for event in events if event.get("occurrence_id") not in placeholders
-                  or event["occurrence_id"] in keep]
+    placeholders = {event["occurrence_id"] for event in events
+                    if event.get("_catalog_placeholder") is True}
+    keep = visible_occurrences(
+        [(event["id"], event.get("occurrence_id"), event.get("catalog_version"),
+          event.get("_client_signature"))
+         for event in events], placeholders,
+    )
+    events = [event for event in events if event.get("occurrence_id") not in placeholders
+              or event["occurrence_id"] in keep]
     for event in events:
         event.pop("_catalog_placeholder", None)
         event.pop("_client_signature", None)
