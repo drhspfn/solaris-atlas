@@ -15,6 +15,16 @@ def test_only_identical_event_placeholders_are_suppressed():
     assert visible_occurrences(rows, {6210, 4161, 6063, 4026, 5928, 1, 2, 3}) == {5928, 2, 3}
 
 
+def test_recurring_placeholder_requires_same_version_dated_run():
+    rows = [(851, 1, "3.7", "same", "recurring"),
+            (851, 2, "3.8.0", "same", "recurring"),
+            (716, 3, "3.7", "same", "banner"),
+            (716, 4, "3.8", "same", "banner")]
+    assert visible_occurrences(rows, {2, 4}) == {2}
+    rows.append((851, 5, "3.8", "same", "recurring"))
+    assert visible_occurrences(rows, {2, 4}) == set()
+
+
 @pytest.mark.asyncio
 async def test_projection_all_versions_filters_only_proven_placeholders(monkeypatch):
     from types import SimpleNamespace
@@ -43,6 +53,25 @@ async def test_projection_all_versions_filters_only_proven_placeholders(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_recurring_projection_keeps_new_catalog_version(monkeypatch):
+    from types import SimpleNamespace
+
+    base = {"id": 851, "title": "Endstate Matrix", "kind": "recurring", "artwork": [],
+            "server": "europe", "_client_signature": "same"}
+    dated = {**base, "occurrence_id": 1, "game_version": "3.7", "catalog_version": "3.8.0",
+             "starts_at": "2026-10-07T03:00:00+00:00"}
+    stub = {**base, "occurrence_id": 2, "game_version": "3.8", "catalog_version": "3.8.0",
+            "starts_at": None, "_catalog_placeholder": True}
+
+    async def entries(*args, **kwargs):
+        return [SimpleNamespace(entity_id=851, payload={"event": base, "occurrences": [dated, stub]})]
+
+    monkeypatch.setattr(reader.entities, "_scope_entries", entries)
+    events = (await reader.events_page(None, "europe"))["events"]
+    assert {row["occurrence_id"] for row in events} == {1, 2}
+
+
+@pytest.mark.asyncio
 async def test_source_calendar_suppresses_matching_placeholders_in_snapshots():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
@@ -60,6 +89,23 @@ async def test_source_calendar_suppresses_matching_placeholders_in_snapshots():
     assert await read_event_runs(session, server="europe", version="3.8") == [(event, dated)]
     dated.source_data = sample_client("Blooms for the Shadow")
     stub.source_data = sample_client("Gifts of Singing Drizzle")
+    assert await read_event_runs(session, server="europe") == [(event, dated), (event, stub)]
+
+
+@pytest.mark.asyncio
+async def test_source_calendar_keeps_new_recurring_version():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    from wuwa_story.db.repositories.event_browsing import read_event_runs
+
+    event = SimpleNamespace(id=851, event_kind="recurring")
+    dated = SimpleNamespace(id=1, source_occurrence_id="10077000206", starts_at="date",
+                            ends_at="date", game_version="3.7", source_data=sample_client("Matrix"))
+    stub = SimpleNamespace(id=2, source_occurrence_id="client:3.8.0", starts_at=None,
+                           ends_at=None, game_version="3.8", source_data=sample_client("Matrix"))
+    session = AsyncMock()
+    session.execute.return_value = Mock(all=Mock(return_value=[(event, dated), (event, stub)]))
     assert await read_event_runs(session, server="europe") == [(event, dated), (event, stub)]
 
 

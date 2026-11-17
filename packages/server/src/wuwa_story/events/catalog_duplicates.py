@@ -18,22 +18,31 @@ def client_signature(data):
 
 def visible_occurrences(rows, placeholder_ids):
     """Rows are (event id, occurrence id, version, captured client signature)."""
-    real = {(event_id, signature) for event_id, occurrence_id, _, signature in rows
-            if occurrence_id not in placeholder_ids and signature is not None}
+    def version_key(version):
+        parts = version.split(".") if isinstance(version, str) else []
+        return tuple(map(int, parts[:2])) if len(parts) >= 2 and all(p.isdecimal() for p in parts) else None
+
+    def identity(row):
+        event_id, _, version, signature, *kind = row
+        return event_id, signature, version_key(version) if kind and kind[0] == "recurring" else None
+
+    real = {identity(row) for row in rows if row[1] not in placeholder_ids and row[3] is not None}
     latest = {}
     keep = set()
-    for event_id, occurrence_id, version, signature in rows:
+    for row in rows:
+        event_id, occurrence_id, version, signature, *_ = row
         if occurrence_id not in placeholder_ids:
             continue
         if signature is None:
             keep.add(occurrence_id)
             continue
-        identity = (event_id, signature)
-        if identity in real:
+        key_identity = identity(row)
+        if key_identity in real:
             continue
+        placeholder_identity = (event_id, signature)
         parts = version.split(".") if isinstance(version, str) else []
         key = (tuple(map(int, parts)) if parts and all(p.isdecimal() for p in parts) else (),
                occurrence_id)
-        if identity not in latest or key > latest[identity][0]:
-            latest[identity] = (key, occurrence_id)
+        if placeholder_identity not in latest or key > latest[placeholder_identity][0]:
+            latest[placeholder_identity] = (key, occurrence_id)
     return keep | {row[1] for row in latest.values()}

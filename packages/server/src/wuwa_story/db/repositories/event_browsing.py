@@ -94,7 +94,8 @@ async def read_event_runs(
         keep = visible_occurrences(
             [(event.id, occurrence.id if occurrence else None,
               occurrence.game_version if occurrence else None,
-              client_signature(occurrence.source_data) if occurrence else None)
+              client_signature(occurrence.source_data) if occurrence else None,
+              getattr(event, "event_kind", None))
              for event, occurrence in rows],
             placeholders,
         )
