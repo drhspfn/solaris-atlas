@@ -271,3 +271,80 @@ def test_argument_arity_and_duplicate_statement_addresses_are_rejected():
     assert resolve_event_calls(exports, 'Entry')['diagnostics'][0]['code'] == 'arguments'
     exports[0]['ScriptBytecode'][1]['StatementIndex'] = 0
     assert resolve_event_calls(exports, 'Entry')['diagnostics'][0]['code'] == 'statement_index'
+
+
+@pytest.mark.parametrize(('token', 'property_type', 'expression', 'expected'), [
+    ('EX_LetBool', 'BoolProperty', {'Token': 'EX_True'}, True),
+    ('EX_LetBool', 'BoolProperty', {'Token': 'EX_False'}, False),
+    ('EX_LetObj', 'ObjectProperty', {'Token': 'EX_ObjectConst', 'Value': {
+        'ObjectName': "Library_C'Default__Library_C'", 'ObjectPath': '/Game/Library'}},
+        {'symbol': 'object', 'reference': {
+            'ObjectName': "Library_C'Default__Library_C'", 'ObjectPath': '/Game/Library'}}),
+])
+def test_typed_local_assignments_use_real_cue_operand_shape(token, property_type, expression, expected):
+    entry = reference('/Game/Owner', 'Owner_C', 'Entry', 0)
+    assignment = {'Token': token, 'Variable': variable(entry, 'Result'), 'Expression': expression}
+    exports = package('/Game/Owner', 'Owner_C', function('Entry', assignment,
+        external('Terminal', variable(entry, 'Result')), fields=('Result',)))
+    exports[0]['ChildProperties'][0]['Type'] = property_type
+    result = resolve_event_calls(exports, entry)
+    assert result['diagnostics'] == []
+    assert result['calls'][0]['arguments'] == [expected]
+
+
+def test_typed_local_assignment_reads_previous_assignment():
+    entry = reference('/Game/Owner', 'Owner_C', 'Entry', 0)
+    exports = package('/Game/Owner', 'Owner_C', function('Entry',
+        {'Token': 'EX_LetBool', 'Variable': variable(entry, 'First'), 'Expression': const('True')},
+        {'Token': 'EX_LetBool', 'Variable': variable(entry, 'Second'), 'Expression': variable(entry, 'First')},
+        external('Terminal', variable(entry, 'Second')), fields=('First', 'Second')))
+    for prop_ in exports[0]['ChildProperties']:
+        prop_['Type'] = 'BoolProperty'
+    result = resolve_event_calls(exports, entry)
+    assert result['diagnostics'] == []
+    assert result['calls'][0]['arguments'] == [True]
+
+
+@pytest.mark.parametrize(('token', 'property_type', 'expression'), [
+    ('EX_LetBool', 'BoolProperty', {'Token': 'EX_CallMath',
+        'Function': {'ObjectName': "Function'AkGameplayStatics:IsGame'", 'ObjectPath': '/Script/AkAudio'},
+        'Parameters': [{'Token': 'EX_Self'}]}),
+    ('EX_LetObj', 'ObjectProperty', {'Token': 'EX_Context',
+        'ObjectExpression': {'Token': 'EX_Self'},
+        'ContextExpression': {'Token': 'EX_FinalFunction', 'Function': {
+            'ObjectName': "Function'Actor:AddComponentByClass'", 'ObjectPath': '/Script/Engine'},
+            'Parameters': []}}),
+])
+def test_real_runtime_call_assignments_remain_unsupported(token, property_type, expression):
+    entry = reference('/Game/Owner', 'Owner_C', 'Entry', 0)
+    exports = package('/Game/Owner', 'Owner_C', function('Entry', external('Before'),
+        {'Token': token, 'Variable': variable(entry, 'Result'), 'Expression': expression},
+        external('After'), fields=('Result',)))
+    exports[0]['ChildProperties'][0]['Type'] = property_type
+    result = resolve_event_calls(exports, entry)
+    assert result['calls'] == []
+    assert result['diagnostics'][-1]['code'] == 'assignment_expression'
+
+
+@pytest.mark.parametrize('target', ['instance', 'wrong_owner', 'wrong_type', 'wrong_source_type'])
+def test_typed_assignment_rejects_unsafe_targets_and_types(target):
+    entry = reference('/Game/Owner', 'Owner_C', 'Entry', 0)
+    other = reference('/Game/Owner', 'Owner_C', 'Other', 1)
+    assignment = {'Token': 'EX_LetBool', 'Variable': variable(entry, 'Result'), 'Expression': const('True')}
+    exports = package('/Game/Owner', 'Owner_C', function('Entry', assignment, fields=('Result', 'Source')),
+                      function('Other', fields=('Result',)))
+    exports[0]['ChildProperties'][0]['Type'] = 'BoolProperty'
+    exports[0]['ChildProperties'][1]['Type'] = 'ObjectProperty'
+    exports[1]['ChildProperties'][0]['Type'] = 'BoolProperty'
+    statement = exports[0]['ScriptBytecode'][0]
+    if target == 'instance':
+        statement['Variable']['Token'] = 'EX_InstanceVariable'
+    elif target == 'wrong_owner':
+        statement['Variable'] = variable(other, 'Result')
+    elif target == 'wrong_type':
+        exports[0]['ChildProperties'][0]['Type'] = 'ObjectProperty'
+    else:
+        statement['Expression'] = variable(entry, 'Source')
+    result = resolve_event_calls(exports, entry)
+    assert result['calls'] == []
+    assert result['diagnostics'][-1]['code'] in {'assignment_target', 'assignment_expression'}
