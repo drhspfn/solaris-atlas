@@ -84,7 +84,10 @@ ID resolves. A different download or conflicting complete snapshot is rejected.
 The two export manifests must already exist; this command does not extract
 archives, create events or change their presentation. An import with unresolved event localization
 does not publish a complete snapshot. Media package errors alone do not affect
-catalog membership. Snapshot membership is replaced atomically on reimport.
+catalog membership. A complete snapshot survives a partial reimport; a full
+reimport must match its membership exactly. Imports for a different download
+cannot replace the pinned snapshot for the same version. An incomplete snapshot
+may be replaced atomically by a later import of the same download.
 
 The client includes past, current, future and hidden configuration rows. Presence
 in a 3.7 client is not proof that an event is running in 3.7. Opening windows and

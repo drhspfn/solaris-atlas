@@ -26,6 +26,7 @@ async def test_client_import_adds_unlisted_events_and_preserves_exact_historical
     occurrence = SimpleNamespace(event_id=7, server="europe", starts_at="preserved date",
                                  game_version="3.7", source_data={"time": ["preserved date"]})
     session = AsyncMock()
+    session.get.return_value = None
     session.scalars.side_effect = [[old], [occurrence]]
     added = []
     session.add = added.append
@@ -64,6 +65,7 @@ async def test_reimport_reuses_client_identity_and_retains_discovered_prefab_ima
     rows = [SimpleNamespace(event_id=7, server=server, source_data={})
             for server in ["asia", "europe", "america"]]
     session = AsyncMock()
+    session.get.return_value = None
     session.scalars.side_effect = [[event], rows]
     added = []
     session.add = added.append
@@ -84,6 +86,7 @@ async def test_new_download_does_not_overwrite_dated_run_snapshots():
                             banner_path="/Game/FirstRun", source_data={"client": old_client})
             for server in ["asia", "europe", "america"]]
     session = AsyncMock()
+    session.get.return_value = None
     session.scalars.side_effect = [[event], rows]
     added = []
     session.add = added.append
@@ -102,6 +105,7 @@ async def test_partial_import_does_not_publish_an_incomplete_snapshot():
     rows = [SimpleNamespace(event_id=7, server=server, source_data={})
             for server in ["asia", "europe", "america"]]
     session = AsyncMock()
+    session.get.return_value = None
     session.scalars.side_effect = [[event], rows]
     added = []
     session.add = added.append
