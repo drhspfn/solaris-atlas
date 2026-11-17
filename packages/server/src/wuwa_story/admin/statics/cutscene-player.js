@@ -141,7 +141,8 @@
       card.className = "sa-cutscene-description";
       card.open = systemList.children.length === 0;
       const heading = document.createElement("summary");
-      heading.textContent = `${report.title || "Visual observations"} · asset ${report.asset_node_id} · ${report.events?.length || 0} observations`;
+      const owner = report.cutscene_node_id ? `scene ${report.cutscene_node_id}` : `asset ${report.asset_node_id}`;
+      heading.textContent = `${report.title || "Visual observations"} · ${owner} · ${report.events?.length || 0} observations`;
       const list = document.createElement("ol");
       list.className = "sa-cutscene-observations";
       for (const event of report.events || []) {
