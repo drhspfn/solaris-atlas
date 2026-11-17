@@ -9,9 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from wuwa_story.agents.contracts import StrictModel
+from wuwa_story.agents.cutscene_analysis_plan import build_analysis_plan, enqueue_logical_visual_job
 from wuwa_story.agents.cutscene_vision import (
     enqueue_visual_job,
     resume_visual_job,
+    visual_reference,
     wipe_cutscene_analysis,
 )
 from wuwa_story.agents.settings import get_agent_settings
@@ -23,8 +25,9 @@ from wuwa_story.db.models.core import Cutscene
 from wuwa_story.db.models.graph import Edge, Node
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import ProcessingRun, Processor
-from wuwa_story.db.models.storage import FileReference
+from wuwa_story.db.models.storage import FileObject, FileReference
 from wuwa_story.db.session import get_session
+from wuwa_story.ingestion.cutscenes import Clip, PlaybackFlow
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.story.cutscene_publications import publication_order, publication_types
 
@@ -225,6 +228,79 @@ async def _asset_cutscenes(
     return mapping
 
 
+async def _logical_plan(session: AsyncSession, scene_id: int, version: str):
+    flow_ref = await session.scalar(
+        select(FileReference).where(
+            FileReference.owner_node_id == scene_id,
+            FileReference.reference_type.in_(publication_types("cutscene_flow")),
+            FileReference.metadata_json["asset_version"].astext == version,
+            FileReference.metadata_json["publication_complete"].as_boolean().is_(True),
+        ).order_by(publication_order(FileReference.reference_type), FileReference.id.desc()).limit(1)
+    )
+    if flow_ref is None:
+        raise ValueError("A complete published playback flow is required for this cutscene")
+    flow = PlaybackFlow.model_validate(flow_ref.metadata_json["flow"])
+    keys = {node.asset for node in flow.nodes if isinstance(node, Clip)}
+    publication = flow_ref.metadata_json.get("publication_references") or []
+    reference_files = {item["id"]: item["file_id"] for item in publication if isinstance(item, dict)
+                       and isinstance(item.get("id"), int) and isinstance(item.get("file_id"), int)}
+    reference_ids = list(reference_files)
+    if not reference_ids:
+        raise ValueError("Playback publication does not identify its video references")
+    rows = await session.execute(
+        select(Node.canonical_key, Node.id, FileReference, FileObject.sha256)
+        .join(FileReference, FileReference.owner_node_id == Node.id)
+        .join(FileObject, FileObject.id == FileReference.file_id)
+        .where(Node.canonical_key.in_(keys), FileReference.id.in_(reference_ids),
+               FileReference.reference_type.in_(publication_types("cutscene_video")),
+               FileReference.metadata_json["asset_version"].astext == version)
+    )
+    sources, references = {}, {}
+    for key, node_id, ref, digest in rows:
+        if key in sources or not digest or reference_files.get(ref.id) != ref.file_id:
+            raise ValueError("Ambiguous or unverified video in playback publication")
+        sources[key] = {"asset_node_id": node_id, "file_id": ref.file_id,
+                        "source_sha256": digest.hex(),
+                        "duration_seconds": ref.metadata_json.get("duration_seconds")}
+        references[node_id] = ref
+    if set(sources) != keys:
+        raise ValueError("Playback publication is missing one or more source videos")
+    plan = build_analysis_plan(scene_id, version, flow.model_dump(), sources,
+                               flow_reference_id=flow_ref.id)
+    return plan, references[plan["segments"][0]["asset_node_id"]], references
+
+
+async def _existing_whole_scene_job(session, plan, references):
+    for asset_id in plan["selection"]["reusable_whole_scene_asset_ids"]:
+        ref = references[asset_id]
+        report = await visual_reference(session, asset_id, ref.metadata_json["asset_version"])
+        source = await session.get(FileObject, ref.file_id)
+        if source is None or source.sha256 is None:
+            continue
+        if (report is None or report.metadata_json.get("source_file_id") != ref.file_id
+                or report.metadata_json.get("source_sha256") != source.sha256.hex()):
+            active = await session.scalar(select(ProcessingRun.id).join(Processor).where(
+                Processor.key == "cutscene_vision", ProcessingRun.target_node_id == asset_id,
+                ProcessingRun.status.in_(("pending", "running")),
+                ProcessingRun.metadata_json["asset_version"].astext == ref.metadata_json["asset_version"],
+                ProcessingRun.metadata_json["source_sha256"].astext == source.sha256.hex(),
+            ).limit(1))
+            if active:
+                raise ValueError("A legacy analysis of this whole-scene alternative is already in progress")
+            continue
+        digest = report.metadata_json.get("source_sha256")
+        run = await session.scalar(select(ProcessingRun).join(Processor).where(
+            Processor.key == "cutscene_vision", ProcessingRun.target_node_id == asset_id,
+            ProcessingRun.status == "completed",
+            ProcessingRun.metadata_json["asset_version"].astext == ref.metadata_json["asset_version"],
+            ProcessingRun.metadata_json["source_sha256"].astext == digest,
+        ).order_by(ProcessingRun.id.desc()).limit(1))
+        if run:
+            return run, report
+        raise ValueError("A complete report exists without a matching completed run; reconcile before reanalysis")
+    return None
+
+
 @router.get("/assets")
 async def assets(
     q: str = Query("", max_length=128),
@@ -397,12 +473,39 @@ async def create_visual_jobs(request: VisualRequest, session: AsyncSession = Dep
         raise HTTPException(
             404, "An imported video is missing for the selected version")
     try:
-        runs = [await enqueue_visual_job(session, ref, settings) for ref in references]
+        associations = await _asset_cutscenes(session, ids)
+        scene_ids = set()
+        legacy = []
+        for ref in references:
+            scenes = associations.get(ref.owner_node_id, [])
+            if len(scenes) > 1:
+                raise ValueError("Asset belongs to multiple cutscenes; select a specific cutscene")
+            if scenes:
+                scene_ids.add(scenes[0]["node_id"])
+            else:
+                legacy.append(ref)
+        prepared = [await _logical_plan(session, scene_id, request.game_version)
+                    for scene_id in sorted(scene_ids)]
+        covered = set().union(*(refs.keys() for _, _, refs in prepared)) if prepared else set()
+        if any(ref.owner_node_id not in covered for ref in references if associations.get(ref.owner_node_id)):
+            raise ValueError("Selected asset does not belong to its published playback flow")
+        jobs = []
+        for plan, ref, source_refs in prepared:
+            reused = await _existing_whole_scene_job(session, plan, source_refs)
+            if reused:
+                run, report = reused
+                jobs.append({**public_job(run), "reused_report_id": report.id,
+                             "cutscene_node_id": plan["cutscene_node_id"],
+                             "reused_from_asset_node_id": run.target_node_id})
+            else:
+                run = await enqueue_logical_visual_job(session, plan, ref, settings)
+                jobs.append(public_job(run))
+        jobs.extend([public_job(await enqueue_visual_job(session, ref, settings)) for ref in legacy])
         await session.commit()
     except ValueError as error:
         await session.rollback()
         raise HTTPException(422, str(error)) from error
-    return {"jobs": [public_job(run) for run in runs]}
+    return {"jobs": jobs}
 
 
 @router.get("/jobs")
