@@ -167,8 +167,18 @@ def _artwork(event: ClientSource, occurrence: ClientSource | None) -> list[dict[
 def _client_preview(
     artwork: list[dict[str, Any]], image_url: Callable[[str], str | None]
 ) -> str | None:
+    # Activity.BgResource is the authored page background; Activity tab images
+    # are navigation icons. Gacha backgrounds have different semantics.
+    for asset in artwork:
+        if asset.get("role") == "content" and not asset["path"].endswith("/T_CommonNone_UI"):
+            if url := image_url(asset["path"]):
+                return url
+    for asset in artwork:
+        if (asset.get("role") == "background" and asset.get("table") == "Activity"
+                and not asset["path"].endswith(("/T_CommonNone_UI", "/T_CommonBlack_UI"))):
+            if url := image_url(asset["path"]):
+                return url
     for role in (
-        "content",
         "tab_selected",
         "tab",
         "featured_portrait",
