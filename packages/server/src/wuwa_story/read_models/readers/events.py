@@ -7,6 +7,7 @@ from wuwa_story.db.models.game_events import GameEventSnapshotMember
 from wuwa_story.db.repositories.read_models import ENTITY_READ_MODELS
 from wuwa_story.events.catalog_duplicates import visible_occurrences
 from wuwa_story.events.domain import is_preview_artwork
+from wuwa_story.events.selectable_pools import group_selectable_pools, pool_key, proven_member_ids
 from wuwa_story.read_models.readers import entities
 
 
@@ -40,8 +41,40 @@ async def event_detail(session, event_id, server, occurrence_id, locale="en"):
             if run.get("server") == server and run.get("occurrence_id") == occurrence_id
         ]
         if len(matches) == 1:
-            return {key: value for key, value in matches[0].items()
-                    if key not in {"server", "_catalog_placeholder", "_client_signature"}}
+            result = {key: value for key, value in matches[0].items()
+                      if key not in {"server", "_catalog_placeholder", "_client_signature", "_pool_match"}}
+            if key := pool_key(matches[0]):
+                proof = matches[0]["_pool_match"]
+                candidates = []
+                try:
+                    notice = await entities.page_payload(session, "game_notice", proof["notice_id"],
+                                                         "en", selector=None)
+                    members = proven_member_ids(notice.get("revision"), notice.get("related_event_ids"),
+                                                proof["notice_revision"], event_id)
+                    if members:
+                        for identity in members:
+                            sibling = payload if identity == event_id else await entities.page_payload(
+                                session, "game_event", identity, locale, selector=None)
+                            sibling_runs = sibling.get("occurrences")
+                            if not isinstance(sibling_runs, list):
+                                candidates = []
+                                break
+                            candidates.extend(run for run in sibling_runs
+                                              if run.get("server") == server and pool_key(run) == key)
+                        if (len(candidates) != len(members)
+                            or {run.get("id") for run in candidates} != set(members)):
+                            candidates = []
+                except HTTPException as exc:
+                    if exc.status_code not in (404, 503):
+                        raise
+                    candidates = []
+                for row in group_selectable_pools(candidates, server, locale):
+                    if any(member["id"] == event_id and member["occurrence_id"] == occurrence_id
+                           for member in row.get("selectable_members", [])):
+                        result["featured_names"] = row["featured_names"]
+                        result["selectable_members"] = row["selectable_members"]
+                        break
+            return result
     raise HTTPException(404, "Event run not found")
 
 
@@ -101,9 +134,11 @@ async def events_page(session, server, kind=None, version=None, locale="en", sum
     )
     events = [event for event in events if event.get("occurrence_id") not in placeholders
               or event["occurrence_id"] in keep]
+    events = group_selectable_pools(events, server, locale)
     for event in events:
         event.pop("_catalog_placeholder", None)
         event.pop("_client_signature", None)
+        event.pop("_pool_match", None)
     events.sort(key=lambda event: (-_time(event.get("starts_at")), event["title"]))
     return {
         "server": server,

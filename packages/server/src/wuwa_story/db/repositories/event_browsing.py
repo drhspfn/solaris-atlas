@@ -29,6 +29,7 @@ from wuwa_story.events.domain import (
     EventRun,
 )
 from wuwa_story.events.domain import PREVIEW_ROLES as _PREVIEW_ROLES
+from wuwa_story.events.selectable_pools import proven_member_ids
 
 
 async def read_event_runs(
@@ -136,6 +137,7 @@ def _summary_source(source: Any, locale: str) -> Any:
                        else_=func.jsonb_build_object()),
         "notice_id", field("notice_id"),
         "notice_revision", field("notice_revision"),
+        "notice_match", field("notice_match"),
         "notice_presentation", field("notice_presentation"),
         "start_estimate", field("start_estimate"),
         "official_url", field("official_url"),
@@ -259,6 +261,39 @@ class SqlAlchemyEventRepository:
     def __init__(self, session: AsyncSession, bucket: str) -> None:
         self.session = session
         self.bucket = bucket
+
+    async def pool_occurrences(self, *, server, proof, starts_at, ends_at):
+        notice = await self.session.get(GameNotice, proof["notice_id"])
+        members = proven_member_ids(
+            notice.revision if notice else None, notice.related_event_ids if notice else None,
+            proof["notice_revision"],
+        )
+        if not members:
+            return []
+        data = GameEventOccurrence.source_data
+        statement = (
+            select(GameEventOccurrence.event_id, GameEventOccurrence.id)
+            .join(GameEvent, GameEvent.id == GameEventOccurrence.event_id)
+            .where(
+                GameEvent.source == CLIENT_SOURCE,
+                GameEvent.event_kind == "banner",
+                GameEventOccurrence.event_id.in_(members),
+                GameEventOccurrence.server == server,
+                GameEventOccurrence.starts_at == starts_at,
+                GameEventOccurrence.ends_at == ends_at,
+                data["notice_id"].as_integer() == proof["notice_id"],
+                data["notice_revision"].as_string() == proof["notice_revision"],
+                data["notice_match"]["basis"].as_string() == "gacha_pool",
+                data["notice_match"]["release_id"].as_integer() == proof["release_id"],
+                data["notice_match"]["gacha_id"].as_integer() == proof["gacha_id"],
+            )
+            .order_by(GameEventOccurrence.event_id, GameEventOccurrence.id)
+            .limit(65)
+        )
+        rows = list((await self.session.execute(statement)).all())
+        if len(rows) != len(members) or {event_id for event_id, _ in rows} != set(members):
+            return []
+        return rows
 
     async def spine(self, captures: set[tuple[str, str]]) -> list[EventMedia]:
         if not captures:
