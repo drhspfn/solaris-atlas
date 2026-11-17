@@ -118,7 +118,7 @@ async def test_admin_create_period_writes_existing_event_and_audit(monkeypatch):
     async with engine.begin() as conn:
         for sql in (
             "ATTACH DATABASE ':memory:' AS core", "ATTACH DATABASE ':memory:' AS ops",
-            "CREATE TABLE core.game_event (id INTEGER PRIMARY KEY, source TEXT, source_id TEXT, title TEXT, slug TEXT, description TEXT, event_kind TEXT, group_label_key TEXT, game_path TEXT, banner_path TEXT, rewards JSON, source_url TEXT, source_revision TEXT, source_data JSON, updated_at DATETIME)",
+            "CREATE TABLE core.game_event (id INTEGER PRIMARY KEY, canonical_event_id INTEGER, canonical_evidence JSON, source TEXT, source_id TEXT, title TEXT, slug TEXT, description TEXT, event_kind TEXT, group_label_key TEXT, game_path TEXT, banner_path TEXT, rewards JSON, source_url TEXT, source_revision TEXT, source_data JSON, updated_at DATETIME)",
             "CREATE TABLE core.game_event_occurrence (id INTEGER PRIMARY KEY, event_id INTEGER NOT NULL, source_occurrence_id TEXT NOT NULL, game_version TEXT, server TEXT NOT NULL, starts_at DATETIME, ends_at DATETIME, banner_path TEXT, rewards JSON, season JSON, source_data JSON NOT NULL)",
             "CREATE TABLE ops.agent_tool_audit (id INTEGER PRIMARY KEY, request_id TEXT NOT NULL, role TEXT NOT NULL, run_id INTEGER, step INTEGER, call_id TEXT NOT NULL, tool TEXT NOT NULL, status TEXT NOT NULL, arguments JSON NOT NULL, result JSON NOT NULL, duration_ms INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)",
             "INSERT INTO core.game_event (id,title,source_data) VALUES (7,'Existing event','{}')",
