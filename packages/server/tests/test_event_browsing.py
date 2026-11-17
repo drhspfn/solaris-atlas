@@ -131,6 +131,10 @@ async def test_summary_projects_json_in_sql_and_preserves_undated_rows_and_filte
     )
     # Neither raw JSONB column may be selected alongside its bounded projection.
     assert "source_data" not in [column.key for column in statement.selected_columns]
+    from wuwa_story.events.domain import PREFAB_PREVIEWS
+    prefab, path = PREFAB_PREVIEWS["activity:108700001"]
+    assert any(prefab in value and path in value and 'prefab_texture' in value
+               for value in compiled.params.values() if isinstance(value, str))
 
 
 @pytest.mark.asyncio

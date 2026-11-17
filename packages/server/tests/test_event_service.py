@@ -169,6 +169,70 @@ def test_preview_preserves_content_and_falls_back_for_missing_or_placeholder_bac
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("summary", [True, False])
+async def test_verified_prefab_preview_excludes_shared_activity_background(event, repository, service, summary):
+    from wuwa_story.events.domain import PREFAB_PREVIEWS, SHARED_ACTIVITY_BACKGROUNDS
+
+    source_id = "activity:108700001"
+    prefab, image = PREFAB_PREVIEWS[source_id]
+    shared = "/Game/Aki/UI/UIResources/Common/Image/BgCgBig/T_ActivityProcessMemoryBg"
+    assert shared in SHARED_ACTIVITY_BACKGROUNDS
+    client = {"download_id": "current", "artwork": [
+        {"path": shared, "role": "background", "table": "Activity"},
+    ], "prefab_artwork": [{"path": image, "role": "prefab_texture", "prefab": prefab}]}
+    record = replace(event, source_id=source_id, event_kind="permanent", banner_path=shared,
+                     source_data={"client": client})
+    repository.runs.return_value = [EventRun(record, None)]
+    repository.media.return_value = [
+        EventMedia(shared, "shared.png", {"download_id": "current"}),
+        EventMedia(image, "soar.png", {"download_id": "current"}),
+        EventMedia(image, "wrong-version.png", {"download_id": "old"}),
+    ]
+    payload = (await service.browse("asia", summary=summary))["events"][0]
+    assert payload["preview_url"] == "https://cdn/soar.png"
+    assert payload["banner_url"] is None
+
+    # Shared art and a prefab belonging to another activity cannot become a preview.
+    repository.runs.return_value = [EventRun(replace(record, source_id="activity:102000009"), None)]
+    payload = (await service.browse("asia", summary=summary))["events"][0]
+    assert payload["preview_url"] is None and payload["banner_url"] is None
+
+
+def test_prefab_preview_requires_exact_prefab_and_available_capture():
+    from wuwa_story.events.domain import (
+        PREFAB_PREVIEWS,
+        SHARED_ACTIVITY_BACKGROUNDS,
+        _client_preview,
+    )
+
+    source = "activity:108700001"
+    prefab, path = PREFAB_PREVIEWS[source]
+    asset = {"role": "prefab_texture", "path": path, "prefab": prefab}
+    assert _client_preview([asset], lambda _: None, source) is None
+    assert _client_preview([{**asset, "prefab": "/Game/Other"}], lambda p: p, source) is None
+    assert _client_preview([asset], lambda p: p, "activity:other") is None
+    tab = {"role": "tab", "path": "/Game/Tab"}
+    for shared in SHARED_ACTIVITY_BACKGROUNDS:
+        background = {"role": "background", "table": "Activity", "path": shared}
+        assert _client_preview([background, tab], lambda p: p, source) == "/Game/Tab"
+
+
+@pytest.mark.parametrize("source,prefab,path", [
+    ("activity:synthetic-a", "/Game/UiItem_Activity37POI",
+     "/Game/Aki/UI/UIResources/Common/Image/BgCgBig/Activity/Activity37/Activity37POI/T_Activity37POIBg"),
+    ("activity:synthetic-b", "/Game/UiItem_FarmGoldMain",
+     "/Game/Aki/UI/UIResources/Common/Image/BgCgBig/Activity/ActivityFarmGold/T_ActivityFarmGold37"),
+    ("activity:108700001", "/Game/UiView_RhythmShipLevel",
+     "/Game/Aki/UI/UIResources/Common/Image/BgCgBig/Activity/Activity32/RhythmShip/T_RhythmShipLevelBg01"),
+])
+def test_single_published_prefab_background_does_not_prove_event_preview(source, prefab, path):
+    from wuwa_story.events.domain import _client_preview
+
+    candidate = {"role": "prefab_texture", "path": path, "prefab": prefab}
+    assert _client_preview([candidate], lambda value: value, source) is None
+
+
+@pytest.mark.asyncio
 async def test_start_estimate_survives_source_and_projected_calendar_and_detail(event, repository, service, monkeypatch):
     from datetime import UTC, datetime
     from types import SimpleNamespace

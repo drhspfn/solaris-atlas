@@ -6,6 +6,18 @@ from datetime import datetime
 from typing import Any, Protocol, cast
 
 CLIENT_SOURCE = "wuwa-game-client"
+# Shared page chrome used by unrelated activities, not event-specific artwork.
+SHARED_ACTIVITY_BACKGROUNDS = frozenset(
+    f"/Game/Aki/UI/UIResources/Common/Image/BgCgBig/{name}"
+    for name in ("T_ActivityProcessMemoryBg", "T_ActivityComBg", "T_ActivityBossRush")
+)
+# Exact event, prefab and texture associations verified against client resources.
+PREFAB_PREVIEWS = {
+    "activity:108700001": (
+        "/Game/Aki/UI/UIResources/UiActivity/Prefabs/Activity32/RhythmShip/UiItem_RhythmShipActivityMain",
+        "/Game/Aki/UI/UIResources/Common/Image/BgCgBig/Activity/Activity32/RhythmShip/T_RhythmShipActivityBg",
+    ),
+}
 PREVIEW_ROLES = (
     "content",
     "tab_selected",
@@ -165,7 +177,8 @@ def _artwork(event: ClientSource, occurrence: ClientSource | None) -> list[dict[
 
 
 def _client_preview(
-    artwork: list[dict[str, Any]], image_url: Callable[[str], str | None]
+    artwork: list[dict[str, Any]], image_url: Callable[[str], str | None],
+    source_id: str | None = None,
 ) -> str | None:
     # Activity.BgResource is the authored page background; Activity tab images
     # are navigation icons. Gacha backgrounds have different semantics.
@@ -174,7 +187,13 @@ def _client_preview(
             if url := image_url(asset["path"]):
                 return url
     for asset in artwork:
+        if (asset.get("role") == "prefab_texture" and
+                (asset.get("prefab"), asset.get("path")) == PREFAB_PREVIEWS.get(source_id or "")):
+            if url := image_url(asset["path"]):
+                return url
+    for asset in artwork:
         if (asset.get("role") == "background" and asset.get("table") == "Activity"
+                and asset["path"] not in SHARED_ACTIVITY_BACKGROUNDS
                 and not asset["path"].endswith(("/T_CommonNone_UI", "/T_CommonBlack_UI"))):
             if url := image_url(asset["path"]):
                 return url
