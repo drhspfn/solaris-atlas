@@ -23,9 +23,28 @@ def _time(value):
         raise entities._unready() from None
 
 
+async def _period_owner(session, event_id, server, occurrence_id):
+    root = select(func.coalesce(GameEvent.canonical_event_id, GameEvent.id)).where(
+        GameEvent.id == event_id).scalar_subquery()
+    return await session.scalar(select(GameEventOccurrence.event_id).join(
+        GameEvent, GameEvent.id == GameEventOccurrence.event_id).where(
+            GameEventOccurrence.id == occurrence_id, GameEventOccurrence.server == server,
+            func.coalesce(GameEvent.canonical_event_id, GameEvent.id) == root))
+
+
 async def event_detail(session, event_id, server, occurrence_id, locale="en", version=None):
-    payload = await entities.page_payload(session, "game_event", event_id, locale, snapshot_key=version, selector=None) if version else await entities.page_payload(
-        session, "game_event", event_id, locale, selector=None)
+    selection = {"selector": None}
+    if version:
+        selection["snapshot_key"] = version
+    try:
+        payload = await entities.page_payload(session, "game_event", event_id, locale, **selection)
+    except HTTPException as exc:
+        if exc.status_code != 404 or version is None or occurrence_id is None:
+            raise
+        owner = await _period_owner(session, event_id, server, occurrence_id)
+        if type(owner) is not int or owner == event_id:
+            raise
+        return await event_detail(session, owner, server, occurrence_id, locale, version)
     runs = payload.get("occurrences")
     event = payload.get("event")
     if not isinstance(runs, list) or not isinstance(event, dict):
@@ -33,12 +52,7 @@ async def event_detail(session, event_id, server, occurrence_id, locale="en", ve
     if event.get("canonical_event_id") is not None and occurrence_id is not None and not any(
         run.get("server") == server and run.get("occurrence_id") == occurrence_id for run in runs
     ):
-        root = select(func.coalesce(GameEvent.canonical_event_id, GameEvent.id)).where(
-            GameEvent.id == event_id).scalar_subquery()
-        owner = await session.scalar(select(GameEventOccurrence.event_id).join(
-            GameEvent, GameEvent.id == GameEventOccurrence.event_id).where(
-                GameEventOccurrence.id == occurrence_id, GameEventOccurrence.server == server,
-                func.coalesce(GameEvent.canonical_event_id, GameEvent.id) == root))
+        owner = await _period_owner(session, event_id, server, occurrence_id)
         if type(owner) is int and owner != event_id:
             return await event_detail(session, owner, server, occurrence_id, locale, version)
     if occurrence_id is None:
