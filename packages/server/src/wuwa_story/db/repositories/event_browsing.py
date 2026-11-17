@@ -11,7 +11,7 @@ from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
 from wuwa_story.db.models.graph import Node
 from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
-from wuwa_story.events.catalog_duplicates import visible_occurrences
+from wuwa_story.events.catalog_duplicates import client_signature, visible_occurrences
 from wuwa_story.events.domain import (
     CLIENT_SOURCE,
     Event,
@@ -85,7 +85,9 @@ async def read_event_runs(
         }
         keep = visible_occurrences(
             [(event.id, occurrence.id if occurrence else None,
-              occurrence.game_version if occurrence else None) for event, occurrence in rows],
+              occurrence.game_version if occurrence else None,
+              client_signature(occurrence.source_data) if occurrence else None)
+             for event, occurrence in rows],
             placeholders,
         )
         rows = [(event, occurrence) for event, occurrence in rows
@@ -106,6 +108,10 @@ def _summary_source(source: Any, locale: str) -> Any:
         "asset_version", field("client", "asset_version"),
         "hidden", func.coalesce(field("client", "hidden"), func.to_jsonb(False)),
         "convene_type", field("client", "convene_type"),
+        "table", field("client", "table"),
+        "title_key", field("client", "title_key"),
+        "description_key", field("client", "description_key"),
+        "featured_ids", field("client", "featured_ids"),
         "animation_import", field("client", "animation_import"),
         "locales", func.jsonb_build_object(
             "en", field("client", "locales", "en"),

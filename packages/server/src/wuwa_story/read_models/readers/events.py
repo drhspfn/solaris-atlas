@@ -40,7 +40,7 @@ async def event_detail(session, event_id, server, occurrence_id, locale="en"):
         ]
         if len(matches) == 1:
             return {key: value for key, value in matches[0].items()
-                    if key not in {"server", "_catalog_placeholder"}}
+                    if key not in {"server", "_catalog_placeholder", "_client_signature"}}
     raise HTTPException(404, "Event run not found")
 
 
@@ -85,13 +85,15 @@ async def events_page(session, server, kind=None, version=None, locale="en", sum
         placeholders = {event["occurrence_id"] for event in events
                         if event.get("_catalog_placeholder") is True}
         keep = visible_occurrences(
-            [(event["id"], event.get("occurrence_id"), event.get("catalog_version"))
+            [(event["id"], event.get("occurrence_id"), event.get("catalog_version"),
+              event.get("_client_signature"))
              for event in events], placeholders,
         )
         events = [event for event in events if event.get("occurrence_id") not in placeholders
                   or event["occurrence_id"] in keep]
     for event in events:
         event.pop("_catalog_placeholder", None)
+        event.pop("_client_signature", None)
     events.sort(key=lambda event: (-_time(event.get("starts_at")), event["title"]))
     return {
         "server": server,
