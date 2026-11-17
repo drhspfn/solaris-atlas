@@ -67,7 +67,11 @@ async def list_game_events(
         snapshot = await session.get(GameEventSnapshot, version)
         if snapshot is None or not snapshot.complete:
             raise HTTPException(status_code=404, detail="Event catalog snapshot not available")
-        return await service.browse(server, kind, version, locale, summary=summary)
+        if read_projections.should_route_to_projection("game_event", None, locale=locale):
+            response = await read_projections.events_page(session, server, kind, version, locale, summary)
+        else:
+            response = await service.browse(server, kind, version, locale, summary=summary)
+        return {**response, "snapshot_presentation": "current_and_recorded_occurrences"}
     if read_projections.should_route_to_projection("game_event", None, locale=locale):
         return await read_projections.events_page(session, server, kind, version, locale, summary)
     return await service.browse(server, kind, version, locale, summary=summary)

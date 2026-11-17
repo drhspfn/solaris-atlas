@@ -287,6 +287,11 @@ export function EventsPage({
           Local time <small>({timeZoneLabel(timeZone, now ?? 0)})</small>
         </label>
       </section>
+      {version && (
+        <p className="events-calendar-help">
+          This version selects the event catalog. Names and artwork reflect current data or recorded runs.
+        </p>
+      )}
       <details className="events-picker">
         <summary>
           Choose events{" "}

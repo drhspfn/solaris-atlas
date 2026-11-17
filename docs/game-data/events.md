@@ -68,8 +68,12 @@ asset versions with a complete imported catalog; `GET /events?version=3.8.0`
 selects membership in that exact catalog and retains the known schedule history
 of its members. A two-part version is accepted only when exactly one complete
 snapshot matches; an ambiguous version returns 409 and an unavailable snapshot
-returns 404. Versioned event lists use source reads, including when historical
-read projections are enabled.
+returns 404. The version selects membership only; presentation and artwork
+come from current data or recorded occurrences, not a preserved version-specific
+presentation. Versioned responses state this as `snapshot_presentation`.
+When the current event projection is enabled, versioned lists filter its entries
+by snapshot membership and return 503 if any member has not yet been projected.
+Otherwise they use source reads.
 
 Migration 0036 creates empty snapshot tables; it does not infer old catalog
 membership from schedule versions or mutable presentation data. Historical

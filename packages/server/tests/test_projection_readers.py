@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import text
 from sqlalchemy.dialects import postgresql
 
 import test_browse_read_models
@@ -145,7 +146,7 @@ async def test_cutscene_catalog_preserves_descending_order_filter_cursor_and_rev
 
 
 @pytest.mark.asyncio
-async def test_event_server_occurrence_version_and_summary_are_selected_from_captured_runs(
+async def test_event_snapshot_selects_membership_and_preserves_captured_run_history(
     database,
 ):
     def run(identity, server, version):
@@ -154,6 +155,7 @@ async def test_event_server_occurrence_version_and_summary_are_selected_from_cap
             "occurrence_id": identity,
             "server": server,
             "game_version": version,
+            "catalog_version": "3.9.0" if identity == 4 else "3.10.0",
             "title": f"Run {identity}",
             "starts_at": "2026-10-01T00:00:00Z",
             "artwork": [
@@ -162,23 +164,33 @@ async def test_event_server_occurrence_version_and_summary_are_selected_from_cap
             ],
         }
 
+    await database.execute(text("CREATE TABLE core.game_event_snapshot_member (version TEXT, event_id INTEGER)"))
+    await database.execute(text("INSERT INTO core.game_event_snapshot_member VALUES ('3.10.0',7)"))
     database.entry(
         "game_event",
         7,
         payload={
             "event": {"id": 7, "kind": "limited"},
-            "occurrences": [run(1, "asia", "3.10"), run(2, "europe", "3.9"), run(3, "asia", None)],
+            "occurrences": [run(1, "asia", "3.10"), run(2, "europe", "3.9"), run(3, "asia", None),
+                            run(4, "asia", "3.9")],
             "unversioned_occurrences": [],
         },
     )
-    response = await reader.events_page(database, "asia", version="3.10", summary=True)
-    assert {item["occurrence_id"] for item in response["events"]} == {1, 3}
+    database.entry("game_event", 8, payload={"event": {"id": 8, "kind": "limited"},
+                                               "occurrences": [dict(run(5, "asia", None), id=8)]})
+    response = await reader.events_page(database, "asia", version="3.10.0", summary=True)
+    assert {item["occurrence_id"] for item in response["events"]} == {1, 3, 4}
+    assert next(item for item in response["events"] if item["occurrence_id"] == 4)["catalog_version"] == "3.9.0"
     assert all(len(item["artwork"]) == 1 for item in response["events"])
     assert response["events"][0]["detail_url"].startswith("/events/7/detail?server=asia")
     assert (await reader.event_detail(database, 7, "europe", 2))["game_version"] == "3.9"
     with pytest.raises(HTTPException) as error:
         await reader.event_detail(database, 7, "asia", 2)
     assert error.value.status_code == 404
+    await database.execute(text("INSERT INTO core.game_event_snapshot_member VALUES ('3.10.0',9)"))
+    with pytest.raises(HTTPException) as error:
+        await reader.events_page(database, "asia", version="3.10.0", summary=True)
+    assert error.value.status_code == 503
 
 
 @pytest.mark.asyncio
@@ -351,6 +363,8 @@ async def test_related_source_file_filters_known_mismatches_and_rejects_only_mis
 
 @pytest.mark.asyncio
 async def test_asia_only_event_keeps_authoritative_europe_outerjoin_fallback(database):
+    await database.execute(text("CREATE TABLE core.game_event_snapshot_member (version TEXT, event_id INTEGER)"))
+    await database.execute(text("INSERT INTO core.game_event_snapshot_member VALUES ('3.11',7)"))
     undated = {
         "id": 7,
         "title": "Undated",
@@ -376,7 +390,7 @@ async def test_asia_only_event_keeps_authoritative_europe_outerjoin_fallback(dat
     assert len(europe["events"]) == 1 and europe["events"][0]["occurrence_id"] is None
     assert europe["events"][0]["title"] == "Undated"
     assert (await reader.event_detail(database, 7, "europe", None))["occurrence_id"] is None
-    assert (await reader.events_page(database, "asia", version="3.11"))["events"] == []
+    assert (await reader.events_page(database, "asia", version="3.11"))["events"][0]["occurrence_id"] == 1
     assert (await reader.events_page(database, "europe", version="3.11"))["events"][0][
         "occurrence_id"
     ] is None
