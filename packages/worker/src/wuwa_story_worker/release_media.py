@@ -302,6 +302,10 @@ async def event_catalog(payload, parent, session):
             GameEventOccurrence.game_version == ".".join(parent["asset_version"].split(".")[:2]),
         )))
         for occurrence in occurrences:
+            # Keep captured history, as the primary client catalog importer does.
+            if ((getattr(occurrence, "starts_at", None) or getattr(occurrence, "ends_at", None))
+                and (occurrence.source_data or {}).get("client")):
+                continue
             occurrence.source_data = {**occurrence.source_data, "client": presentation}
             occurrence.banner_path = event.banner_path
         entries.append({"expected": event.source_id, "status": "found",
