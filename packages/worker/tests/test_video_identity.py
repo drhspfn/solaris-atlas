@@ -23,6 +23,23 @@ def workspace(tmp_path, count=72):
 
 
 @pytest.mark.asyncio
+async def test_agent_tool_dispatch_reaches_shared_memory_service(tmp_path, monkeypatch):
+    from wuwa_story.agents.providers import ToolCall
+
+    from wuwa_story_worker.video_analysis_agent import _execute_video_tool
+
+    service = SimpleNamespace(identify=AsyncMock(return_value={"model_key": "model", "detections": []}))
+    monkeypatch.setattr(video_identity, "VisualMemoryService", lambda db: service)
+    output, atlases = await _execute_video_tool(
+        object(), workspace(tmp_path),
+        ToolCall("identity-58", "identify_atlas_characters", {"global_frame_indices": [58]}),
+    )
+    service.identify.assert_awaited_once_with(b"58", detect=True, limit=3)
+    assert output["available"] and output["inspected_frames"] == [58]
+    assert atlases == []
+
+
+@pytest.mark.asyncio
 async def test_identification_uses_supported_service_and_retains_evidence_and_uncertainty(tmp_path, monkeypatch):
     detections = [{"bbox": [2, 3, 8, 9], "detection": {"score": 0.9, "status": "detected"},
                    "identification": {"status": "unresolved", "score_type": "uncalibrated_similarity",

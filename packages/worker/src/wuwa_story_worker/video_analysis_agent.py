@@ -225,74 +225,10 @@ async def _identify_atlas_characters(
     atlas_indices: list[int] | None = None,
     global_frame_indices: list[int] | None = None,
 ) -> dict[str, Any]:
-    """Run visual memory character matching on selected local workspace frames."""
-    selected_frames: list[int] = []
-    if global_frame_indices:
-        selected_frames.extend(
-            idx for idx in global_frame_indices if idx in workspace.frame_paths
-        )
-    if atlas_indices:
-        wanted = set(atlas_indices)
-        for entry in workspace.atlases:
-            if entry.atlas_index in wanted:
-                selected_frames.extend(
-                    range(entry.frame_number_start, entry.frame_number_end + 1)
-                )
-    if not selected_frames:
-        selected_frames = sorted(workspace.frame_paths)[:8]
-    selected_frames = list(dict.fromkeys(selected_frames))[:16]
-    if db is None:
-        return {
-            "available": False,
-            "reason": "database_unavailable_in_local_simulation",
-            "inspected_frames": selected_frames,
-            "matches": [],
-        }
-    try:
-        from wuwa_story.visual_memory.inference import VisualDetector
-        from wuwa_story.visual_memory.service import VisualMemoryService
-    except Exception as exc:
-        return {
-            "available": False,
-            "reason": f"visual_memory_unavailable: {exc}",
-            "inspected_frames": selected_frames,
-            "matches": [],
-        }
-    detector = VisualDetector()
-    if not detector.available():
-        return {
-            "available": False,
-            "reason": "visual_memory_onnx_models_not_configured",
-            "inspected_frames": selected_frames,
-            "matches": [],
-        }
-    service = VisualMemoryService(db)
-    matches: list[dict[str, Any]] = []
-    for frame_idx in selected_frames:
-        path = workspace.frame_paths.get(frame_idx)
-        if not path or not path.is_file():
-            continue
-        image_bytes = path.read_bytes()
-        detections = await asyncio.to_thread(detector.detect_and_embed, image_bytes)
-        frame_matches = []
-        for det in detections:
-            candidates = await service.search_embedding(det["embedding"], limit=3)
-            frame_matches.append(
-                {
-                    "bbox": det.get("bbox"),
-                    "score": det.get("score"),
-                    "candidates": candidates,
-                }
-            )
-        if frame_matches:
-            matches.append(
-                {
-                    "global_frame": frame_idx,
-                    "time": workspace.frame_times.get(frame_idx),
-                    "detections": frame_matches,
-                }
-            )
-    return {"available": True, "inspected_frames": selected_frames, "matches": matches}
+    """Use the shared identification path and preserve its confidence and evidence."""
+    from wuwa_story_worker.video_identity import identify_atlas_characters
+
+    return await identify_atlas_characters(db, workspace, atlas_indices, global_frame_indices)
 
 
 async def _execute_video_tool(
