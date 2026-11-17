@@ -370,8 +370,15 @@ async def test_event_catalog_updates_presentation_and_keeps_missing_history_visi
                             description=None, banner_path=None, source_data={})
     missing = SimpleNamespace(id=2, source_id="2:999", title="Historical title", source_data={})
     occurrence = SimpleNamespace(source_data={}, banner_path=None)
+    historic_client = {"title_key": "Activity_100700003_Title", "download_id": "old"}
+    dated = SimpleNamespace(source_data={"client": historic_client}, banner_path="old-art",
+                            starts_at="2026-01-01", ends_at="2026-02-01")
+    end_only = SimpleNamespace(source_data={"client": historic_client}, banner_path="old-art",
+                               starts_at=None, ends_at="2026-02-01")
+    uncaptured = SimpleNamespace(source_data={}, banner_path=None,
+                                 starts_at="2026-01-01", ends_at=None)
     session = AsyncMock()
-    session.scalars.side_effect = [[event, missing], [occurrence]]
+    session.scalars.side_effect = [[event, missing], [occurrence, dated, end_only, uncaptured]]
     parent = {"asset_version": "3.7.0", "tier": "hd", "download_id": "a" * 64}
 
     report, status = await release_media.event_catalog(
@@ -385,6 +392,9 @@ async def test_event_catalog_updates_presentation_and_keeps_missing_history_visi
     assert event.description == "Actual description"
     assert occurrence.banner_path == record["banner_path"]
     assert occurrence.source_data["client"]["asset_version"] == "3.7.0"
+    assert dated.source_data["client"] == historic_client and dated.banner_path == "old-art"
+    assert end_only.source_data["client"] == historic_client and end_only.banner_path == "old-art"
+    assert uncaptured.source_data["client"]["title_key"] == "Activity_111800001_Title"
     assert missing.title == "Historical title"
     assert report["entries"][1]["config_present"] is False
 
