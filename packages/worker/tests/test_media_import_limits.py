@@ -60,6 +60,16 @@ def test_decoded_json_prunes_only_derived_exports_of_large_files(tmp_path):
     assert pruned[1] == exports[1]
 
 
+def test_decoded_json_preserves_large_material_integers_and_float_types(tmp_path):
+    # Actual overflowing integer seen in a production material dependency.
+    exports = [{'Type': 'Material', 'Properties': {
+        'hash': 11906043356684579009, 'nested': [-11906043356684579009, 1.25, 2]}}]
+    result = decoded_json.load_exports(export_file(tmp_path, exports))
+    assert result == exports
+    assert type(result[0]['Properties']['hash']) is int
+    assert type(result[0]['Properties']['nested'][1]) is float
+
+
 def test_decoded_json_rejects_corrupt_and_non_array(tmp_path):
     corrupt = tmp_path / 'c.json'
     corrupt.write_bytes(b'[{"Type": "A"}, {"Type": ')
