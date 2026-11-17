@@ -223,6 +223,26 @@ def resolve_event_calls(exports, function_ref):
                 if _class_key(functions[key[0]].get('Outer')) != _class_key(export.get('Outer')):
                     fail('property_reference', 'Persistent write crosses local owner', trace)
                 persistent[key] = value(node.get('AssignmentExpression'), locals_, trace, len(active), self_)
+            elif token in ('EX_LetBool', 'EX_LetObj'):
+                destination = node.get('Variable')
+                if not isinstance(destination, dict) or destination.get('Token') != 'EX_LocalVariable':
+                    fail('assignment_target', 'Only local assignment targets are supported', trace)
+                key = field(destination.get('Variable'), trace)
+                declaration = [p for p in functions[key[0]].get('ChildProperties', []) if p.get('Name') == key[1]]
+                expected = 'BoolProperty' if token == 'EX_LetBool' else 'ObjectProperty'
+                if key[0] != index or len(declaration) != 1 or declaration[0].get('Type') != expected:
+                    fail('assignment_target', 'Assignment target type or owner is not exact', trace)
+                expression = node.get('Expression')
+                allowed = ('EX_True', 'EX_False', 'EX_LocalVariable') if token == 'EX_LetBool' else (
+                    'EX_ObjectConst', 'EX_LocalVariable')
+                if not isinstance(expression, dict) or expression.get('Token') not in allowed:
+                    fail('assignment_expression', 'Assignment expression may require runtime execution', trace)
+                if expression['Token'] == 'EX_LocalVariable':
+                    source = field(expression.get('Variable'), trace)
+                    declarations = [p for p in functions[source[0]].get('ChildProperties', []) if p.get('Name') == source[1]]
+                    if len(declarations) != 1 or declarations[0].get('Type') != expected:
+                        fail('assignment_expression', 'Assignment source type is not exact', trace)
+                locals_[key] = value(expression, locals_, trace, len(active), self_)
             elif token in ('EX_LocalVirtualFunction', 'EX_LocalFinalFunction'):
                 target = resolve(node.get('Function'), index, trace)
                 operands = node.get('Parameters')
