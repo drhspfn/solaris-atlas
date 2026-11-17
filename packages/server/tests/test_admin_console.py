@@ -191,8 +191,15 @@ async def test_event_period_admin_requires_admin_and_preserves_partial_utc_dates
     response = await client.post("/console/event-periods/create", data=payload,
                                  headers={"Origin": "http://console.test"})
     assert response.status_code == 303, response.text[-2500:]
+    second = await client.post("/console/event-periods/create", data={**payload, "ends_at": ""},
+                               headers={"Origin": "http://console.test"})
+    assert second.status_code == 303, second.text[-2500:]
     async with factory() as db:
-        row = await db.scalar(select(GameEventOccurrence).where(GameEventOccurrence.event_id == event_id))
+        rows = list(await db.scalars(select(GameEventOccurrence).where(
+            GameEventOccurrence.event_id == event_id).order_by(GameEventOccurrence.id)))
+        assert len(rows) == 2 and all(row.starts_at is None for row in rows)
+        assert rows[0].source_occurrence_id != rows[1].source_occurrence_id
+        row = rows[0]
         assert row and row.starts_at is None and row.ends_at == datetime(1900, 1, 2, 3, 4, tzinfo=UTC)
         assert row.source_occurrence_id.startswith("manual:") and row.source_data["schedule_source"] == "manual"
         occurrence_id = row.id
@@ -203,12 +210,82 @@ async def test_event_period_admin_requires_admin_and_preserves_partial_utc_dates
         assert receipt and receipt.arguments["actor_user_id"] == admin.id
     listing = await client.get("/console/api/event-periods")
     assert listing.status_code == 200 and "Period test " + suffix in listing.text
+    assert (await client.get(f"/console/event-periods/edit/{occurrence_id}")).status_code == 200
     invalid = {"game_version": "3.8", "starts_at": "1900-01-03T00:00:00", "ends_at": "1900-01-02T00:00:00"}
     assert (await client.post(f"/console/event-periods/edit/{occurrence_id}", data=invalid,
                               headers={"Origin": "http://console.test"})).status_code == 422
     valid = {**invalid, "starts_at": ""}
     assert (await client.post(f"/console/event-periods/edit/{occurrence_id}", data=valid,
                               headers={"Origin": "http://console.test"})).status_code == 303
+
+
+async def test_event_period_manual_edit_serializes_with_importer(console):
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from sqlalchemy import event as sqlalchemy_event
+    from sqlalchemy import update
+
+    from wuwa_story.admin.event_periods import EventPeriods
+    from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
+
+    _, factory, _, admin, _, _, _, suffix, _ = console
+    original_end = datetime(1900, 1, 2, tzinfo=UTC)
+    async with factory() as db:
+        event = GameEvent(source="test", source_id="race-" + suffix, title="Race " + suffix,
+                          event_kind="limited", source_url="https://example.test", source_revision="test",
+                          source_data={})
+        db.add(event)
+        await db.flush()
+        row = GameEventOccurrence(event_id=event.id, source_occurrence_id="notice:race", server="europe",
+                                  game_version="old", starts_at=None, ends_at=original_end,
+                                  source_data={"notice_id": 1})
+        db.add(row)
+        await db.commit()
+        occurrence_id = row.id
+
+    async with factory() as editor, factory() as importer:
+        row = await editor.get(GameEventOccurrence, occurrence_id)
+        # These submitted values equal the editor's original snapshot; the
+        # later importer update must still be replaced by the user's values.
+        row.starts_at, row.ends_at, row.game_version = None, original_end, "old"
+        await importer.execute(update(GameEventOccurrence).where(GameEventOccurrence.id == occurrence_id).values(
+            starts_at=datetime(2026, 1, 1, tzinfo=UTC), ends_at=datetime(2026, 2, 1, tzinfo=UTC),
+            game_version="new", source_data={"notice_id": 2, "client": {"download_id": "new"}},
+        ))
+        connection = await editor.connection()
+        select_started = asyncio.Event()
+
+        def before_execute(conn, cursor, statement, parameters, context, executemany):
+            if "FOR UPDATE" in statement and "source_data" in statement:
+                select_started.set()
+
+        sqlalchemy_event.listen(connection.sync_connection, "before_cursor_execute", before_execute)
+        request = SimpleNamespace(state=SimpleNamespace(session=editor, console_user=admin))
+        view = EventPeriods(GameEventOccurrence, identity="event-periods")
+        task = asyncio.create_task(view.before_edit(request, {}, row))
+        try:
+            await asyncio.wait_for(select_started.wait(), timeout=5)
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(task), timeout=0.2)
+            await importer.commit()
+            await asyncio.wait_for(task, timeout=5)
+            await editor.commit()
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            sqlalchemy_event.remove(connection.sync_connection, "before_cursor_execute", before_execute)
+
+    async with factory() as db:
+        saved = await db.get(GameEventOccurrence, occurrence_id)
+        assert saved.starts_at is None and saved.ends_at == original_end and saved.game_version == "old"
+        assert saved.source_data == {"notice_id": 2, "client": {"download_id": "new"},
+                                    "schedule_source": "manual"}
+        assert await db.scalar(select(AgentToolAudit.id).where(
+            AgentToolAudit.tool == "console.event_period.edit",
+            AgentToolAudit.arguments["object_id"].as_integer() == occurrence_id,
+        )) is not None
 
 
 async def test_revocation_is_immediate_and_get_actions_require_same_origin(console):

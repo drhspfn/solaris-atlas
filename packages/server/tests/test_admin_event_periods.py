@@ -134,10 +134,16 @@ async def test_admin_create_period_writes_existing_event_and_audit(monkeypatch):
         assert response.status_code == 303, response.text[-1500:]
         response = await client.post("/console/event-periods/create", headers={"Origin": "http://console.test"},
                                      data={"event_id": "7", "server": "europe", "game_version": "3.8",
-                                           "starts_at": "2000-01-01T00:00:00", "ends_at": ""})
+                                           "starts_at": "", "ends_at": ""})
+        assert response.status_code == 303, response.text[-1500:]
+        response = await client.post("/console/event-periods/create", headers={"Origin": "http://console.test"},
+                                     data={"event_id": "7", "server": "europe", "game_version": "",
+                                           "starts_at": "1900-01-01T00:00:00", "ends_at": "1900-01-02T00:00:00"})
         assert response.status_code == 303, response.text[-1500:]
         listing = await client.get("/console/api/event-periods")
         assert listing.status_code == 200 and "Existing event" in listing.text
+        assert (await client.get("/console/event-periods/edit/1")).status_code == 200
+        assert (await client.get("/console/event-periods/edit/2")).status_code == 200
         invalid = {"game_version": "3.8", "starts_at": "1900-01-03T00:00:00", "ends_at": "1900-01-02T00:00:00"}
         response = await client.post("/console/event-periods/edit/1", headers={"Origin": "http://console.test"}, data=invalid)
         assert response.status_code == 422
@@ -146,10 +152,12 @@ async def test_admin_create_period_writes_existing_event_and_audit(monkeypatch):
         assert response.status_code == 303, response.text[-1500:]
     async with engine.connect() as conn:
         rows = (await conn.execute(text("SELECT event_id,source_occurrence_id,starts_at,ends_at,source_data FROM core.game_event_occurrence ORDER BY id"))).all()
-        assert len(rows) == 2 and rows[0].source_occurrence_id != rows[1].source_occurrence_id
+        assert len(rows) == 3 and len({row.source_occurrence_id for row in rows}) == 3
+        assert rows[0].starts_at is None and rows[1].starts_at is None
+        assert "1900-01-01 00:00:00" in rows[2].starts_at
         row = rows[0]
         assert row.event_id == 7 and row.source_occurrence_id.startswith("manual:") and row.starts_at is None
         assert "1900-01-02 00:00:00" in row.ends_at and '"manual"' in row.source_data
-        assert await conn.scalar(text("SELECT count(*) FROM ops.agent_tool_audit WHERE tool='console.event_period.create'")) == 2
+        assert await conn.scalar(text("SELECT count(*) FROM ops.agent_tool_audit WHERE tool='console.event_period.create'")) == 3
         assert await conn.scalar(text("SELECT count(*) FROM ops.agent_tool_audit WHERE tool='console.event_period.edit'")) == 1
     await engine.dispose()
