@@ -1,0 +1,667 @@
+id,source_id,title,event_kind,identical_title_ids,occurrence_rows,scheduled,client_placeholders,notice_runs,pool_proven_runs,snapshots,matching_signature_placeholders,different_or_missing_signature_placeholders,lifecycle_class,grouping_evidence
+716,gacha:100087,Suoming · Resonator Convene,banner,1,2,1,1,1,0,1,1,0,scheduled_and_catalog,no_same_title
+717,gacha:100088,Lynae · Resonator Convene,banner,4,2,1,1,0,0,1,1,0,scheduled_and_catalog,same_title_unproven
+718,gacha:100089,Lucilla · Resonator Convene,banner,2,2,1,1,0,0,1,1,0,scheduled_and_catalog,same_title_unproven
+719,gacha:200087,Unspoken Rue · Weapon Convene,banner,1,2,1,1,1,0,1,1,0,scheduled_and_catalog,no_same_title
+720,gacha:200088,Spectrum Blaster · Weapon Convene,banner,4,2,1,1,0,0,1,1,0,scheduled_and_catalog,same_title_unproven
+721,gacha:200089,Freeze Frame · Weapon Convene,banner,2,2,1,1,0,0,1,1,0,scheduled_and_catalog,same_title_unproven
+722,gacha:100084,Hsin · Resonator Convene,banner,1,2,1,1,1,0,1,1,0,scheduled_and_catalog,no_same_title
+723,gacha:100085,Chisa · Resonator Convene,banner,4,2,1,1,0,0,1,1,0,scheduled_and_catalog,same_title_unproven
+724,gacha:100086,Iuno · Resonator Convene,banner,5,2,1,1,0,0,1,1,0,scheduled_and_catalog,same_title_unproven
+725,gacha:200084,Blooming Jadehaven · Weapon Convene,banner,1,2,1,1,1,0,1,1,0,scheduled_and_catalog,no_same_title
+726,gacha:200085,Kumokiri · Weapon Convene,banner,4,2,1,1,0,0,1,1,0,scheduled_and_catalog,same_title_unproven
+727,gacha:200086,Moongazer's Sigil · Weapon Convene,banner,5,2,1,1,0,0,1,1,0,scheduled_and_catalog,same_title_unproven
+728,gacha:100081,Jingran · Resonator Convene,banner,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+729,gacha:100082,Hiyuki · Resonator Convene,banner,3,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+730,gacha:100083,Mornye · Resonator Convene,banner,3,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+731,gacha:200081,Thousandfold Deliverance · Weapon Convene,banner,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+732,gacha:200082,Frostburn · Weapon Convene,banner,3,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+733,gacha:200083,Starfield Calibrator · Weapon Convene,banner,3,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+734,gacha:100079,Qingxiao · Resonator Convene,banner,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+735,gacha:100080,Denia · Resonator Convene,banner,2,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+736,gacha:200079,Glint of Clouds · Weapon Convene,banner,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+737,gacha:200080,Forged Dwarf Star · Weapon Convene,banner,2,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+738,gacha:100074,Suisui · Resonator Convene,banner,2,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+739,gacha:100075,Aemeath · Resonator Convene,banner,2,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+740,gacha:200074,Firstlight's Herald · Weapon Convene,banner,2,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+741,gacha:200075,Everbright Polestar · Weapon Convene,banner,2,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+742,gacha:100072,Yangyang: Xuanling · Resonator Convene,banner,2,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+743,gacha:100073,Luuk Herssen · Resonator Convene,banner,2,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+744,gacha:100076,Lynae · Resonator Convene,banner,4,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+745,gacha:200072,Azure Oath · Weapon Convene,banner,2,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+746,gacha:200073,Daybreaker's Spine · Weapon Convene,banner,2,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+747,gacha:200076,Spectrum Blaster · Weapon Convene,banner,4,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+759,gacha:100068,Lucy · Resonator Convene,banner,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+760,gacha:100069,Rebecca · Resonator Convene,banner,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+761,gacha:100070,Lucilla · Resonator Convene,banner,2,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+762,gacha:100071,Cartethyia · Resonator Convene,banner,4,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+763,gacha:200068,Spectral Trigger · Weapon Convene,banner,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+764,gacha:200069,Skull Thrasher · Weapon Convene,banner,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+765,gacha:200070,Freeze Frame · Weapon Convene,banner,2,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+766,gacha:200071,Defier's Thorn · Weapon Convene,banner,4,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+767,gacha:100064,Denia · Resonator Convene,banner,2,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+768,gacha:100065,Chisa · Resonator Convene,banner,4,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+769,gacha:100067,Phrolova · Resonator Convene,banner,4,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+770,gacha:200064,Forged Dwarf Star · Weapon Convene,banner,2,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+771,gacha:200065,Kumokiri · Weapon Convene,banner,4,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+772,gacha:200067,Lethean Elegy · Weapon Convene,banner,4,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+773,gacha:100062,Hiyuki · Resonator Convene,banner,3,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+774,gacha:100063,Mornye · Resonator Convene,banner,3,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+775,gacha:100066,Iuno · Resonator Convene,banner,5,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+776,gacha:200062,Frostburn · Weapon Convene,banner,3,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+777,gacha:200063,Starfield Calibrator · Weapon Convene,banner,3,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+778,gacha:200066,Moongazer's Sigil · Weapon Convene,banner,5,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+779,gacha:200061,Luminous Hymn · Weapon Convene,banner,6,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+780,gacha:100061,Phoebe · Resonator Convene,banner,6,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+781,gacha:200060,Blazing Justice · Weapon Convene,banner,4,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+782,gacha:100060,Zani · Resonator Convene,banner,4,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+783,gacha:200059,Spectrum Blaster · Weapon Convene,banner,4,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+784,gacha:100059,Lynae · Resonator Convene,banner,4,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+785,gacha:200058,Emerald Sentence · Weapon Convene,banner,3,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+786,gacha:100058,Qiuyuan · Resonator Convene,banner,3,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+787,gacha:200057,Solsworn Ciphers · Weapon Convene,banner,2,4,2,2,1,0,1,2,0,scheduled_and_catalog,same_title_unproven
+788,gacha:100057,Sigrika · Resonator Convene,banner,2,4,2,2,1,0,1,2,0,scheduled_and_catalog,same_title_unproven
+789,activity:100700044,Chord Cleansing,limited,23,2,1,1,0,0,1,1,0,scheduled_and_catalog,same_title_unproven
+790,activity:100700043,Bountiful Crescendo,limited,22,2,1,1,0,0,1,1,0,scheduled_and_catalog,same_title_unproven
+791,activity:108400004,Waking Moon Fishing,limited,1,2,1,1,0,0,1,1,0,scheduled_and_catalog,no_same_title
+792,activity:102700007,Beyond the Waves: Land of Xuanfang,limited,1,2,1,1,0,0,1,1,0,scheduled_and_catalog,no_same_title
+793,activity:111600001,Echo Erase,limited,1,2,1,1,1,0,1,1,0,scheduled_and_catalog,no_same_title
+794,activity:103300004,Artisan's Search,limited,1,2,1,1,1,0,1,1,0,scheduled_and_catalog,no_same_title
+795,activity:101300025,Dreams in the Capsule,limited,1,2,1,1,1,0,1,1,0,scheduled_and_catalog,no_same_title
+796,activity:102000009,Gifts of Singing Drizzle,limited,1,2,1,1,0,0,1,0,1,scheduled_and_catalog,no_same_title
+797,activity:100100025,Gifts of Waking Moon,limited,1,2,1,1,1,0,1,1,0,scheduled_and_catalog,no_same_title
+798,activity:111300001,Cubie Wars,limited,1,2,1,1,1,0,1,1,0,scheduled_and_catalog,no_same_title
+799,activity:111200001,Resonance Sim Realm,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+800,activity:100100024,Gifts of Drifting Mist,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+801,activity:101900004,If Dreams Still Reverberate,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+802,activity:105900002,Second Coming of Solaris: Coded Deception,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+803,activity:111400001,The Strings Remember,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+804,activity:101200010,Wuthering Exploration,limited,10,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+805,activity:100700042,Chord Cleansing,limited,23,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+806,activity:100700041,Bountiful Crescendo,limited,22,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+807,activity:109500001,Lament Recon: Tacet Crisis,permanent,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+808,activity:100100023,Gifts of Aftertune,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+809,activity:101500009,Lollo Campaign: New Journey,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+810,activity:110500002,Virtual Crisis: Quadrant Trials,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+811,activity:106400002,Recaptured: Action Highlights,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+812,activity:100700040,Chord Cleansing,limited,23,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+813,activity:100700039,Bountiful Crescendo,limited,22,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+814,activity:110000001,Night City Roaming,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+815,activity:109900001,Matrix Reform,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+816,activity:110400001,Instant Flashlight,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+817,activity:110300001,Gifts of Dreamchasers,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+818,activity:100600006,Depths of Illusive Realm,limited,6,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+819,activity:108200002,"Startorch Racing, Rerun!",limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+820,activity:100100021,Dream of Azure Sky,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+821,activity:100700038,Chord Cleansing,limited,23,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+822,activity:100700037,Bountiful Crescendo,limited,22,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+823,activity:100900036,Ascendant Aces,limited,47,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+824,activity:100900035,Ascendant Aces,limited,47,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+825,activity:109700001,Second Coming of Solaris: Collab Season,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+826,activity:109400001,Star Bouncing,permanent,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+827,activity:104200002,Cubie Derby: Championship,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+828,activity:109600001,Lollo Express: Promise Delivered,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+829,activity:102000005,Gifts of Grand Celebration,limited,2,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+830,activity:105100002,Bountiful Waves,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+831,activity:101300020,Dimmr Traces,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+832,activity:100100020,Gifts of Starlight,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+833,activity:100600005,Depths of Illusive Realm,limited,6,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+834,activity:109800001,Aced! Combat Mastery Test!,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+835,activity:110100001,Crossworld Sync: Pt. 1,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+836,activity:110100002,Crossworld Sync: Pt. 2,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+837,activity:102700006,Beyond the Waves: Roya Frostlands,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+838,activity:104600004,Back to Solaris,limited,4,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+839,activity:100700036,Chord Cleansing,limited,23,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+840,activity:100700035,Bountiful Crescendo,limited,22,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+841,activity:100900034,Ascendant Aces,limited,47,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+842,activity:100900033,Ascendant Aces,limited,47,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+843,activity:100700033,Bountiful Crescendo,limited,22,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+844,activity:100700034,Chord Cleansing,limited,23,3,1,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+845,activity:108900001,The Flaming Red in Memory,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+846,activity:108600001,Knights of the Wild,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+847,activity:109000001,Speed up! F.U.E.L. Instrumentality Project!,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+848,activity:109100001,Lahai-Roi Blocks,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+849,activity:100100019,Gifts of Solsworn,limited,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+850,activity:108700001,Soar to the Beat,permanent,1,3,1,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+851,activity:100770002,Endstate Matrix,recurring,1,7,6,1,0,0,1,1,0,scheduled_and_catalog,no_same_title
+852,activity:100770001,Doubled Pawns Matrix: Pilot,recurring,1,4,2,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+853,activity:100390001,Whimpering Wastes,recurring,1,4,2,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+854,activity:105500002,Phantasma Dreamland: Rhapsody,permanent,1,4,2,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+855,activity:103600001,Fantasies of the Thousand Gateways,limited,8,8,6,2,0,0,1,0,2,scheduled_and_catalog,same_title_unproven
+856,activity:100300002,Hazard Revisited,recurring,1,4,2,2,0,0,1,0,2,scheduled_and_catalog,no_same_title
+857,activity:111800001,Blooms for the Shadow,permanent,1,2,1,1,0,0,1,1,0,scheduled_and_catalog,no_same_title
+858,activity:101600011,"Past Dreams, Traced Seals",permanent,1,2,1,1,0,0,1,1,0,scheduled_and_catalog,no_same_title
+1431,activity:100,Overdash Club,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1432,activity:100100001,Gifts of Thawing Frost,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1433,activity:100300001,Rumbling Hollows,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1434,activity:100400001,Awakening Journey,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1435,activity:100500001,Voyage's Beginning,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1436,activity:101,Second Coming of Solaris,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1437,activity:100600001,Depths of Illusive Realm,limited,6,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1438,activity:100700001,Intensive Training,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1439,activity:100800001,Alloy Smelt,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1440,activity:101000001,Daybreak at Last,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1441,activity:101000002,Solitary Path,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1442,activity:101100001,Echo Hunters,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1443,activity:101200001,Wuthering Exploration,limited,10,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1444,activity:100700002,Chord Cleansing,limited,23,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1445,activity:100600002,Depths of Illusive Realm,limited,6,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1446,activity:101300001,Tales from Mt. Firmament,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1447,activity:100805001,Tactical Simulacra: Off Tune,limited,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1448,activity:100100002,Gifts of Celestial Light,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1449,activity:101500001,Lollo Campaign,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1450,activity:101600001,Traces of Mt. Firmament,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1451,activity:100700003,Bountiful Crescendo,limited,22,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1452,activity:100700004,Chord Cleansing,limited,23,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1453,activity:101000003,Immortal Blaze,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1454,activity:100600003,Depths of Illusive Realm,limited,6,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1455,activity:101700001,By Moon's Grace,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1456,activity:101700002,By Moon's Grace: Summary,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1457,activity:100105523,Do Echoids Dream of Electric Sheep?,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1458,activity:102000001,Gifts of Gratitude,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1459,activity:100700005,Bountiful Crescendo,limited,22,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1460,activity:100700006,Chord Cleansing,limited,23,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1461,activity:101800001,Reprise of Tides,limited,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1462,activity:101200003,Wuthering Exploration,limited,10,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1463,activity:100900005,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1464,activity:100900006,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1465,activity:101200002,Wuthering Exploration,limited,10,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1466,activity:100900001,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1467,activity:100900002,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1468,activity:100900003,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1469,activity:100900004,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1470,activity:100800002,Alloy Smelt II,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1471,activity:100100003,Gifts of Lunar Radiance,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1472,activity:101000004,True Colors,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1473,activity:102200001,Converging Paths,limited,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1474,activity:102200002,Converging Paths,limited,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1475,activity:102300013,Infinite Battle Simulation,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1476,activity:100900007,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1477,activity:100900008,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1478,activity:100700007,Bountiful Crescendo,limited,22,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1479,activity:100700008,Chord Cleansing,limited,23,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1480,activity:100600004,Depths of Illusive Realm,limited,6,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1481,activity:101600002,Amidst the Stars,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1482,activity:102400001,Solaris Weather Forecast,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1483,activity:102500001,Where Stars Slumber,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1484,activity:101900001,Fairy Tale's Finale,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1485,activity:101000005,"Small Wooly, Big Adventures",limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1486,activity:101500002,Lollo Campaign: Rerun,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1487,activity:101200004,Wuthering Exploration,limited,10,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1488,activity:100100004,Gifts of Sea Breeze,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1489,activity:102600001,Somnium Labyrinth,permanent,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1490,activity:102800001,Ragunna Sales Blitz!,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1491,activity:101300002,Pioneer Project,limited,20,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1492,activity:100700009,Bountiful Crescendo,limited,22,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1493,activity:100700010,Chord Cleansing,limited,23,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1494,activity:102700001,Beyond the Waves,limited,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1495,activity:100805002,Tactical Simulacra: Off Tune,limited,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1496,activity:100900009,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1497,activity:100900010,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1498,activity:101000006,Forking Paths Among the Stars,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1499,activity:100100005,Gifts of Fleeting Dreams,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1500,activity:101200005,Wuthering Exploration,limited,10,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1501,activity:101300003,Parade of Stars,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1502,activity:103000001,Pincer Maneuver Warriors I,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1503,activity:101300004,Pioneer Project,limited,20,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1504,activity:101500003,Lollo Campaign: Comeback,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1505,activity:101900002,Although Colors Have No Form,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1506,activity:103000002,Pincer Maneuver Warriors II,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1507,activity:101600003,Traces of Tides,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1508,activity:103100001,Dances For Spring's Return,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1509,activity:100700011,Bountiful Crescendo,limited,22,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1510,activity:100700012,Chord Cleansing,limited,23,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1511,activity:103000003,Next Stop: Rinascita,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1512,activity:103300001,John Wicktorio: No Debts for Old Men,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1513,activity:102900001,Pincer Maneuver Warriors III,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1514,activity:102900002,Pincer Maneuver Warriors IV,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1515,activity:103200001,Tales of the Isles,permanent,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1516,activity:103400001,Tactical Hologram: Phantom Pain,limited,8,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1517,activity:101000007,If On a Rainy Night a Family,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1518,activity:101000008,Starry is the Night,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1519,activity:100100006,Gifts of Joyous Tunes,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1520,activity:100900011,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1521,activity:100900012,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1522,activity:103500001,Glamour Couture,limited,6,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1523,activity:100700013,Bountiful Crescendo,limited,22,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1524,activity:100700014,Chord Cleansing,limited,23,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1525,activity:101300005,Pioneer Project,limited,20,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1526,activity:100805003,Tactical Simulacra III,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1527,activity:102300020,Infinite Battle Simulation II,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1528,activity:103700001,Old Man and the Whale,permanent,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1529,activity:103800001,Apex Ragunna,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1530,activity:101200006,Wuthering Exploration,limited,10,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1531,activity:102700002,Beyond the Waves,limited,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1532,activity:100900013,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1533,activity:100900014,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1534,activity:101000009,"Sail Day, Captain!",limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1535,activity:101200007,Wuthering Exploration,limited,10,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1536,activity:100100007,Gifts of Blue Water,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1537,activity:100700015,Bountiful Crescendo,limited,22,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1538,activity:100700016,Chord Cleansing,limited,23,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1539,activity:101600004,Acropolis Documentarian,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1540,activity:103400002,Tactical Hologram: Phantom Pain,limited,8,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1541,activity:101900003,If You Gaze Into the Abyss of Dreams,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1542,activity:101300006,Pioneer Project,limited,20,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1543,activity:104000001,Virtual Crisis: Prototype Trials,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1544,activity:101500004,Lollo Campaign: Set Sail,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1545,activity:104300001,Avinoleum Travel Atlas,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1546,activity:104500001,Dreaming Deep,permanent,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1547,activity:104400001,"Cube, Cubic n Cubie",permanent,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1548,activity:103600002,Fantasies of the Thousand Gateways,limited,8,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1549,activity:103400003,Tactical Hologram: Phantom Pain,limited,8,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1550,activity:102400002,Ragunna Weather Forecast,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1551,activity:100900015,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1552,activity:100900016,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1553,activity:104200001,Cubie Derby,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1554,activity:100100008,Gifts of the Still Tides,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1555,activity:101000010,A Fleeting Night's Dream,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1556,activity:100100009,Gifts of Grand Reunion,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1557,activity:104600001,It's Carnevale Time!,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1558,activity:101600005,Memory Travelogue,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1559,activity:101200008,Wuthering Exploration,limited,10,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1560,activity:100700017,Bountiful Crescendo,limited,22,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1561,activity:100700018,Chord Cleansing,limited,23,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1562,activity:104700001,Cubie Derby: Warmup,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1563,activity:104100001,Winds of the Past,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1564,activity:104800001,Your Summer Will Never Wither,permanent,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1565,activity:101300007,Pioneer Project,limited,20,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1566,activity:103600003,Fantasies of the Thousand Gateways,limited,8,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1567,activity:103400004,Tactical Hologram: Phantom Pain,limited,8,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1568,activity:101000011,A Blaze in the Dark,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1569,activity:104900001,Tidal Festivities,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1570,activity:102000002,Gifts of Grand Celebration,limited,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1571,activity:105000001,Reprise of Tides,limited,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1572,activity:102700003,Beyond the Waves: Rinascita,limited,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1573,activity:105100001,Gilded Nightmarket,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1574,activity:105200001,All Out! Towards the Peaks of Prestige,permanent,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1575,activity:100900017,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1576,activity:100900018,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1577,activity:100100010,Gifts of Melodic Verses,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1578,activity:104000002,Virtual Crisis: Frontier Trials,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1579,activity:101500005,Lollo Campaign: Verification,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1580,activity:100700019,Bountiful Crescendo,limited,22,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1581,activity:100700020,Chord Cleansing,limited,23,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1582,activity:101300008,Pioneer Project,limited,20,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1583,activity:104300002,Septimont Travel Atlas,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1584,activity:101600006,Uncovering Past Heroes,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1585,activity:105300002,Solaris New Voyage Celebration,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1586,activity:105400001,Banners Never Fall,permanent,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1587,activity:103600004,Fantasies of the Thousand Gateways,limited,8,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1588,activity:103500002,Glamour Couture,limited,6,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1589,activity:100100011,Gifts of Applause,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1590,activity:101300009,The Everglorious Summit,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1591,activity:100700021,Bountiful Crescendo,limited,22,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1592,activity:100700022,Chord Cleansing,limited,23,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1593,activity:100900019,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1594,activity:100900020,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1595,activity:103400005,Tactical Hologram: Phantom Pain,limited,8,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1596,activity:102000003,Limited-Time Special Login Event,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1597,activity:105600001,Overflowing Picture Book,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1598,activity:105500001,Phantasma Dreamland,permanent,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1599,activity:100100012,Gifts of Grand Symphony,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1600,activity:101600007,Deep Sea Survey,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1601,activity:103600005,Fantasies of the Thousand Gateways,limited,8,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1602,activity:101300010,Pioneer Project,limited,20,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1603,activity:101200009,Wuthering Exploration,limited,10,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1604,activity:103600006,Fantasies of the Thousand Gateways,limited,8,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1605,activity:100900021,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1606,activity:100900022,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1607,activity:100700023,Bountiful Crescendo,limited,22,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1608,activity:100700024,Chord Cleansing,limited,23,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1609,activity:101600008,Prints of Plateaus,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1610,activity:100100013,Gifts of the Hunt,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1611,activity:100900023,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1612,activity:104600002,Back to Solaris,limited,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1613,activity:105800001,Tidal Defense Simulator,permanent,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1614,activity:101300011,Pioneer Project,limited,20,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1615,activity:105800002,Windrider Project,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1616,activity:102700004,Beyond the Waves: Rinascita,limited,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1617,activity:101300012,Hunt of Ash and Steel,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1618,activity:104300003,Sanguis Plateaus Travel Atlas,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1619,activity:106000001,Moonlit Revelation,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1620,activity:106100001,Marks of the Wild,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1621,activity:106200001,Stranger Things in Honami,permanent,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1622,activity:100900024,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1623,activity:103400006,Tactical Hologram: Phantom Pain,limited,8,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1624,activity:105900001,Second Coming of Solaris (Ultra),limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1625,activity:100700025,Bountiful Crescendo,limited,22,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1626,activity:100700026,Chord Cleansing,limited,23,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1627,activity:100100014,Gifts of Approaching Dawn,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1628,activity:106300001,Lament Recon: Solaris Soldier,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1629,activity:106400001,Freeze Frame: Action Highlights,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1630,activity:100700027,Bountiful Crescendo,limited,22,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1631,activity:100700028,Chord Cleansing,limited,23,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1632,activity:106500001,Lollo Campaign: Rising Anew,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1633,activity:101300013,Pioneer Project,limited,20,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1634,activity:100900025,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1635,activity:100900026,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1636,activity:101500007,Lollo Campaign: Ice Savior,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1637,activity:102400003,Septimont Weather Forecast,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1638,activity:103400007,Tactical Hologram: Phantom Pain,limited,8,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1639,activity:101600009,Whispers of the Waves,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1640,activity:100100015,Gifts of Amber,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1641,activity:100100016,Gifts of Ink Song,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1642,activity:106700001,Search for It! Bits of Lahai-Roi,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1643,activity:102000004,Gifts of the Moon Roamer,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1644,activity:101300014,Pioneer Project,limited,20,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1645,activity:100805004,Tactical Simulacra: Off Tune,limited,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1646,activity:100900027,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1647,activity:100900028,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1648,activity:103500003,Glamour Couture,limited,6,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1649,activity:106900001,New Update Highlight,limited,10,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1650,activity:107000001,Peaks of Prestige: Rekindled Duel,permanent,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1651,activity:107300001,Signs of a Silent Star,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1652,activity:107200001,Peaks of Prestige: Rekindled Duel,permanent,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1653,activity:107100001,Whispers Between Stars,permanent,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1654,activity:100700029,Bountiful Crescendo,limited,22,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1655,activity:100700030,Chord Cleansing,limited,23,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1656,activity:104600003,Back to Solaris,limited,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1657,activity:107400001,Persona Sonic,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1658,activity:107500001,Operation: Frontier Renewal,permanent,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1659,activity:102700005,Beyond the Waves: Lahai-Roi,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1660,activity:101300015,Pioneer Project,limited,20,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1661,activity:103300002,Test Server Training Ground,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1662,activity:103400008,Tactical Hologram: Phantom Pain,limited,8,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1663,activity:107600001,Lahai-Roi Pioneers,permanent,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1664,activity:107900001,Where Stars Cascade Down,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1665,activity:100100017,Gifts of Freshers Week,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1666,activity:103000004,Next Stop: Lahai-Roi,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1667,activity:103600007,Fantasies of the Thousand Gateways,limited,8,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1668,activity:101600010,Capturing Starlight,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1669,activity:100900029,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1670,activity:100900030,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1671,activity:103400009,Tactical Hologram: Synchronization,limited,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1672,activity:108000001,Herald of New Tides,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1673,activity:100700031,Bountiful Crescendo,limited,22,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1674,activity:100700032,Chord Cleansing,limited,23,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1675,activity:108200001,Startorch Racing,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1676,activity:107800001,Full Throttle! Bolt & Blitz!,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1677,activity:101300016,Pioneer Project,limited,20,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1678,activity:108400001,Veins of the Frostlands,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1679,activity:100100018,Gifts of Soft Snow,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1680,activity:108500001,TERM-X: Outreach,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1681,activity:107500002,Startorch for You,permanent,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1682,activity:107900002,Rein Back! Migration Mayhem!,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1683,activity:101500008,Lollo Campaign: Implementation,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1684,activity:103300003,Blade Hunter: Wilderness,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1685,activity:108300001,Moonlit Path,limited,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1686,activity:101300017,Pioneer Project,limited,20,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1687,activity:100900031,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1688,activity:100900032,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1689,activity:101300018,Unfrozen Traces,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1690,activity:106900002,New Update Highlight,limited,10,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1691,activity:103400010,Tactical Hologram: Synchronization,limited,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1692,activity:103400011,Tactical Hologram: Synchronization,limited,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1693,activity:107500003,Into the Land of Paradox,permanent,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1694,activity:106900003,New Update Highlight,limited,10,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1695,activity:101300019,Pioneer Project,limited,20,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1696,activity:108400002,Into the Memory Program!,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1697,activity:106900004,New Update Highlight,limited,10,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1698,activity:101300021,Pioneer Project,limited,20,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1699,activity:103400012,Tactical Hologram: Synchronization,limited,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1700,activity:103500004,Glamour Couture,limited,6,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1701,activity:106900005,New Update Highlight,limited,10,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1702,activity:103400013,Tactical Hologram: Synchronization,limited,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1703,activity:103600008,Fantasies of the Thousand Gateways,limited,8,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1704,activity:100900037,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1705,activity:101300022,Pioneer Project,limited,20,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1706,activity:110500001,A Glimpse of Xuanfang,permanent,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1707,activity:100900038,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1708,activity:100900039,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1709,activity:103000099,"Next Stop: ""Night City""",limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1710,activity:103000035,Next Stop: Mengzhou,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1711,activity:110600001,Mingshen Notices,permanent,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1712,activity:110700001,Pioneer Experience,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1713,activity:100200001,New Voyage Login,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1714,activity:111000001,A New Voyage,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1715,activity:110900001,New Voyage Goals,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1716,activity:111100001,Gifts of New Adventure,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1717,activity:110800001,New Voyage Aid,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1718,activity:103400014,Tactical Hologram: Simulation,limited,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1719,activity:108400003,In Search of Lost Jade,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1720,activity:101300023,Pioneer Project,limited,20,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1721,activity:100900040,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1722,activity:100900041,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1723,activity:103500005,Glamour Couture,limited,6,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1724,activity:111500001,Cloud Riders,limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1725,activity:106900006,New Update Highlight,limited,10,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1726,activity:101300024,Pioneer Project,limited,20,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1727,activity:100900042,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1728,activity:100900043,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1729,activity:106900007,New Update Highlight,limited,10,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1730,activity:104600005,Back to Solaris,limited,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1731,activity:103400015,Tactical Hologram: Simulation,limited,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1732,activity:108300002,Moonlit Path,limited,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1733,activity:101300026,Pioneer Project,limited,20,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1734,activity:100900044,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1735,activity:100900045,Ascendant Aces,limited,47,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1736,activity:106900008,New Update Highlight,limited,10,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1737,activity:101000012,"Moonlike Heart, Mortal Longing",limited,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1738,activity:106900009,New Update Highlight,limited,10,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1739,gacha:1,Encore · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1740,gacha:2,Encore · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1741,gacha:31,Lustrous Razor · Weapon Convene,banner,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1742,gacha:32,Emerald of Genesis · Weapon Convene,banner,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1743,gacha:33,Static Mist · Weapon Convene,banner,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1744,gacha:34,Abyss Surges · Weapon Convene,banner,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1745,gacha:35,Cosmic Ripples · Weapon Convene,banner,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1746,gacha:100001,Jiyan · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1747,gacha:100002,Yinlin · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1748,gacha:200001,Verdant Summit · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1749,gacha:200002,Stringmaster · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1750,gacha:41,Jianxin · Resonator Convene,banner,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1751,gacha:42,Calcharo · Resonator Convene,banner,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1752,gacha:43,Verina · Resonator Convene,banner,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1753,gacha:44,Lingyang · Resonator Convene,banner,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1754,gacha:45,Encore · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1755,gacha:100003,Jinhsi · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1756,gacha:100004,Changli · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1757,gacha:200003,Ages of Harvest · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1758,gacha:200004,Blazing Brilliance · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1759,gacha:51,Jianxin · Resonator Convene,banner,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1760,gacha:52,Calcharo · Resonator Convene,banner,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1761,gacha:53,Verina · Resonator Convene,banner,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1762,gacha:54,Lingyang · Resonator Convene,banner,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1763,gacha:55,Encore · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1764,gacha:100005,Zhezhi · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1765,gacha:100006,Xiangli Yao · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1766,gacha:200005,Rime-Draped Sprouts · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1767,gacha:200006,Verity's Handle · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1768,gacha:100007,Shorekeeper · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1769,gacha:100008,Jiyan · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1770,gacha:200007,Stellar Symphony · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1771,gacha:200008,Verdant Summit · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1772,gacha:100009,Camellya · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1773,gacha:100010,Yinlin · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1774,gacha:200009,Red Spring · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1775,gacha:200010,Stringmaster · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1776,gacha:100011,Xiangli Yao · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1777,gacha:200011,Verity's Handle · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1778,gacha:100012,Carlotta · Resonator Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1779,gacha:100013,Zhezhi · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1780,gacha:100014,Roccia · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1781,gacha:100015,Jinhsi · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1782,gacha:200012,The Last Dance · Weapon Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1783,gacha:200013,Rime-Draped Sprouts · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1784,gacha:200014,Tragicomedy · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1785,gacha:200015,Ages of Harvest · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1786,gacha:100016,Phoebe · Resonator Convene,banner,6,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1787,gacha:100017,Brant · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1788,gacha:100018,Changli · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1789,gacha:200016,Luminous Hymn · Weapon Convene,banner,6,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1790,gacha:200017,Unflickering Valor · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1791,gacha:200018,Blazing Brilliance · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1792,gacha:100019,Cantarella · Resonator Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1793,gacha:100020,Shorekeeper · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1794,gacha:100021,Camellya · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1795,gacha:200019,Whispers of Sirens · Weapon Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1796,gacha:200020,Stellar Symphony · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1797,gacha:200021,Red Spring · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1798,gacha:100022,Zani · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1799,gacha:100023,Ciaccona · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1800,gacha:200022,Blazing Justice · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1801,gacha:200023,Woodland Aria · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1802,gacha:1000241,Jiyan · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1803,gacha:1000242,Yinlin · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1804,gacha:1000243,Zhezhi · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1805,gacha:1000244,Xiangli Yao · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1806,gacha:1000245,Phoebe · Resonator Convene,banner,6,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1807,gacha:1000251,Jinhsi · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1808,gacha:1000252,Changli · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1809,gacha:1000253,Carlotta · Resonator Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1810,gacha:1000254,Roccia · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1811,gacha:1000255,Brant · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1812,gacha:2000241,Verdant Summit · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1813,gacha:2000242,Stringmaster · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1814,gacha:2000243,Rime-Draped Sprouts · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1815,gacha:2000244,Verity's Handle · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1816,gacha:2000245,Luminous Hymn · Weapon Convene,banner,6,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1817,gacha:2000251,Ages of Harvest · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1818,gacha:2000252,Blazing Brilliance · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1819,gacha:2000253,The Last Dance · Weapon Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1820,gacha:2000254,Tragicomedy · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1821,gacha:2000255,Unflickering Valor · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1822,gacha:100026,Cartethyia · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1823,gacha:100027,Lupa · Resonator Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1824,gacha:200026,Defier's Thorn · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1825,gacha:200027,Wildfire Mark · Weapon Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1826,gacha:1000281,Shorekeeper · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1827,gacha:1000282,Camellya · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1828,gacha:1000283,Jinhsi · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1829,gacha:1000284,Changli · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1830,gacha:1000285,Jiyan · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1831,gacha:1000286,Yinlin · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1832,gacha:1000287,Zhezhi · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1833,gacha:1000288,Xiangli Yao · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1834,gacha:2000281,Stellar Symphony · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1835,gacha:2000282,Red Spring · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1836,gacha:2000283,Ages of Harvest · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1837,gacha:2000284,Blazing Brilliance · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1838,gacha:2000285,Verdant Summit · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1839,gacha:2000286,Stringmaster · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1840,gacha:2000287,Rime-Draped Sprouts · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1841,gacha:2000288,Verity's Handle · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1842,gacha:100029,Phrolova · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1843,gacha:100030,Roccia · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1844,gacha:200029,Lethean Elegy · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1845,gacha:200030,Tragicomedy · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1846,gacha:100031,Brant · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1847,gacha:100032,Cantarella · Resonator Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1848,gacha:200031,Unflickering Valor · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1849,gacha:200032,Whispers of Sirens · Weapon Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1850,gacha:100033,Augusta · Resonator Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1851,gacha:100034,Carlotta · Resonator Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1852,gacha:200033,Thunderflare Dominion · Weapon Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1853,gacha:200034,The Last Dance · Weapon Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1854,gacha:100035,Iuno · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1855,gacha:100036,Ciaccona · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1856,gacha:200035,Moongazer's Sigil · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1857,gacha:200036,Woodland Aria · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1858,gacha:100037,Galbrena · Resonator Convene,banner,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1859,gacha:100038,Lupa · Resonator Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1860,gacha:200037,Lux & Umbra · Weapon Convene,banner,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1861,gacha:200038,Wildfire Mark · Weapon Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1862,gacha:100039,Qiuyuan · Resonator Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1863,gacha:100040,Zani · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1864,gacha:200039,Emerald Sentence · Weapon Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1865,gacha:200040,Blazing Justice · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1866,gacha:100041,Shorekeeper · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1867,gacha:200041,Stellar Symphony · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1868,gacha:100042,Chisa · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1869,gacha:100043,Phoebe · Resonator Convene,banner,6,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1870,gacha:200042,Kumokiri · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1871,gacha:200043,Luminous Hymn · Weapon Convene,banner,6,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1872,gacha:100044,Phrolova · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1873,gacha:100045,Cantarella · Resonator Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1874,gacha:200044,Lethean Elegy · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1875,gacha:200045,Whispers of Sirens · Weapon Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1876,gacha:3031,Radiance Cleaver · Weapon Convene,banner,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1877,gacha:3032,Laser Shearer · Weapon Convene,banner,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1878,gacha:3033,Phasic Homogenizer · Weapon Convene,banner,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1879,gacha:3034,Pulsation Bracer · Weapon Convene,banner,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1880,gacha:3035,Boson Astrolabe · Weapon Convene,banner,1,2,0,2,0,0,1,0,0,catalog_only,no_same_title
+1881,gacha:100046,Lynae · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1882,gacha:100047,Cartethyia · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1883,gacha:100048,Ciaccona · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1884,gacha:200046,Spectrum Blaster · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1885,gacha:200047,Defier's Thorn · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1886,gacha:200048,Woodland Aria · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1887,gacha:100049,Mornye · Resonator Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1888,gacha:100050,Augusta · Resonator Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1889,gacha:100051,Iuno · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1890,gacha:200049,Starfield Calibrator · Weapon Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1891,gacha:200050,Thunderflare Dominion · Weapon Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1892,gacha:200051,Moongazer's Sigil · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1893,gacha:100052,Aemeath · Resonator Convene,banner,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1894,gacha:100053,Chisa · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1895,gacha:100054,Lupa · Resonator Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1896,gacha:200052,Everbright Polestar · Weapon Convene,banner,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1897,gacha:200053,Kumokiri · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1898,gacha:200054,Wildfire Mark · Weapon Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1899,gacha:100055,Luuk Herssen · Resonator Convene,banner,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1900,gacha:100056,Galbrena · Resonator Convene,banner,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1901,gacha:200055,Daybreaker's Spine · Weapon Convene,banner,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1902,gacha:200056,Lux & Umbra · Weapon Convene,banner,2,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1903,gacha:1000771,Jinhsi · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1904,gacha:1000772,Changli · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1905,gacha:1000773,Zhezhi · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1906,gacha:1000774,Yinlin · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1907,gacha:1000775,Jiyan · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1908,gacha:1000776,Xiangli Yao · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1909,gacha:2000771,Ages of Harvest · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1910,gacha:2000772,Blazing Brilliance · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1911,gacha:2000773,Rime-Draped Sprouts · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1912,gacha:2000774,Stringmaster · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1913,gacha:2000775,Verdant Summit · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1914,gacha:2000776,Verity's Handle · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1915,gacha:1000781,Cartethyia · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1916,gacha:1000782,Ciaccona · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1917,gacha:1000783,Phrolova · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1918,gacha:1000784,Augusta · Resonator Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1919,gacha:1000785,Iuno · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1920,gacha:1000786,Zani · Resonator Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1921,gacha:1000787,Phoebe · Resonator Convene,banner,6,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1922,gacha:1000788,Brant · Resonator Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1923,gacha:2000781,Defier's Thorn · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1924,gacha:2000782,Woodland Aria · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1925,gacha:2000783,Lethean Elegy · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1926,gacha:2000784,Thunderflare Dominion · Weapon Convene,banner,3,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1927,gacha:2000785,Moongazer's Sigil · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1928,gacha:2000786,Blazing Justice · Weapon Convene,banner,4,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1929,gacha:2000787,Luminous Hymn · Weapon Convene,banner,6,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1930,gacha:2000788,Unflickering Valor · Weapon Convene,banner,5,2,0,2,0,0,1,0,0,catalog_only,same_title_unproven
+1931,activity:111700001,Second Coming of Solaris: Unwritten Dreams,permanent,1,2,1,1,1,0,1,1,0,scheduled_and_catalog,no_same_title
+1932,activity:100700045,Bountiful Crescendo,limited,22,1,0,1,0,0,1,0,0,catalog_only,same_title_unproven
+1933,activity:100700046,Chord Cleansing,limited,23,1,0,1,0,0,1,0,0,catalog_only,same_title_unproven
+1934,activity:112000001,Dreamfield Odyssey,limited,1,1,0,1,0,0,1,0,0,catalog_only,no_same_title
+1935,activity:109100002,Lahai-Roi Blocks: Turnabout,limited,1,1,0,1,0,0,1,0,0,catalog_only,no_same_title
+1936,activity:103400016,Tactical Hologram: Simulation,limited,3,1,0,1,0,0,1,0,0,catalog_only,same_title_unproven
+1937,activity:101500010,Lollo Campaign: Groundwork,limited,1,1,0,1,0,0,1,0,0,catalog_only,no_same_title
+1938,activity:100900046,Ascendant Aces,limited,47,1,0,1,0,0,1,0,0,catalog_only,same_title_unproven
+1939,activity:100900047,Ascendant Aces,limited,47,1,0,1,0,0,1,0,0,catalog_only,same_title_unproven
+1940,activity:103500006,Glamour Couture,limited,6,1,0,1,0,0,1,0,0,catalog_only,same_title_unproven
+1941,activity:101300027,Pioneer Project,limited,20,1,0,1,0,0,1,0,0,catalog_only,same_title_unproven
+1942,activity:100100026,Gifts of Bygone Dreams,limited,1,2,1,1,1,0,1,1,0,scheduled_and_catalog,no_same_title
+1943,activity:100100027,Whither the Wind,limited,1,1,0,1,0,0,1,0,0,catalog_only,no_same_title
+1944,activity:106900010,New Update Highlight,limited,10,1,0,1,0,0,1,0,0,catalog_only,same_title_unproven
+1945,gacha:100090,Lily · Resonator Convene,banner,1,2,1,1,1,0,1,1,0,scheduled_and_catalog,no_same_title
+1946,gacha:100091,Sigrika · Resonator Convene,banner,2,1,0,1,0,0,1,0,0,catalog_only,same_title_unproven
+1947,gacha:100092,Qiuyuan · Resonator Convene,banner,3,1,0,1,0,0,1,0,0,catalog_only,same_title_unproven
+1948,gacha:200090,Lullaby · Weapon Convene,banner,1,2,1,1,1,0,1,1,0,scheduled_and_catalog,no_same_title
+1949,gacha:200091,Solsworn Ciphers · Weapon Convene,banner,2,1,0,1,0,0,1,0,0,catalog_only,same_title_unproven
+1950,gacha:200092,Emerald Sentence · Weapon Convene,banner,3,1,0,1,0,0,1,0,0,catalog_only,same_title_unproven
+1951,gacha:100093,Yangyang: Xuanling · Resonator Convene,banner,2,1,0,1,0,0,1,0,0,catalog_only,same_title_unproven
+1952,gacha:100094,Suisui · Resonator Convene,banner,2,1,0,1,0,0,1,0,0,catalog_only,same_title_unproven
+1953,gacha:100095,Hiyuki · Resonator Convene,banner,3,1,0,1,0,0,1,0,0,catalog_only,same_title_unproven
+1954,gacha:200093,Azure Oath · Weapon Convene,banner,2,1,0,1,0,0,1,0,0,catalog_only,same_title_unproven
+1955,gacha:200094,Firstlight's Herald · Weapon Convene,banner,2,1,0,1,0,0,1,0,0,catalog_only,same_title_unproven
+1956,gacha:200095,Frostburn · Weapon Convene,banner,3,1,0,1,0,0,1,0,0,catalog_only,same_title_unproven
+1957,gacha:1000961,Camellya · Resonator Convene,banner,4,2,1,1,1,1,1,1,0,scheduled_and_catalog,notice_pool_proven
+1958,gacha:1000962,Roccia · Resonator Convene,banner,4,2,1,1,1,1,1,1,0,scheduled_and_catalog,notice_pool_proven
+1959,gacha:1000963,Phoebe · Resonator Convene,banner,6,2,1,1,1,1,1,1,0,scheduled_and_catalog,notice_pool_proven
+1960,gacha:1000964,Brant · Resonator Convene,banner,5,2,1,1,1,1,1,1,0,scheduled_and_catalog,notice_pool_proven
+1961,gacha:2000961,Red Spring · Weapon Convene,banner,4,2,1,1,1,1,1,1,0,scheduled_and_catalog,notice_pool_proven
+1962,gacha:2000962,Tragicomedy · Weapon Convene,banner,4,2,1,1,1,1,1,1,0,scheduled_and_catalog,notice_pool_proven
+1963,gacha:2000963,Luminous Hymn · Weapon Convene,banner,6,2,1,1,1,1,1,1,0,scheduled_and_catalog,notice_pool_proven
+1964,gacha:2000964,Unflickering Valor · Weapon Convene,banner,5,2,1,1,1,1,1,1,0,scheduled_and_catalog,notice_pool_proven
