@@ -49,6 +49,15 @@ def test_equal_names_never_bind_unrelated_events():
     ])] == [1, 2]
 
 
+def test_canonical_presentation_wins_over_an_alias_in_the_same_capture():
+    rows = [{"id": identity, "canonical_event_id": 8, "occurrence_id": None,
+             "catalog_version": "3.8.0", "title": title}
+            for identity, title in [(7, "Internal activity"), (8, "Public guide")]]
+    result, = catalog_rows(rows)
+    assert result["id"] == result["source_event_id"] == 8
+    assert result["title"] == "Public guide"
+
+
 def test_manually_edited_capture_is_a_real_independent_period_even_without_dates():
     assert is_catalog_capture("client:3.8.0", None, None, {})
     assert not is_catalog_capture("client:3.8.0", None, None, {"schedule_source": "manual"})

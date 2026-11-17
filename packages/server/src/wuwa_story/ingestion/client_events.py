@@ -46,24 +46,27 @@ def _same_authored_capture(existing, incoming):
             and (not old_checksum or old_checksum == new_checksum))
 
 
-def _ordinary_banner_role(source_id, capture):
+def _ordinary_banner_subject(source_id, capture):
     if not source_id.startswith("gacha:") or capture.get("table") != "GachaViewInfo":
         return None
     featured = capture.get("featured_ids")
-    if capture.get("gacha_type") != 2 or not isinstance(featured, list) or len(featured) != 1:
+    kind = capture.get("gacha_type")
+    if kind not in (2, 3) or not isinstance(featured, list) or len(featured) != 1:
         return None
-    return featured[0] if type(featured[0]) is int and featured[0] > 0 else None
+    return (kind, featured[0]) if type(featured[0]) is int and featured[0] > 0 else None
 
 
-def _ordinary_binding_role(event):
+def _ordinary_binding_subject(event):
     evidence = getattr(event, "canonical_evidence", None) or {}
     if not isinstance(evidence, dict):
         return None
     reference = evidence.get("reference", "")
-    prefix = "GachaViewInfo:type2:role:"
-    if evidence.get("basis") in {"game_source", "catalog_identity_policy"} and isinstance(reference, str) and reference.startswith(prefix):
-        suffix = reference.removeprefix(prefix)
-        return int(suffix) if suffix.isdecimal() else None
+    if evidence.get("basis") in {"game_source", "catalog_identity_policy"} and isinstance(reference, str):
+        for kind, subject in ((2, "role"), (3, "weapon")):
+            prefix = f"GachaViewInfo:type{kind}:{subject}:"
+            if reference.startswith(prefix):
+                suffix = reference.removeprefix(prefix)
+                return (kind, int(suffix)) if suffix.isdecimal() else None
     return None
 
 
@@ -71,14 +74,14 @@ async def _bind_ordinary_banners(session, events, presentations, existing):
     groups = {}
     imported = {event.id for event in events}
     for event, capture in zip(events, presentations, strict=True):
-        if role := _ordinary_banner_role(event.source_id, capture):
+        if role := _ordinary_banner_subject(event.source_id, capture):
             groups.setdefault(role, []).append(event)
     # A new patch need not retain the previous view ID. Its historical event is
     # still the canonical catalog subject; the new view is another source record.
     for event in existing:
         if event.id not in imported and event.source == CLIENT_SOURCE:
             capture = (event.source_data or {}).get("client") or {}
-            if role := _ordinary_banner_role(event.source_id, capture):
+            if role := _ordinary_banner_subject(event.source_id, capture):
                 groups.setdefault(role, []).append(event)
     groups = {role: rows for role, rows in groups.items() if len(rows) > 1}
     if not groups:
@@ -91,7 +94,7 @@ async def _bind_ordinary_banners(session, events, presentations, existing):
         history.setdefault(member.event_id, []).append(member.client_capture)
     for role, rows in groups.items():
         if any(not history.get(event.id) or any(
-            not isinstance(capture, dict) or _ordinary_banner_role(event.source_id, capture) != role
+            not isinstance(capture, dict) or _ordinary_banner_subject(event.source_id, capture) != role
             for capture in history[event.id]) for event in rows):
             continue
         row_ids = {event.id for event in rows}
@@ -107,13 +110,16 @@ async def _bind_ordinary_banners(session, events, presentations, existing):
         for event in rows:
             if event.id in candidates:
                 event.canonical_event_id = root
-                event.canonical_evidence = {"basis": "catalog_identity_policy", "reference": f"GachaViewInfo:type2:role:{role}"}
+                kind, identifier = role
+                subject = "role" if kind == 2 else "weapon"
+                event.canonical_evidence = {"basis": "catalog_identity_policy",
+                    "reference": f"GachaViewInfo:type{kind}:{subject}:{identifier}"}
 
 
 def _selectable_pool(source_id, capture):
     """Validate compiler-produced proof, never infer parent IDs from view IDs."""
     if (not source_id.startswith("gacha:") or capture.get("table") != "GachaViewInfo"
-            or capture.get("gacha_type") not in {7, 8, 9, 10, 13, 14}):
+            or capture.get("gacha_type") not in {5, 6, 7, 8, 9, 10, 13, 14}):
         return None
     proof = capture.get("gacha_pool_proof")
     if not isinstance(proof, dict):
@@ -140,7 +146,7 @@ def _selectable_binding(event):
     members = evidence.get("members")
     if (not isinstance(reference, str) or not reference.startswith("GachaPool:")
             or not reference.removeprefix("GachaPool:").isdecimal()
-            or evidence.get("gacha_type") not in {7, 8, 9, 10, 13, 14}
+            or evidence.get("gacha_type") not in {5, 6, 7, 8, 9, 10, 13, 14}
             or not isinstance(members, list) or any(type(item) is not int for item in members)):
         return None
     return (int(reference.removeprefix("GachaPool:")), evidence["gacha_type"], tuple(members))
@@ -231,7 +237,7 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
     automatic_children = {}
     selectable_children = {}
     for item in existing:
-        if role := _ordinary_binding_role(item):
+        if role := _ordinary_binding_subject(item):
             automatic_children.setdefault(item.canonical_event_id, set()).add(role)
         if binding := _selectable_binding(item):
             selectable_children.setdefault(item.canonical_event_id, set()).add(binding)
@@ -248,9 +254,9 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
         event = indexed.get(client_identity(key)) or legacy.get(client_identity(key))
         if event:
             roles = set(automatic_children.get(event.id, ()))
-            if role := _ordinary_binding_role(event):
+            if role := _ordinary_binding_subject(event):
                 roles.add(role)
-            if roles and roles != {_ordinary_banner_role(client_identity(key), record)}:
+            if roles and roles != {_ordinary_banner_subject(client_identity(key), record)}:
                 raise ValueError("Imported source conflicts with an existing canonical banner binding")
             bindings = set(selectable_children.get(event.id, ()))
             if binding := _selectable_binding(event):
@@ -343,6 +349,9 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
             member.client_capture = capture
         else:
             updated = dict(member.client_capture)
+            if any(updated.get(field) != capture.get(field) for field in ("resources", "artwork")):
+                for field in _ENRICHMENT_FIELDS - {"_capture_provenance"}:
+                    updated.pop(field, None)
             for field in _DERIVED_FIELDS:
                 if field == "compiler_checksum" and not capture.get(field):
                     continue

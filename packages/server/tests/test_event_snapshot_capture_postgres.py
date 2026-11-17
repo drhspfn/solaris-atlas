@@ -4,7 +4,8 @@ import os
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import cast, select, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -15,8 +16,9 @@ from wuwa_story.db.models.game_events import (
     GameEventSnapshot,
     GameEventSnapshotMember,
 )
-from wuwa_story.db.repositories.event_browsing import read_event_runs
+from wuwa_story.db.repositories.event_browsing import _capture_enrichment, read_event_runs
 from wuwa_story.events.domain import CLIENT_SOURCE
+from wuwa_story.read_models.refresh import _event_snapshot_ids
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("WUWA_TEST_DATABASE_URL"), reason="Isolated PostgreSQL required"
@@ -24,7 +26,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.mark.asyncio
-async def test_snapshot_capture_applies_to_events_and_periods_without_mutating_current(console_database):
+async def test_snapshot_capture_applies_to_events_and_periods_without_mutating_current(console_database, monkeypatch):
     engine = create_async_engine(console_database, poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     old = {
@@ -58,6 +60,7 @@ async def test_snapshot_capture_applies_to_events_and_periods_without_mutating_c
                 GameEventSnapshotMember(version="3.8.0", event_id=event_id, client_capture=old),
                 GameEventSnapshotMember(version="3.8.0", event_id=no_period_id, client_capture=old),
                 GameEventOccurrence(event_id=event_id, source_occurrence_id="manual:known", server="europe",
+                                    game_version="3.7",
                                     starts_at=datetime(2026, 11, 11, tzinfo=UTC),
                                     ends_at=datetime(2026, 12, 1, tzinfo=UTC),
                                     source_data={"client": current, "schedule_source": "manual"}),
@@ -71,6 +74,13 @@ async def test_snapshot_capture_applies_to_events_and_periods_without_mutating_c
             dirty = await db.scalars(text("SELECT snapshot_key FROM ops.read_projection_dirty "
                                           "WHERE kind='game_event' AND entity_id=:identity"), {"identity": event_id})
             assert {"current", "3.8.0"} <= set(dirty)
+            assert set(await db.scalars(_event_snapshot_ids("3.8.0"))) == {event_id, no_period_id}
+            discovered = {**old, "prefab_artwork": [{"path": "/old-discovered"}]}
+            extra = await db.scalar(select(_capture_enrichment(cast(old, JSONB), cast(discovered, JSONB))))
+            assert extra == {"prefab_artwork": discovered["prefab_artwork"]}
+            for changed in ({"download_id": "different"}, {"resources": [{"path": "/different-root"}]}):
+                assert await db.scalar(select(_capture_enrichment(
+                    cast(old, JSONB), cast({**discovered, **changed}, JSONB)))) == {}
             for summary in (True, False):
                 rows = await read_event_runs(db, server="europe", version="3.8.0", summary=summary)
                 periods = [(event, occurrence) for event, occurrence in rows if event.id == event_id]
@@ -104,6 +114,23 @@ async def test_snapshot_capture_applies_to_events_and_periods_without_mutating_c
                     if occurrence is not None:
                         assert occurrence.source_data["client"]["download_id"] == "capture-39"
                         assert occurrence.source_data["client"]["locales"]["en"]["title"] == "Current presentation"
+
+            from wuwa_story.db.repositories.event_browsing import SqlAlchemyEventRepository
+            from wuwa_story.events.service import EventService
+            from wuwa_story.read_models import source_sections
+
+            async def browse(server, kind, version, locale, session, **options):
+                service = EventService(SqlAlchemyEventRepository(session, "test"),
+                                       lambda key: "https://example.test/" + key, lambda url: url)
+                return await service.browse(server, kind, version, locale, **options)
+
+            monkeypatch.setattr(source_sections, "browse_events", browse)
+            payload = await source_sections._event_payload(db, event_id, "en", "3.8.0")
+            assert len(payload["occurrences"]) == len(payload["unversioned_occurrences"]) == 1
+            assert payload["occurrences"][0]["game_version"] == "3.7"
+            assert payload["unversioned_occurrences"][0]["starts_at"] is None
+            assert all(row["catalog_version"] == "3.8.0" for row in [
+                payload["event"], *payload["occurrences"], *payload["unversioned_occurrences"]])
 
         # Re-read persisted JSON in a fresh session to exclude identity-map effects.
         async with factory() as db:

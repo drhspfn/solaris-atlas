@@ -34,6 +34,18 @@ from wuwa_story.events.domain import PREVIEW_ROLES as _PREVIEW_ROLES
 from wuwa_story.events.selectable_pools import proven_member_ids
 
 
+def _capture_enrichment(capture, candidate):
+    same_source = (candidate["download_id"].as_string() == capture["download_id"].as_string()) & (
+        candidate["asset_version"].as_string() == capture["asset_version"].as_string())
+    for field in ("resources", "artwork"):
+        same_source &= candidate[field].is_not_distinct_from(capture[field])
+    extra = func.jsonb_strip_nulls(func.jsonb_build_object(*[
+        value for field in ("prefab_artwork", "prefab_spine_resources", "missing_resources", "animation_import")
+        for value in (field, candidate[field])
+    ]), type_=JSONB)
+    return case((same_source, extra), else_=cast({}, JSONB))
+
+
 async def read_event_runs(
     session: AsyncSession, *, server: str, kind: str | None = None,
     version: str | None = None, locale: str = "en", summary: bool = False,
@@ -79,8 +91,12 @@ async def read_event_runs(
             names.append(fields)
             source = model.source_data
             if version:
+                captured = GameEventSnapshotMember.client_capture
+                client = captured.op("||")(_capture_enrichment(captured, source["client"]))
+                if model is GameEventOccurrence:
+                    client = client.op("||")(_capture_enrichment(captured, GameEvent.source_data["client"]))
                 source = func.jsonb_set(func.coalesce(source, cast({}, JSONB)),
-                    cast(literal("{client}"), ARRAY(Text)), GameEventSnapshotMember.client_capture, type_=JSONB)
+                    cast(literal("{client}"), ARRAY(Text)), client, type_=JSONB)
             columns.extend(
                 (_summary_source(source, locale) if summary else source) if name == "source_data"
                 else getattr(model, name) for name in fields)

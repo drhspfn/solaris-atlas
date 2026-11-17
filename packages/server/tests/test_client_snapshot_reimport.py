@@ -248,6 +248,9 @@ async def test_recompile_corrects_derived_resources_without_rewriting_period(dat
         saved_period = dict(period.source_data)
         event = await session.get(GameEvent, 1)
         event.source_data = {"client": {**event.source_data["client"], "prefab_artwork": ["stale"]}}
+        member = await session.get(GameEventSnapshotMember, ("3.8.0", 1))
+        member.client_capture = {**member.client_capture, "prefab_artwork": ["stale"]}
+        await session.flush()
         await store_client_events(session, {"100": corrected, "101": second}, "3.8.0", "pinned")
         capture = (await session.get(GameEventSnapshotMember, ("3.8.0", 1))).client_capture
         assert capture["resources"] == [] and capture["artwork"] == []
@@ -255,6 +258,7 @@ async def test_recompile_corrects_derived_resources_without_rewriting_period(dat
         assert capture["source_checksum"] == "a" * 64
         assert period.source_data == saved_period
         assert "prefab_artwork" not in event.source_data["client"]
+        assert "prefab_artwork" not in capture
         await store_client_events(session, {"100": corrected, "101": second}, "3.8.0", "pinned")
         with pytest.raises(ValueError, match="capture differs"):
             await store_client_events(session, {"100": {**corrected, "source_checksum": "d" * 64},
@@ -354,9 +358,10 @@ async def test_import_preserves_manual_period_with_unknown_dates(database):
 
 
 @pytest.mark.asyncio
-async def test_new_patch_without_old_view_keeps_existing_event_identity(database):
-    banner = {**record("Ordinary banner"), "table": "GachaViewInfo", "gacha_type": 2,
-              "featured_ids": [1210], "event_kind": "banner"}
+@pytest.mark.parametrize("kind,subject", [(2, 1210), (3, 21010016)])
+async def test_new_patch_without_old_view_keeps_existing_event_identity(database, kind, subject):
+    banner = {**record("Ordinary banner"), "table": "GachaViewInfo", "gacha_type": kind,
+              "featured_ids": [subject], "event_kind": "banner"}
     async with database() as session:
         head = await session.get(GameEventSnapshot, "3.8.0")
         head.complete = False
