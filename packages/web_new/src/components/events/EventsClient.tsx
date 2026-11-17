@@ -295,7 +295,7 @@ export function EventsPage({
       </section>
       {version && (
         <p className="events-calendar-help">
-          This version selects the event catalog. Names and artwork reflect current data or recorded runs.
+          Names and artwork come from the selected client snapshot. Recorded periods belong to the event.
         </p>
       )}
       <details className="events-picker">

@@ -63,16 +63,18 @@ have separate task diagnostics. They are not described as unpublished future art
 
 ## Dates and version meaning
 
-The calendar defaults to all known events. `GET /events/snapshots` lists client
+The catalog defaults to all known events; the calendar initially shows the current
+patch window. `GET /events/snapshots` lists client
 asset versions with a complete imported catalog; `GET /events?version=3.8.0`
 selects membership in that exact catalog and retains the known schedule history
 of its members. A two-part version is accepted only when exactly one complete
 snapshot matches; an ambiguous version returns 409 and an unavailable snapshot
-returns 404. The version selects membership only; presentation and artwork
-come from current data or recorded occurrences, not a preserved version-specific
-presentation. Versioned responses state this as `snapshot_presentation`.
-When the current event projection is enabled, versioned lists filter its entries
-by snapshot membership and return 503 if any member has not yet been projected.
+returns 404. A selected version reads its preserved member capture and versioned
+projection, including detail requests. It never substitutes the current catalog
+when an old capture is missing. Responses report
+`snapshot_presentation: versioned_catalog_capture` and return 503 until every
+member is projected. Current notice artwork cannot replace missing snapshot
+artwork; a pinned notice revision may still describe a recorded period.
 Otherwise they use source reads.
 
 Migration 0036 creates empty snapshot tables; it does not infer old catalog
@@ -207,11 +209,23 @@ and conflicting downloads. Agreement between retained copies is not independent
 verification against the original client export. No dates or memberships are
 created by this backfill.
 
-The current API contract is unchanged. A subsequent projection transition must
-read the versioned member capture, select current or period-specific presentation,
-and suppress an old catalog-only placeholder only when its relationship to a
-recorded period is proven. Conflicting captures and actual recurring periods must
-remain visible. Rebuild projections incrementally and verify list, calendar and
-detail parity before relying on the new source. Rolling back application code is
+Readers preserve the selected capture and every actual period. A catalog-only
+`client:<version>` record is presentation metadata, not a period: its public
+`occurrence_id` is null. Manual periods retain their IDs even when both endpoints
+are unknown, including manually edited former catalog records. Snapshot member
+writes invalidate both current and exact-version projections. Rebuild projections
+incrementally and verify list, calendar and detail parity. Rolling back application code is
 compatible with the additive column; dropping it would discard captures written
 since deployment and requires a backup or export first.
+
+Migration 0039 adds explicit canonical bindings between retained source records.
+One public event ID owns arbitrarily many periods; dates never establish event
+identity. Ordinary type-2 resonator banners use an explicit catalog policy keyed
+by featured role, including when the next patch replaces the old view ID.
+Selectable pools instead require the exact same-capture
+`GachaViewInfo.Id → GachaPool.Id → Gacha.Id` chain and the complete typed member
+set. Neither equal names nor equal/null dates establish that relationship.
+Original source IDs, period IDs and version captures remain stored. A documented
+manual alias may be added through `bind_event_alias`; implicit rebinding and
+nested aliases are rejected. Back up the binding and capture columns before a
+schema downgrade, which would discard them.
