@@ -223,6 +223,9 @@ async def test_new_runs_review_and_resample_before_publication_and_replay(runtim
     report = next(ref.metadata_json for ref in db.refs if ref.reference_type == "cutscene_visual_description")
     assert len(requests) == 3
     assert report["temporal_review_version"] == 1 and report["reviewed_atlases"]
+    assert report["analysis_metrics"]["resample_requests"] == 1
+    assert report["analysis_metrics"]["finish_attempts"] == 2
+    assert len(report["analysis_metrics"]["usage_steps"]) == 3
     assert all(event["evidence_kind"] == "observed" for event in report["events"])
     assert report["identity_tracks"][0]["confidence"] == "uncertain"
     assert "1:0" in run.raw_output["tool_results"]
@@ -271,6 +274,53 @@ async def test_story_events_must_follow_timeline(runtime):
     ]
     errors = agent._temporal_evidence_errors(VideoAnalysisResult.model_validate(payload), ws)
     assert "story events must be chronological" in errors
+
+
+def test_evidence_frames_are_ordered_by_time_not_frame_number():
+    ws = SimpleNamespace(frame_times={1: 10, 2: 20, 3: 11})
+    original = {"events": [{"evidence_frames": [1, 2, 3]}],
+                "story_events": [{"evidence_frames": [2, 3, 1]}],
+                "identity_tracks": [{"evidence_frames": [99, 1]}]}
+    result = agent._order_evidence_frames(original, ws)
+    assert result["events"][0]["evidence_frames"] == [1, 3, 2]
+    assert result["story_events"][0]["evidence_frames"] == [1, 3, 2]
+    assert result["identity_tracks"][0]["evidence_frames"] == [99, 1]
+    assert original["events"][0]["evidence_frames"] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_finish_errors_are_saved_and_retries_bounded(runtime, monkeypatch):
+    db, run, settings, storage, _, _, _ = runtime
+    run.metadata_json["temporal_review_version"] = 1
+    invalid = result()
+    invalid["identity_tracks"] = [{"identity": "Lily", "appearance": "coat", "confidence": "identified",
+                                   "basis": "bad", "time_start": 0, "time_end": 1}]
+    post = AsyncMock(return_value=response("finish_video_analysis", invalid))
+    monkeypatch.setattr(agent.Provider, "post", post)
+    with pytest.raises(ProviderFailure, match="finish_correction_limit"):
+        await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
+    assert post.await_count == agent.MAX_FINISH_CORRECTIONS + 1
+    assert run.raw_output["finish_diagnostics"]["0:0"]["error"] == "invalid_finish_arguments"
+    assert run.raw_output["finish_diagnostics"]["0:0"]["details"][0]["field"] == ["identity_tracks", 0, "basis"]
+
+
+@pytest.mark.asyncio
+async def test_character_reference_is_sent_to_model_and_replayed(runtime, monkeypatch):
+    from wuwa_story_worker import video_identity
+
+    db, run, settings, storage, _, _, _ = runtime
+    reference = AsyncMock(return_value=({"reference_id": 7, "sha256": "stable"}, jpeg()))
+    monkeypatch.setattr(video_identity, "character_reference_image", reference)
+    post = AsyncMock(side_effect=[response("get_character_reference_image", {"reference_id": 7}),
+                                  response("finish_video_analysis", {**result(), "preview_candidates": []})])
+    monkeypatch.setattr(agent.Provider, "post", post)
+    await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
+    assert "Requested character reference images" in json.dumps(post.await_args_list[1].args[-1])
+    assert run.raw_output["tool_results"]["0:0"]["output"]["reference_id"] == 7
+    post.reset_mock()
+    await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
+    post.assert_not_awaited()
+    assert reference.await_count == 2
 
 
 @pytest.mark.asyncio

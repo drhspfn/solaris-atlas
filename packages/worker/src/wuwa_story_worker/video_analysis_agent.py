@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import hashlib
 import json
 import logging
@@ -55,6 +56,24 @@ from wuwa_story_worker.video_atlas import write_atlas
 logger = logging.getLogger(__name__)
 
 MAX_AGENT_TURNS = 14
+MAX_FINISH_CORRECTIONS = 2
+MAX_REFERENCE_IMAGES = 6
+
+
+def _order_evidence_frames(arguments: dict[str, Any], workspace: VideoWorkspace) -> dict[str, Any]:
+    """Sort known frame lists by scene time; never invent or discard evidence."""
+    result = copy.deepcopy(arguments)
+    if not isinstance(result, dict):
+        return result
+    for collection in ("events", "story_events", "identity_tracks"):
+        items = result.get(collection, [])
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            frames = item.get("evidence_frames") if isinstance(item, dict) else None
+            if isinstance(frames, list) and all(type(frame) is int and frame in workspace.frame_times for frame in frames):
+                item["evidence_frames"] = sorted(frames, key=lambda frame: (workspace.frame_times[frame], frame))
+    return result
 
 
 @dataclass
@@ -658,6 +677,16 @@ async def run_video_analysis_agent(
         review_required = run.metadata_json.get("temporal_review_version") == 1
         review_started = False
         review_started_at = -1
+        finish_corrections = 0
+        reference_images_used = 0
+        usage_steps = []
+
+        async def record_finish(key: str, result: dict[str, Any]) -> None:
+            diagnostics = dict((run.raw_output or {}).get("finish_diagnostics", {}))
+            diagnostics[key] = result
+            run.raw_output = {**(run.raw_output or {}), "finish_diagnostics": diagnostics}
+            await db.commit()
+
         accounted = set((run.raw_output or {}).get(
             "accounted_steps", range(int((run.raw_output or {}).get("step", 0)))))
         for turn_index in range(MAX_AGENT_TURNS):
@@ -694,6 +723,10 @@ async def run_video_analysis_agent(
                 await db.commit()
                 if within is False:
                     raise ValueError("Visual usage exceeded reservation")
+            usage = raw.get("usage") or {}
+            input_details = usage.get("input_tokens_details") or {}
+            usage_steps.append({"step": step, "input_tokens": source_tokens, "output_tokens": output_tokens,
+                                "cached_input_tokens": input_details.get("cached_tokens")})
             if hasattr(db, "flush"):
                 await db.flush()
             if hasattr(db, "refresh"):
@@ -718,50 +751,102 @@ async def run_video_analysis_agent(
             history.extend(turn.items)
             if not turn.calls:
                 if turn.text:
-                    candidate = VideoAnalysisResult.model_validate_json(turn.text)
+                    try:
+                        candidate = VideoAnalysisResult.model_validate(
+                            _order_evidence_frames(json.loads(turn.text), workspace))
+                    except (ValidationError, ValueError, TypeError) as exc:
+                        finish_corrections += 1
+                        outcome = {"error": "invalid_finish_text", "details": str(exc)[:2000]}
+                        await record_finish(f"{step}:text", outcome)
+                        if finish_corrections > MAX_FINISH_CORRECTIONS:
+                            raise ProviderFailure("video_agent_finish_correction_limit") from exc
+                        history.append(_multimodal_user_message(provider, json.dumps(outcome), []))
+                        continue
                     if review_required and not review_started:
                         review_started = True
                         review_started_at = step
+                        finish_corrections = 0
+                        await record_finish(f"{step}:text", {"status": "draft"})
                         history.append(_multimodal_user_message(provider, TEMPORAL_REVIEW_INSTRUCTION, []))
                         continue
                     errors = _temporal_evidence_errors(candidate, workspace) if review_required else []
                     if errors:
+                        finish_corrections += 1
+                        await record_finish(f"{step}:text", {"error": "invalid_temporal_evidence", "details": errors})
+                        if finish_corrections > MAX_FINISH_CORRECTIONS:
+                            raise ProviderFailure("video_agent_finish_correction_limit")
                         history.append(_multimodal_user_message(provider, "Correct the final evidence: " + "; ".join(errors), []))
                         continue
+                    await record_finish(f"{step}:text", {"status": "accepted"})
                     final_result = candidate
                     break
                 raise ProviderFailure("video_agent_stopped_without_result")
 
             new_images: list[tuple[AtlasEntry, dict[str, Any]]] = []
+            reference_images: list[bytes] = []
             for tool_index, tc in enumerate(turn.calls):
                 if tc.name == "finish_video_analysis":
+                    finish_key = f"{step}:{tool_index}"
                     try:
-                        candidate = VideoAnalysisResult.model_validate(tc.arguments)
+                        candidate = VideoAnalysisResult.model_validate(_order_evidence_frames(tc.arguments, workspace))
                     except ValidationError as exc:
-                        history.append(
-                            provider.tool_result(
-                                tc,
-                                {"error": f"Invalid finish_video_analysis arguments: {exc}"},
-                            )
-                        )
+                        finish_corrections += 1
+                        details = [{"field": list(error["loc"]), "type": error["type"], "message": error["msg"]}
+                                   for error in exc.errors(include_input=False)][:20]
+                        outcome = {"error": "invalid_finish_arguments", "details": details}
+                        await record_finish(finish_key, outcome)
+                        if finish_corrections > MAX_FINISH_CORRECTIONS:
+                            raise ProviderFailure("video_agent_finish_correction_limit") from exc
+                        history.append(provider.tool_result(tc, outcome))
                         continue
                     if review_required and not review_started:
                         review_started = True
                         review_started_at = step
-                        history.append(provider.tool_result(tc, {"status": "draft", "instruction": TEMPORAL_REVIEW_INSTRUCTION}))
+                        finish_corrections = 0
+                        outcome = {"status": "draft", "instruction": TEMPORAL_REVIEW_INSTRUCTION}
+                        await record_finish(finish_key, outcome)
+                        history.append(provider.tool_result(tc, outcome))
                         continue
                     if review_required and step == review_started_at:
-                        history.append(provider.tool_result(tc, {"error": "review_requires_a_separate_turn"}))
+                        outcome = {"error": "review_requires_a_separate_turn"}
+                        await record_finish(finish_key, outcome)
+                        history.append(provider.tool_result(tc, outcome))
                         continue
                     errors = _temporal_evidence_errors(candidate, workspace) if review_required else []
                     if errors:
-                        history.append(provider.tool_result(tc, {"error": "invalid_temporal_evidence", "details": errors}))
+                        finish_corrections += 1
+                        outcome = {"error": "invalid_temporal_evidence", "details": errors}
+                        await record_finish(finish_key, outcome)
+                        if finish_corrections > MAX_FINISH_CORRECTIONS:
+                            raise ProviderFailure("video_agent_finish_correction_limit")
+                        history.append(provider.tool_result(tc, outcome))
                         continue
                     final_result = candidate
-                    history.append(provider.tool_result(tc, {"status": "accepted"}))
+                    outcome = {"status": "accepted"}
+                    await record_finish(finish_key, outcome)
+                    history.append(provider.tool_result(tc, outcome))
                     break
                 tool_key = f"{step}:{tool_index}"
                 cached = (run.raw_output or {}).get("tool_results", {}).get(tool_key)
+                if tc.name == "get_character_reference_image":
+                    from wuwa_story_worker.video_identity import character_reference_image
+
+                    if reference_images_used >= MAX_REFERENCE_IMAGES:
+                        tool_out, image = {"error": "reference_image_limit"}, None
+                    else:
+                        tool_out, image = await character_reference_image(db, tc.arguments)
+                    if cached is not None and cached["output"] != tool_out:
+                        raise ProviderFailure("video_agent_reference_changed_on_replay")
+                    if cached is None:
+                        tool_results = dict((run.raw_output or {}).get("tool_results", {}))
+                        tool_results[tool_key] = {"output": tool_out, "atlases": []}
+                        run.raw_output = {**(run.raw_output or {}), "tool_results": tool_results}
+                        await db.commit()
+                    history.append(provider.tool_result(tc, tool_out))
+                    if image is not None:
+                        reference_images_used += 1
+                        reference_images.append(image)
+                    continue
                 if cached is not None:
                     tool_out = cached["output"]
                     created = []
@@ -790,6 +875,11 @@ async def run_video_analysis_agent(
                         [e.image_bytes for e, _ in new_images],
                     )
                 )
+            if reference_images:
+                history.append(_multimodal_user_message(
+                    provider, "Requested character reference images, in tool-call order; compare with scene frames.",
+                    reference_images,
+                ))
 
     if final_result is None:
         raise ProviderFailure("video_agent_exceeded_max_turns")
@@ -924,6 +1014,15 @@ async def run_video_analysis_agent(
         "tokens_input": run.tokens_input,
         "tokens_output": run.tokens_output,
         "cost_usd": float(run.cost or 0),
+        "analysis_metrics": {
+            "unique_frames": len(set(workspace.frame_times.values())),
+            "resampled_atlases": sum(entry.reason != "overview" for entry in workspace.atlases),
+            "resample_requests": sum("new_atlases" in item.get("output", {})
+                                     for item in (run.raw_output or {}).get("tool_results", {}).values()),
+            "reference_images": reference_images_used,
+            "finish_attempts": len((run.raw_output or {}).get("finish_diagnostics", {})),
+            "usage_steps": usage_steps,
+        },
         **({"temporal_review_version": 1,
             "reviewed_atlases": [entry.atlas_index for entry in workspace.atlases if entry.reason != "overview"]}
            if review_required else {}),
