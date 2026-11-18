@@ -351,10 +351,12 @@ def test_evidence_frames_are_ordered_by_time_not_frame_number():
 def test_chronological_sort_remaps_review_indices():
     ws = SimpleNamespace(frame_times={1: 10, 2: 20})
     original = {"events": [{"time": 20}, {"time": 10}],
+                "story_events": [{"time_start": 20}, {"time_start": 10}],
                 "event_review": [{"draft_index": 0, "final_indices": [0, 1]}]}
-    result = agent._order_evidence_frames(original, ws, order_events=True)
+    result = agent._order_evidence_frames(original, ws, order_events=True, order_story_events=True)
     assert [event["time"] for event in result["events"]] == [10, 20]
     assert result["event_review"][0]["final_indices"] == [1, 0]
+    assert [event["time_start"] for event in result["story_events"]] == [10, 20]
     assert original["event_review"][0]["final_indices"] == [0, 1]
 
 
@@ -391,7 +393,6 @@ def test_review_requires_each_draft_event_and_identity_to_be_accounted_for():
 @pytest.mark.asyncio
 async def test_finish_errors_are_saved_and_retries_bounded(runtime, monkeypatch):
     db, run, settings, storage, _, _, _ = runtime
-    run.metadata_json["temporal_review_version"] = 1
     invalid = result()
     invalid["identity_tracks"] = [{"identity": "Lily", "appearance": "coat", "confidence": "identified",
                                    "basis": "bad", "time_start": 0, "time_end": 1}]
@@ -402,6 +403,14 @@ async def test_finish_errors_are_saved_and_retries_bounded(runtime, monkeypatch)
     assert post.await_count == agent.MAX_FINISH_CORRECTIONS + 1
     assert run.raw_output["finish_diagnostics"]["0:0"]["error"] == "invalid_finish_arguments"
     assert run.raw_output["finish_diagnostics"]["0:0"]["details"][0]["field"] == ["identity_tracks", 0, "basis"]
+
+    valid = result()
+    valid["preview_candidates"] = []
+    post = AsyncMock(return_value=response("finish_video_analysis", valid))
+    monkeypatch.setattr(agent.Provider, "post", post)
+    await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
+    assert post.await_count == 1
+    assert run.raw_output["finish_diagnostics"]["3:0"]["status"] == "accepted"
 
 
 @pytest.mark.asyncio
