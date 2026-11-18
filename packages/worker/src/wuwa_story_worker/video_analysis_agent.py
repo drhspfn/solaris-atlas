@@ -765,6 +765,7 @@ async def run_video_analysis_agent(
                     if review_required and not review_started:
                         review_started = True
                         review_started_at = step
+                        finish_corrections = 0
                         await record_finish(f"{step}:text", {"status": "draft"})
                         history.append(_multimodal_user_message(provider, TEMPORAL_REVIEW_INSTRUCTION, []))
                         continue
@@ -801,6 +802,7 @@ async def run_video_analysis_agent(
                     if review_required and not review_started:
                         review_started = True
                         review_started_at = step
+                        finish_corrections = 0
                         outcome = {"status": "draft", "instruction": TEMPORAL_REVIEW_INSTRUCTION}
                         await record_finish(finish_key, outcome)
                         history.append(provider.tool_result(tc, outcome))
