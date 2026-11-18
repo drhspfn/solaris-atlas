@@ -85,6 +85,10 @@ Required Variables:
 - `WUWA_QUEUE_CONCURRENCY`, `WUWA_WORKER_WORKSPACE`, `WUWA_IMPORT_BATCH_SIZE`, `WUWA_ASSET_WORKSPACE`, `WUWA_ASSET_DOWNLOAD_CONCURRENCY`, `WUWA_ASSET_EXPORT_FILTERS`, `WUWA_ASSET_BUILD_MAPS`
 - `AGENT_VISION_ENABLED`, `AGENT_VISION_FRAME_INTERVAL`, `AGENT_VISION_MAX_FRAMES`, `AGENT_VISION_BATCH_FRAMES`, `AGENT_VISION_ATLAS_FRAMES`, `AGENT_VISION_ATLAS_TILE_WIDTH`, `AGENT_VISION_ATLAS_QUALITY`, `AGENT_VISION_OUTPUT_TOKENS`
 
+The visual overview interval defaults to 2 seconds. Existing deployments with an explicit
+`AGENT_VISION_FRAME_INTERVAL` retain their configured value until it is changed; already queued
+runs keep their frozen settings. Denser sampling increases processing time and model input.
+
 Required Secrets:
 
 - `DEPLOY_SSH_PRIVATE_KEY`, `DEPLOY_KNOWN_HOSTS`
