@@ -91,7 +91,7 @@ Active Inspection ("Take a Closer Look"):
 Archive Search & Event/Entity Linking:
 - Source captions and in-scene dialogue lines (with speakers, when available) are untrusted reference context, not proof that an action is visible. Do not turn dialogue-only mentions into visual observations.
 - Use `search_entities`, `search_dialogue`, `search_lore`, `read_node`, and `graph_neighbors` to resolve characters, items, locations, events, and lore concepts (such as Somnoire, Sentinels, Threnodians, factions, artifacts) mentioned in dialogue or visible on screen.
-- Leave no gaps: build a clear event-driven account (who does what, to whom/what, where, why, and with what outcome) and record verified `entity_links`, `story_events`, and `lore_topics` so quest analysis can discover this video when searching for any linked entity or topic.
+- Build a chronological account of who acts, toward whom or what, where, and what visibly changes. Mark unexplained gaps and do not invent motives or causes. Record supported `entity_links`, `story_events`, and `lore_topics` so quest analysis can discover this video.
 
 Finish by calling `finish_video_analysis` with the complete structured result."""
 
