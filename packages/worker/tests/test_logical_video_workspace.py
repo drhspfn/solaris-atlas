@@ -348,6 +348,46 @@ def test_evidence_frames_are_ordered_by_time_not_frame_number():
     assert original["events"][0]["evidence_frames"] == [1, 2, 3]
 
 
+def test_order_evidence_frames_expands_intervals_to_cover_known_evidence_frames():
+    ws = SimpleNamespace(frame_times={76: 149.958, 77: 151.958, 78: 153.957, 79: 155.957, 80: 157.957}, duration=180.0)
+    payload = {
+        "summary": "scene",
+        "events": [{
+            "time": 149.958,
+            "time_end": 152.978,
+            "global_frame": 76,
+            "evidence_frames": [76, 77, 78, 79, 80],
+            "observation": "Montage sequence",
+            "confidence": "observed",
+            "evidence_kind": "observed",
+        }],
+        "story_events": [{
+            "title": "Montage",
+            "summary": "Sequence",
+            "time_start": 150.0,
+            "time_end": 152.978,
+            "evidence_frames": [76, 80],
+            "evidence_kind": "observed",
+        }],
+        "identity_tracks": [{
+            "identity": "Rover",
+            "appearance": "dark jacket",
+            "confidence": "identified",
+            "basis": "observed",
+            "time_start": 150.5,
+            "time_end": 152.0,
+            "evidence_frames": [76, 80],
+        }],
+    }
+    ordered = agent._order_evidence_frames(payload, ws)
+    assert ordered["events"][0]["time_end"] == pytest.approx(157.957)
+    assert ordered["story_events"][0]["time_start"] == pytest.approx(149.958)
+    assert ordered["story_events"][0]["time_end"] == pytest.approx(157.957)
+    assert ordered["identity_tracks"][0]["time_start"] == pytest.approx(149.958)
+    assert ordered["identity_tracks"][0]["time_end"] == pytest.approx(157.957)
+    assert agent._temporal_evidence_errors(VideoAnalysisResult.model_validate(ordered), ws) == []
+
+
 def test_chronological_sort_remaps_review_indices():
     ws = SimpleNamespace(frame_times={1: 10, 2: 20})
     original = {"events": [{"time": 20}, {"time": 10}],

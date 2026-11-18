@@ -91,9 +91,26 @@ def _order_evidence_frames(arguments: dict[str, Any], workspace: VideoWorkspace,
         if not isinstance(items, list):
             continue
         for item in items:
-            frames = item.get("evidence_frames") if isinstance(item, dict) else None
+            if not isinstance(item, dict):
+                continue
+            frames = item.get("evidence_frames")
             if isinstance(frames, list) and all(type(frame) is int and frame in workspace.frame_times for frame in frames):
                 item["evidence_frames"] = sorted(frames, key=lambda frame: (workspace.frame_times[frame], frame))
+                known_times = [workspace.frame_times[frame] for frame in item["evidence_frames"]]
+                if known_times:
+                    if collection == "events":
+                        gf = item.get("global_frame")
+                        if type(gf) is int and gf in workspace.frame_times:
+                            known_times.append(workspace.frame_times[gf])
+                        end = item.get("time_end")
+                        if type(end) in (int, float) and math.isfinite(end):
+                            item["time_end"] = min(float(workspace.duration), max(float(end), max(known_times)))
+                    else:
+                        start, end = item.get("time_start"), item.get("time_end")
+                        if type(start) in (int, float) and math.isfinite(start):
+                            item["time_start"] = max(0.0, min(float(start), min(known_times)))
+                        if type(end) in (int, float) and math.isfinite(end):
+                            item["time_end"] = min(float(workspace.duration), max(float(end), max(known_times)))
     return result
 
 
@@ -726,7 +743,10 @@ def _temporal_evidence_errors(result: VideoAnalysisResult, workspace: VideoWorks
         if not frames or any(time is None for time in times):
             errors.append(f"{label}: cite known evidence_frames")
         elif any(time < start - 0.1 or time > end + 0.1 for time in times):
-            errors.append(f"{label}: evidence frames must be inside the interval")
+            errors.append(
+                f"{label}: evidence frames must be inside the interval "
+                f"[{round(start, 3)}, {round(end, 3)}] (cited frame times: {[round(t, 3) for t in times]})"
+            )
         elif times != sorted(times):
             errors.append(f"{label}: evidence frames must be chronological")
         if kind is None:
@@ -742,7 +762,10 @@ def _temporal_evidence_errors(result: VideoAnalysisResult, workspace: VideoWorks
         elif event.global_frame not in workspace.frame_times:
             errors.append(f"event {index}: unknown global_frame {event.global_frame}")
         elif abs(workspace.frame_times[event.global_frame] - event.time) > 0.1:
-            errors.append(f"event {index}: time does not match global_frame {event.global_frame}")
+            errors.append(
+                f"event {index}: time does not match global_frame {event.global_frame} "
+                f"(event.time={round(event.time, 3)}, frame_time={round(workspace.frame_times[event.global_frame], 3)})"
+            )
         if any(frame not in workspace.frame_times for frame in event.evidence_frames):
             errors.append(f"event {index}: evidence_frames contains an unknown frame")
         elif event.evidence_frames:
@@ -750,7 +773,10 @@ def _temporal_evidence_errors(result: VideoAnalysisResult, workspace: VideoWorks
             if times != sorted(times):
                 errors.append(f"event {index}: evidence frames must be chronological")
             if event.time_end is not None and any(time < event.time - 0.1 or time > event.time_end + 0.1 for time in times):
-                errors.append(f"event {index}: evidence frames must be inside the interval")
+                errors.append(
+                    f"event {index}: evidence frames must be inside the interval "
+                    f"[{round(event.time, 3)}, {round(event.time_end, 3)}] (cited frame times: {[round(t, 3) for t in times]})"
+                )
         if event.time_end is not None and event.evidence_kind == "observed" and crosses_gap(event.time, event.time_end):
             errors.append(f"event {index}: observed action crosses a scene gap")
         if event.evidence_kind is None:
