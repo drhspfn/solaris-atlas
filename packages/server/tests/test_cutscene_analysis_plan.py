@@ -77,7 +77,7 @@ async def test_two_selected_variants_enqueue_one_logical_job(monkeypatch):
 
     refs = [SimpleNamespace(owner_node_id=10015), SimpleNamespace(owner_node_id=10016)]
     db = SimpleNamespace(scalars=AsyncMock(return_value=refs), commit=AsyncMock(), rollback=AsyncMock())
-    monkeypatch.setattr(api, "get_agent_settings", lambda: SimpleNamespace(vision_enabled=True, for_vision=lambda: SimpleNamespace(vision_enabled=True)))
+    monkeypatch.setattr(api, "get_agent_settings", lambda: SimpleNamespace(vision_enabled=True))
     monkeypatch.setattr(api, "_asset_cutscenes", AsyncMock(return_value={
         10015: [{"node_id": 15537}], 10016: [{"node_id": 15537}]}))
     monkeypatch.setattr(api, "_logical_plan", AsyncMock(return_value=(
@@ -103,7 +103,7 @@ async def test_15537_existing_variant_returns_one_reused_job_without_enqueue(mon
 
     refs = [SimpleNamespace(owner_node_id=10015), SimpleNamespace(owner_node_id=10016)]
     db = SimpleNamespace(scalars=AsyncMock(return_value=refs), commit=AsyncMock(), rollback=AsyncMock())
-    monkeypatch.setattr(api, "get_agent_settings", lambda: SimpleNamespace(vision_enabled=True, for_vision=lambda: SimpleNamespace(vision_enabled=True)))
+    monkeypatch.setattr(api, "get_agent_settings", lambda: SimpleNamespace(vision_enabled=True))
     monkeypatch.setattr(api, "_asset_cutscenes", AsyncMock(return_value={
         10015: [{"node_id": 15537}], 10016: [{"node_id": 15537}]}))
     monkeypatch.setattr(api, "_logical_plan", AsyncMock(return_value=(

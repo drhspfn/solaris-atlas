@@ -412,7 +412,7 @@ def main() -> None:
                         )
                     )
                 else:
-                    settings = get_agent_settings().for_vision()
+                    settings = get_agent_settings()
                     if not settings.vision_enabled or not 1 <= args.limit <= 1000 or args.offset < 0:
                         raise ValueError(
                             "Enable AGENT_VISION_ENABLED and use a limit between 1 and 1000"

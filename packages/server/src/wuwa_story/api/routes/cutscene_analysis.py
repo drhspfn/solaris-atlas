@@ -465,10 +465,7 @@ async def assets(
 
 @router.post("/jobs", status_code=202, dependencies=[Depends(require_csrf)])
 async def create_visual_jobs(request: VisualRequest, session: AsyncSession = Depends(get_session)):
-    try:
-        settings = get_agent_settings().for_vision()
-    except ValueError as error:
-        raise HTTPException(422, str(error)) from error
+    settings = get_agent_settings()
     if not settings.vision_enabled:
         raise HTTPException(
             409, "Enable AGENT_VISION_ENABLED on the API and visual worker")

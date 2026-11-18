@@ -53,10 +53,6 @@ class AgentSettings(BaseSettings):
     public_query_embeddings: bool = False
     query_requests_per_hour: int = Field(default=30, ge=1, le=1000)
     vision_enabled: bool = False
-    vision_model: str | None = None
-    vision_input_usd_per_million: Decimal | None = Field(default=None, ge=0)
-    vision_output_usd_per_million: Decimal | None = Field(default=None, ge=0)
-    vision_cached_input_usd_per_million: Decimal | None = Field(default=None, ge=0)
     vision_frame_interval: float = Field(default=2, ge=1, le=30)
     vision_max_frames: int = Field(default=600, ge=2, le=1200)
     vision_batch_frames: int = Field(default=48, ge=1, le=64)
@@ -81,23 +77,8 @@ class AgentSettings(BaseSettings):
         return self.model_dump(
             mode="json",
             exclude={"api_key", "embedding_api_key", "read_database_url", "daily_budget_usd", "daily_token_limit",
-                     "public_query_embeddings", "autonomous_enabled", "autonomous_poll_seconds", "autonomous_max_pending",
-                     "vision_model", "vision_input_usd_per_million", "vision_output_usd_per_million",
-                     "vision_cached_input_usd_per_million"},
+                     "public_query_embeddings", "autonomous_enabled", "autonomous_poll_seconds", "autonomous_max_pending"},
         )
-
-    def for_vision(self) -> "AgentSettings":
-        if not self.vision_model:
-            return self
-        if self.vision_input_usd_per_million is None or self.vision_output_usd_per_million is None:
-            raise ValueError("Configure input and output prices for the visual model")
-        return self.model_copy(update={
-            "model": self.vision_model,
-            "input_usd_per_million": self.vision_input_usd_per_million,
-            "output_usd_per_million": self.vision_output_usd_per_million,
-            "cached_input_usd_per_million": self.vision_cached_input_usd_per_million,
-            "cache_write_usd_per_million": None,
-        })
 
     def require_enabled(self) -> None:
         if not self.api_key.get_secret_value() or self.daily_budget_usd <= 0:
