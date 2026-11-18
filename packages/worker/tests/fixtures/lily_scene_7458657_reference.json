@@ -1,0 +1,21 @@
+{
+  "scene_id": 7458657,
+  "duration_seconds": 180.0,
+  "source_sha256": "dd3371c52590b749f0d191a06d2928400805171584011cb26f187a43889adaf0",
+  "scope": "Manually inspected overview and individual frames; this is a partial visual reference, not an exhaustive annotation or a claim about unseen motion.",
+  "checks": [
+    {"time": 0.0, "visual": "Black frame", "identity_basis": "visual", "dhash": "0000000000000000"},
+    {"time": 2.5, "visual": "Purple-haired woman in close-up; identified as Lily using scene context", "identity_basis": "contextual"},
+    {"time": 12.5, "visual": "Dark figures with glowing red marks surround the scene", "identity_basis": "visual"},
+    {"time": 47.5, "visual": "Pale figures and dark figures face each other across a flower-covered landscape", "identity_basis": "visual"},
+    {"time": 62.5, "visual": "Two similar purple-haired appearances face one another; one touches the other's face", "identity_basis": "visual_and_scene_context"},
+    {"time": 72.5, "visual": "Raised handgun points toward dark figures", "identity_basis": "visual"},
+    {"time": 77.0, "visual": "Close-up of a white flower; no person visible in this frame", "identity_basis": "visual", "dhash": "f0f0e0e0f0f0f0f0"},
+    {"time": 117.5, "visual": "A woman stands in a green, flower-filled interior", "identity_basis": "visual"},
+    {"time": 137.5, "visual": "Purple-haired woman looks at an open book", "identity_basis": "visual"},
+    {"time": 150.0, "visual": "Two hands touch against white flowers", "identity_basis": "visual", "dhash": "480d217232111099"},
+    {"time": 152.0, "visual": "Close-up profile of dark-haired male Rover", "identity_basis": "visual_and_scene_context", "dhash": "3fbfbf9f9f1f3f3f"},
+    {"time": 153.4, "visual": "A luminous white cat is visible against a cosmic background", "identity_basis": "visual", "dhash": "f8fcd4b4b4b5964e"},
+    {"time": 169.0, "visual": "A dark-haired figure supports another figure among white flowers", "identity_basis": "visual", "dhash": "fcfcfeeffffbfffc"}
+  ]
+}
