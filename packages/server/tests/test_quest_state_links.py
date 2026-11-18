@@ -107,6 +107,7 @@ def test_forward_and_reverse_ownership_use_only_complete_source_paths():
         assert rows(select(bounded.c.quest_id, bounded.c.state_id)) == {(1, value[0]) for value in expected}
         assert rows(select(quest_state_links(quest_node_id=2))) == {(2, 103)}
         assert rows(quest_states_query(1, None)) == expected
+        assert rows(quest_states_query(1, None, include_scenario=False)) == expected
         assert rows(quest_states_query(2, None)) == {(103,)}
         assert rows(quest_states_query(999, None)) == set()
         for orphan in (104, 105, 106, 108, 111, 112):
@@ -117,6 +118,7 @@ def test_forward_and_reverse_ownership_use_only_complete_source_paths():
         pinned = _quest_state_links(1)
         assert rows(select(pinned.c.state_id).where(pinned.c.quest_id == 1)) == expected
         assert rows(quest_states_query(1, 1)) == expected
+        assert rows(quest_states_query(1, 1, include_scenario=False)) == expected
         assert_state_scoped_matches_global(1)
         # Every hop must exist in the pinned snapshot, not just the final state.
         db.execute("UPDATE graph.edge_evidence SET release_id=2 WHERE edge_id IN (SELECT id FROM graph.edge WHERE (from_node_id=20 AND to_node_id=30) OR (from_node_id=80 AND to_node_id=107))")
@@ -129,6 +131,10 @@ def test_forward_and_reverse_ownership_use_only_complete_source_paths():
         assert_state_scoped_matches_global(2)
         another = quest_state_links(2)
         assert rows(select(another.c.state_id).where(another.c.quest_id == 1)) == set()
+        db.execute("INSERT INTO ontology.relation_type VALUES (9, 'references_scenario_flow_state')")
+        db.execute("INSERT INTO graph.edge (from_node_id,to_node_id,relation_type_id,layer) VALUES (1,116,9,'source')")
+        assert (116,) in rows(quest_states_query(1, None))
+        assert (116,) not in rows(quest_states_query(1, None, include_scenario=False))
 
 
 def test_state_scoped_ownership_fences_endpoints_before_relation_and_evidence_joins():

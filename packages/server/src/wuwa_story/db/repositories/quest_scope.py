@@ -27,13 +27,15 @@ async def quests_for_state(session, state_id: int, release_id: int) -> list[int]
     return list(await session.scalars(select(Quest.node_id).where(Quest.node_id.in_(candidates)))) if candidates else []
 
 
-def quest_states_query(quest_node_id: int, release_id: int | None):
+def quest_states_query(quest_node_id: int, release_id: int | None, *, include_scenario: bool = True):
     """Traverse the finite set of source paths owned by one quest in one snapshot."""
     # Phases: quest, plot step, quest-node/scene, state, action, movie, transcript.
     walk = select(Quest.node_id.label("node_id"), literal(0).label("phase")).where(
         Quest.node_id == quest_node_id
     ).cte("quest_walk", recursive=True)
-    references = ("references_flow_state", "references_dungeon_flow_state", "references_scenario_flow_state")
+    references = ("references_flow_state", "references_dungeon_flow_state")
+    if include_scenario:
+        references += ("references_scenario_flow_state",)
     transitions = or_(
         and_(walk.c.phase == 0, RelationType.key.in_(("has_quest_node", "has_plot_step", *references))),
         and_(walk.c.phase == 1, RelationType.key == "presents_scene"),
