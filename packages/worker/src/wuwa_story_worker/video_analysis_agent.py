@@ -123,9 +123,18 @@ def _review_evidence_errors(draft: VideoAnalysisResult, final: VideoAnalysisResu
                 item = before[decision.draft_index]
                 start = item.time if name == "event" else item.time_start
                 end = (item.time_end if item.time_end is not None else start) if name == "event" else item.time_end
-                if not decision.evidence_frames or any(
-                    frame not in workspace.frame_times or not start - 3 <= workspace.frame_times[frame] <= end + 3
-                    for frame in decision.evidence_frames
+                cited_frames = list(decision.evidence_frames)
+                if not cited_frames and decision.status == "revised":
+                    for index in decision.final_indices:
+                        if 0 <= index < len(after):
+                            target = after[index]
+                            cited_frames.extend(target.evidence_frames)
+                            if name == "event" and target.global_frame is not None:
+                                cited_frames.append(target.global_frame)
+                valid_frames = [frame for frame in cited_frames if frame in workspace.frame_times]
+                if not valid_frames or len(valid_frames) != len(cited_frames) or not any(
+                    start - 3 <= workspace.frame_times[frame] <= end + 3
+                    for frame in valid_frames
                 ):
                     errors.append(f"{label}: cite known nearby frames to revise or dispute")
             if name == "identity" and decision.status == "retained" and any(
@@ -748,6 +757,14 @@ def _temporal_evidence_errors(result: VideoAnalysisResult, workspace: VideoWorks
             errors.append(f"event {index}: specify observed, inferred or contextual evidence_kind")
         if event.evidence_kind == "contextual" and not any(source.strip() for source in event.context_sources):
             errors.append(f"event {index}: cite contextual source identifiers")
+        if index > 0:
+            prev = result.events[index - 1]
+            prev_obs = " ".join(prev.observation.split()).casefold()
+            curr_obs = " ".join(event.observation.split()).casefold()
+            if prev_obs and prev_obs == curr_obs and (
+                event.global_frame == prev.global_frame or abs(event.time - prev.time) <= 1.0
+            ):
+                errors.append(f"event {index}: duplicate adjacent observation; merge into one event with evidence_frames")
     if [event.time_start for event in result.story_events] != sorted(event.time_start for event in result.story_events):
         errors.append("story events must be chronological")
     for index, event in enumerate(result.story_events):
@@ -767,7 +784,13 @@ def _temporal_evidence_errors(result: VideoAnalysisResult, workspace: VideoWorks
 TEMPORAL_REVIEW_INSTRUCTION = (
     "Draft received. Perform a separate consistency review before submitting the final result: "
     "check identities and simultaneous appearances, short events between samples, actions and "
-    "physical contact, chronology, gaps, and unsupported interpretations. Use the resample and "
+    "physical contact, emotional shifts, chronology, gaps, ending coverage before final fade-out, "
+    "and unsupported interpretations. Persist confirmed character identities across all shots of "
+    "the same appearance (do not regress an identified character such as Rover into a conflicting "
+    "generic label like 'dark-haired woman'), and preserve specific observable visual nouns (such "
+    "as 'white cat' or 'feline creature' rather than generalizing to 'animal-like figure'). Merge "
+    "redundant 1-second duplicate angles of the same continuing action into one event with multiple "
+    "evidence_frames, while keeping distinct sequential micro-actions separate. Use the resample and "
     "identity tools for consequential uncertainty within the existing budget. Revise earlier "
     "observations only when supported. Cite actual frame numbers and matching scene timestamps, "
     "set evidence_kind for every event, and call finish_video_analysis again."
@@ -777,12 +800,14 @@ EVIDENCE_REVIEW_INSTRUCTION = (
     "The draft is provisional evidence, not confirmed identity. Review every draft event and identity track "
     "by its zero-based index. In event_review and identity_review return exactly one decision for each: "
     "retained, revised, disputed, or unresolved. Retained/revised decisions need final_indices; disputed/"
-    "unresolved have none. For revised/disputed cite nearby numbered evidence_frames and explain why; "
+    "unresolved have none. For revised/disputed cite nearby numbered evidence_frames (you may also include "
+    "confirming frames from elsewhere in the scene) and explain why; "
     "for unresolved explain the uncertainty. A retained identity must keep the same label; revise it with "
     "evidence if its name, appearance, confidence, or basis changes. Retained observations must keep their "
-    "original wording; mark paraphrases as revised with nearby evidence. Keep distinct simultaneous appearances separate. Do not silently drop "
-    "an earlier observation, guess a name, or treat a draft claim as confirmed. Include the review "
-    "decisions in your final finish_video_analysis result."
+    "original wording; mark paraphrases or merged duplicate shots as revised with nearby evidence. Keep "
+    "distinct simultaneous appearances separate, and never dilute specific visual details into generic "
+    "placeholders during revision. Do not silently drop an earlier observation, guess a name, or treat a "
+    "draft claim as confirmed. Include the review decisions in your final finish_video_analysis result."
 )
 
 
@@ -850,6 +875,7 @@ async def run_video_analysis_agent(
         review_started_at = -1
         review_draft: VideoAnalysisResult | None = None
         finish_corrections = 0
+        last_rejected_finish_digest: str | None = None
         reference_images_used = 0
         spatial_inspections_used = 0
         usage_steps = []
@@ -991,9 +1017,20 @@ async def run_video_analysis_agent(
                                                    order_story_events=evidence_review_required and review_started))
                     except ValidationError as exc:
                         finish_corrections += 1
+                        digest = hashlib.sha256(
+                            json.dumps(tc.arguments, sort_keys=True, default=str).encode("utf-8")
+                        ).hexdigest()
+                        duplicate = digest == last_rejected_finish_digest
+                        last_rejected_finish_digest = digest
                         details = [{"field": list(error["loc"]), "type": error["type"], "message": error["msg"]}
                                    for error in exc.errors(include_input=False)][:20]
-                        outcome = {"error": "invalid_finish_arguments", "details": details}
+                        outcome = {
+                            "error": "invalid_finish_arguments",
+                            "details": details,
+                            **({"duplicate_payload": True,
+                                "hint": "Identical invalid payload resent; fix the listed fields before retrying."}
+                               if duplicate else {}),
+                        }
                         await record_finish(finish_key, outcome)
                         if finish_corrections > MAX_FINISH_CORRECTIONS:
                             raise ProviderFailure("video_agent_finish_correction_limit") from exc
@@ -1003,6 +1040,7 @@ async def run_video_analysis_agent(
                         review_started = True
                         review_started_at = step
                         finish_corrections = 0
+                        last_rejected_finish_digest = None
                         remember_draft(candidate)
                         outcome = {"status": "draft", "instruction": TEMPORAL_REVIEW_INSTRUCTION +
                                    (" " + EVIDENCE_REVIEW_INSTRUCTION if evidence_review_required else "")}
@@ -1017,7 +1055,18 @@ async def run_video_analysis_agent(
                     errors = review_errors(candidate)
                     if errors:
                         finish_corrections += 1
-                        outcome = {"error": "invalid_temporal_evidence", "details": errors}
+                        digest = hashlib.sha256(
+                            json.dumps(tc.arguments, sort_keys=True, default=str).encode("utf-8")
+                        ).hexdigest()
+                        duplicate = digest == last_rejected_finish_digest
+                        last_rejected_finish_digest = digest
+                        outcome = {
+                            "error": "invalid_temporal_evidence",
+                            "details": errors,
+                            **({"duplicate_payload": True,
+                                "hint": "Identical payload resent; fix the listed review/temporal errors before retrying."}
+                               if duplicate else {}),
+                        }
                         await record_finish(finish_key, outcome)
                         if finish_corrections > MAX_FINISH_CORRECTIONS:
                             raise ProviderFailure("video_agent_finish_correction_limit")
@@ -1247,12 +1296,16 @@ async def run_video_analysis_agent(
         "cost_usd": float(run.cost or 0),
         "analysis_metrics": {
             "unique_frames": len(set(workspace.frame_times.values())),
+            "revisited_frames": max(0, len(workspace.frame_times) - len(set(workspace.frame_times.values()))),
             "resampled_atlases": sum(entry.reason != "overview" for entry in workspace.atlases),
             "resample_requests": sum("new_atlases" in item.get("output", {})
                                      for item in (run.raw_output or {}).get("tool_results", {}).values()),
             "reference_images": reference_images_used,
             "spatial_inspections": spatial_inspections_used,
             "finish_attempts": len((run.raw_output or {}).get("finish_diagnostics", {})),
+            "finish_rejections": sum("error" in item for item in (run.raw_output or {}).get("finish_diagnostics", {}).values()),
+            "tool_output_chars": sum(len(json.dumps(item.get("output", {}), ensure_ascii=False, default=str))
+                                     for item in (run.raw_output or {}).get("tool_results", {}).values()),
             "usage_steps": usage_steps,
         },
         **({"temporal_review_version": 1,
