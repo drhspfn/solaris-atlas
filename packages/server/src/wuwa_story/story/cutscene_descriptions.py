@@ -43,7 +43,7 @@ async def save_description(session, *, asset_id, release_id, locale_id, title, t
     if manual and expected_revision != revision:
         raise ValueError('Description changed; reload before saving')
     public = {key: metadata[key] for key in (
-        'visual_reference_id', 'chapters', 'observation_indices', 'asset_version', 'source_document_id',
+        'visual_reference_id', 'chapters', 'observation_indices', 'narrative_events', 'asset_version', 'source_document_id',
     ) if key in metadata}
     if latest and latest.source_hash == source_hash and latest.title == title.strip() \
             and latest.plain_text == text.strip() and all(latest.metadata_json.get(k) == v for k, v in public.items()):
@@ -65,12 +65,27 @@ async def save_description(session, *, asset_id, release_id, locale_id, title, t
 async def publish_descriptions(session, entries, *, release_id, locale_id, source_document_id, processor_run_id):
     for entry in sorted(entries, key=lambda item: item.asset_node_id):
         report = await session.get(FileReference, entry.visual_reference_id)
-        if report is None or report.owner_node_id != entry.asset_node_id:
+        if report is None:
             raise ValueError(
                 'Public description does not match its visual report')
         video = await current_video(session, entry.asset_node_id, report.metadata_json.get('asset_version'))
-        current = await visual_reference(session, entry.asset_node_id, report.metadata_json.get('asset_version'))
         file = await session.get(FileObject, video.file_id) if video else None
+        if report.owner_node_id == entry.asset_node_id:
+            current = await visual_reference(session, entry.asset_node_id, report.metadata_json.get('asset_version'))
+        else:
+            from wuwa_story.agents.scene_analysis_reader import current_scene_report
+            from wuwa_story.api.routes.cutscene_analysis import _logical_plan
+
+            plan, _, _ = await _logical_plan(session, report.owner_node_id, report.metadata_json.get('asset_version'))
+            segments = plan['segments']
+            duration = (video.metadata_json or {}).get('duration_seconds') if video else None
+            if (len(segments) != 1 or segments[0]['asset_node_id'] != entry.asset_node_id
+                    or segments[0]['source_start'] != 0 or not isinstance(duration, (int, float))
+                    or abs(segments[0]['source_end'] - duration) > 0.001):
+                raise ValueError('A scene-wide description cannot be published as an individual partial video')
+            current = await current_scene_report(session, report.owner_node_id, report.metadata_json['asset_version'], plan)
+            if file is None or not file.sha256 or file.sha256.hex() != segments[0]['source_sha256']:
+                raise ValueError('Logical scene video changed before publication')
         if current is None or current.id != report.id or file is None or not file.sha256:
             raise ValueError(
                 'Public description requires a current complete visual report')
@@ -130,6 +145,7 @@ async def public_descriptions(session, asset_ids, release_id, locale, *, asset_v
             result[asset_id] = {
                 'asset_node_id': asset_id, 'title': document.title, 'text': document.plain_text,
                 'chapters': meta.get('chapters', []), 'observation_indices': meta.get('observation_indices', []),
+                'narrative_events': meta.get('narrative_events', []),
                 'visual_reference_id': meta.get('visual_reference_id'), 'document_id': document.id,
                 'revision': document.revision, 'locale': locale,
                 'origin': 'manual' if document.document_type == kinds[0] else 'analysis',
