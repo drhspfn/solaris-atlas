@@ -35,7 +35,7 @@ from wuwa_story.db.models.i18n import Locale, LocalizationValue
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
-from wuwa_story.db.repositories.quest_scope import quest_state_links
+from wuwa_story.db.repositories.quest_scope import quest_states_query
 from wuwa_story.db.repositories.search import lexical_search
 
 ORDERING = "Authored state/action/talk order, including alternatives. This is not a single guaranteed playthrough; inspect graph links for choices and conditions."
@@ -87,8 +87,7 @@ async def imported_source_revision(session: AsyncSession) -> str:
 
 
 async def quest_states(session: AsyncSession, quest_id: int, release_id: int) -> list[int]:
-    links = quest_state_links(release_id)
-    return list(await session.scalars(select(links.c.state_id).where(links.c.quest_id == quest_id)))
+    return list(await session.scalars(quest_states_query(quest_id, release_id, include_scenario=False)))
 
 
 async def scope_for_request(
