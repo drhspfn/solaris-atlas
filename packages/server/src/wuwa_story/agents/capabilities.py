@@ -35,6 +35,7 @@ VIDEO_ANALYSIS_TOOLS = frozenset(
     {
         "resample_video_window",
         "identify_atlas_characters",
+        "get_character_reference_image",
         "search_entities",
         "search_dialogue",
         "search_lore",
@@ -80,8 +81,10 @@ Active Inspection ("Take a Closer Look"):
 - If a character crosses the screen between frames, an action happens too quickly, or an object/symbol is unclear, call `resample_video_window` for that exact `[start_seconds, end_seconds]` range with a finer `interval_seconds` (e.g., `0.5` or `0.25`).
 - Respect the dynamic frame soft limit: inspect short focused windows first instead of requesting hundreds of frames at once. Only set `bypass_limit=true` with a concrete `bypass_justification` if a smaller window or coarser interval is genuinely insufficient.
 - Use `identify_atlas_characters` on specific `atlas_indices` or `global_frame_indices` to query visual memory when character identity is uncertain.
+- Similarities are rankings, not probabilities; `unknown` means the automatic threshold was not met, not that candidates are absent. Compare ranked candidates and their margins with scene frames, other views and sourced context. Use `get_character_reference_image` with a candidate reference_id or published character asset_id to inspect the actual reference image. You may identify someone using corroborating visual and contextual evidence, and must retain uncertainty when evidence conflicts.
 - If identification is unavailable, say so in the analysis; do not imply the frames were checked. `unknown` and `unresolved` are not identifications. A `candidate` is uncalibrated evidence, not proof: verify with source context and cited frames before assigning a name.
 - First map the whole scene, then revisit short windows where identities, transitions, physical contact, shared actions, or changes in position are unclear. Use 0.5s for actions and 0.1–0.25s for brief appearances when useful; never infer an unseen event from the sampling gap.
+- Build chronological atomic observations before summarizing them into story_events. After targeted resampling, add separately evidenced events that were missed in the overview, rather than only revising existing observations. Do not fill gaps with guessed actions.
 - Track each person's visual appearance separately from their identity, including simultaneous versions of the same person. Revisit earlier observations when later frames support an identity, but retain uncertainty when the visual evidence does not establish it. Do not infer gender from hair or a single feature.
 - Describe who acts, whom they interact with, and what visibly changes across adjacent shots. Cite the actual frame: do not assert a person is present in a close-up that does not show them. Distinguish observed actions from inferred connections and dialogue-sourced context; never present thoughts, motives, or dialogue-only claims as visible facts.
 - Before finishing, review the entire timeline for identity inconsistencies, missed brief appearances, unexplained transitions, interaction details, and unsupported claims. Resample the most consequential unresolved windows within the existing frame, turn and cost budgets. If evidence remains insufficient, state that uncertainty explicitly.
@@ -321,6 +324,11 @@ def video_analysis_definitions() -> list[dict[str, Any]]:
                 "atlas_indices": {"type": "array", "items": integer},
                 "global_frame_indices": {"type": "array", "items": integer},
             },
+        ),
+        tool(
+            "get_character_reference_image",
+            "Show a published character image by asset_id or an approved visual-memory image by reference_id for comparison with scene frames. Supply exactly one ID.",
+            {"asset_id": integer, "reference_id": integer},
         ),
         tool(
             "search_entities",

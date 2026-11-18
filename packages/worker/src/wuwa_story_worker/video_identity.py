@@ -1,12 +1,60 @@
 """Read-only visual-memory identification for numbered video frames."""
 
 import asyncio
+import hashlib
+import io
 from typing import Any
 
+from wuwa_story.visual_memory.images import load_image
 from wuwa_story.visual_memory.inference import VisualMemoryUnavailable
 from wuwa_story.visual_memory.service import VisualMemoryService
 
 MAX_IDENTITY_FRAMES = 16
+
+
+async def character_reference_image(db: Any, args: dict[str, Any]) -> tuple[dict[str, Any], bytes | None]:
+    """Read a bounded published image or approved visual reference, never an arbitrary URL."""
+    asset_id, reference_id = args.get("asset_id"), args.get("reference_id")
+    if (asset_id is None) == (reference_id is None):
+        return {"error": "provide_exactly_one_id"}, None
+    selected = asset_id if asset_id is not None else reference_id
+    if type(selected) is not int or selected <= 0:
+        return {"error": "invalid_id"}, None
+    if db is None:
+        return {"error": "database_unavailable"}, None
+    service = VisualMemoryService(db)
+    try:
+        if reference_id is not None:
+            reference = await service._reference(reference_id)
+            if reference.status != "approved" or not reference.enabled_for_search:
+                return {"error": "reference_not_approved"}, None
+            data = await service.get_image_bytes(reference_id, max_bytes=5 * 1024 * 1024)
+        else:
+            data = await service.get_asset_image_bytes(asset_id)
+        image = await asyncio.to_thread(load_image, data, max_bytes=5 * 1024 * 1024)
+        image.thumbnail((1024, 1024))
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=85)
+        encoded = buffer.getvalue()
+    except (ValueError, OSError):
+        return {"error": "reference_image_unavailable"}, None
+    return {"asset_id": asset_id, "reference_id": reference_id,
+            "sha256": hashlib.sha256(encoded).hexdigest(), "mime_type": "image/jpeg"}, encoded
+
+
+def _compact_detection(detection: dict[str, Any]) -> dict[str, Any]:
+    identification = detection.get("identification") or {}
+    candidates = []
+    for candidate in identification.get("candidates", []):
+        entry = {key: candidate[key] for key in ("identity_id", "name", "kind", "lore_id", "appearance_id",
+                                                   "score", "best_similarity", "independent_references")
+                 if key in candidate}
+        entry["reference_ids"] = [item["reference_id"] for item in candidate.get("evidence", [])
+                                  if "reference_id" in item][:3]
+        candidates.append(entry)
+    return {"bbox": detection.get("bbox"), "detection": detection.get("detection"),
+            "identification": {"status": identification.get("status"),
+                               "score_type": identification.get("score_type"), "candidates": candidates}}
 
 
 def _spread(frames: list[int], count: int) -> list[int]:
@@ -59,6 +107,7 @@ async def identify_atlas_characters(
         base["inspected_frames"].append(index)
         base["matches"].append({
             "global_frame": index, "time": workspace.frame_times.get(index),
-            "model_key": result.get("model_key"), "detections": result.get("detections", []),
+            "model_key": result.get("model_key"),
+            "detections": [_compact_detection(item) for item in result.get("detections", [])],
         })
     return {**base, "available": True}

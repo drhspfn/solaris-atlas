@@ -302,6 +302,25 @@ async def test_finish_errors_are_saved_and_retries_bounded(runtime, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_character_reference_is_sent_to_model_and_replayed(runtime, monkeypatch):
+    from wuwa_story_worker import video_identity
+
+    db, run, settings, storage, _, _, _ = runtime
+    reference = AsyncMock(return_value=({"reference_id": 7, "sha256": "stable"}, jpeg()))
+    monkeypatch.setattr(video_identity, "character_reference_image", reference)
+    post = AsyncMock(side_effect=[response("get_character_reference_image", {"reference_id": 7}),
+                                  response("finish_video_analysis", {**result(), "preview_candidates": []})])
+    monkeypatch.setattr(agent.Provider, "post", post)
+    await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
+    assert "Requested character reference images" in json.dumps(post.await_args_list[1].args[-1])
+    assert run.raw_output["tool_results"]["0:0"]["output"]["reference_id"] == 7
+    post.reset_mock()
+    await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
+    post.assert_not_awaited()
+    assert reference.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_overview_keeps_short_unique_parts_and_never_samples_gap(runtime):
     runtime[2].vision_max_frames = 6
     ws = await workspace(runtime)

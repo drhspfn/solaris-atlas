@@ -1,7 +1,9 @@
+import io
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from PIL import Image
 from wuwa_story.visual_memory.inference import VisualMemoryUnavailable
 
 from wuwa_story_worker import video_identity
@@ -50,8 +52,9 @@ async def test_identification_uses_supported_service_and_retains_evidence_and_un
                                                             global_frame_indices=[58])
     service.identify.assert_awaited_once_with(b"58", detect=True, limit=3)
     assert result["available"] and result["inspected_frames"] == [58]
-    assert result["matches"] == [{"global_frame": 58, "time": 171, "model_key": "model",
-                                  "detections": detections}]
+    candidate = result["matches"][0]["detections"][0]["identification"]["candidates"][0]
+    assert candidate == {"name": "Candidate", "reference_ids": [7]}
+    assert result["matches"][0]["global_frame"] == 58
     assert result["matches"][0]["detections"][0]["identification"]["status"] == "unresolved"
 
 
@@ -92,3 +95,20 @@ async def test_unknown_detection_is_available_and_keeps_its_status(tmp_path, mon
     assert result["available"] is True
     assert result["matches"][0]["detections"][0]["identification"]["status"] == "unknown"
     assert "reason" not in result
+
+
+@pytest.mark.asyncio
+async def test_character_reference_uses_only_approved_or_published_images(monkeypatch):
+    data = io.BytesIO()
+    Image.new("RGB", (12, 16), "red").save(data, format="PNG")
+    service = SimpleNamespace(_reference=AsyncMock(return_value=SimpleNamespace(status="approved", enabled_for_search=True)),
+                              get_image_bytes=AsyncMock(return_value=data.getvalue()),
+                              get_asset_image_bytes=AsyncMock(return_value=data.getvalue()))
+    monkeypatch.setattr(video_identity, "VisualMemoryService", lambda db: service)
+    result, image = await video_identity.character_reference_image(object(), {"reference_id": 7})
+    assert result["reference_id"] == 7 and len(result["sha256"]) == 64
+    assert Image.open(io.BytesIO(image)).format == "JPEG"
+    service._reference.return_value.status = "pending"
+    assert (await video_identity.character_reference_image(object(), {"reference_id": 7}))[0]["error"] == "reference_not_approved"
+    assert (await video_identity.character_reference_image(object(), {"asset_id": 5}))[1] is not None
+    assert (await video_identity.character_reference_image(object(), {"asset_id": 5, "reference_id": 7}))[0]["error"] == "provide_exactly_one_id"

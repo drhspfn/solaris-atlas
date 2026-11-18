@@ -57,6 +57,7 @@ logger = logging.getLogger(__name__)
 
 MAX_AGENT_TURNS = 14
 MAX_FINISH_CORRECTIONS = 2
+MAX_REFERENCE_IMAGES = 6
 
 
 def _order_evidence_frames(arguments: dict[str, Any], workspace: VideoWorkspace) -> dict[str, Any]:
@@ -677,6 +678,8 @@ async def run_video_analysis_agent(
         review_started = False
         review_started_at = -1
         finish_corrections = 0
+        reference_images_used = 0
+        usage_steps = []
 
         async def record_finish(key: str, result: dict[str, Any]) -> None:
             diagnostics = dict((run.raw_output or {}).get("finish_diagnostics", {}))
@@ -720,6 +723,10 @@ async def run_video_analysis_agent(
                 await db.commit()
                 if within is False:
                     raise ValueError("Visual usage exceeded reservation")
+            usage = raw.get("usage") or {}
+            input_details = usage.get("input_tokens_details") or {}
+            usage_steps.append({"step": step, "input_tokens": source_tokens, "output_tokens": output_tokens,
+                                "cached_input_tokens": input_details.get("cached_tokens")})
             if hasattr(db, "flush"):
                 await db.flush()
             if hasattr(db, "refresh"):
@@ -775,6 +782,7 @@ async def run_video_analysis_agent(
                 raise ProviderFailure("video_agent_stopped_without_result")
 
             new_images: list[tuple[AtlasEntry, dict[str, Any]]] = []
+            reference_images: list[bytes] = []
             for tool_index, tc in enumerate(turn.calls):
                 if tc.name == "finish_video_analysis":
                     finish_key = f"{step}:{tool_index}"
@@ -818,6 +826,25 @@ async def run_video_analysis_agent(
                     break
                 tool_key = f"{step}:{tool_index}"
                 cached = (run.raw_output or {}).get("tool_results", {}).get(tool_key)
+                if tc.name == "get_character_reference_image":
+                    from wuwa_story_worker.video_identity import character_reference_image
+
+                    if reference_images_used >= MAX_REFERENCE_IMAGES:
+                        tool_out, image = {"error": "reference_image_limit"}, None
+                    else:
+                        tool_out, image = await character_reference_image(db, tc.arguments)
+                    if cached is not None and cached["output"] != tool_out:
+                        raise ProviderFailure("video_agent_reference_changed_on_replay")
+                    if cached is None:
+                        tool_results = dict((run.raw_output or {}).get("tool_results", {}))
+                        tool_results[tool_key] = {"output": tool_out, "atlases": []}
+                        run.raw_output = {**(run.raw_output or {}), "tool_results": tool_results}
+                        await db.commit()
+                    history.append(provider.tool_result(tc, tool_out))
+                    if image is not None:
+                        reference_images_used += 1
+                        reference_images.append(image)
+                    continue
                 if cached is not None:
                     tool_out = cached["output"]
                     created = []
@@ -846,6 +873,11 @@ async def run_video_analysis_agent(
                         [e.image_bytes for e, _ in new_images],
                     )
                 )
+            if reference_images:
+                history.append(_multimodal_user_message(
+                    provider, "Requested character reference images, in tool-call order; compare with scene frames.",
+                    reference_images,
+                ))
 
     if final_result is None:
         raise ProviderFailure("video_agent_exceeded_max_turns")
@@ -980,6 +1012,15 @@ async def run_video_analysis_agent(
         "tokens_input": run.tokens_input,
         "tokens_output": run.tokens_output,
         "cost_usd": float(run.cost or 0),
+        "analysis_metrics": {
+            "unique_frames": len(set(workspace.frame_times.values())),
+            "resampled_atlases": sum(entry.reason != "overview" for entry in workspace.atlases),
+            "resample_requests": sum("new_atlases" in item.get("output", {})
+                                     for item in (run.raw_output or {}).get("tool_results", {}).values()),
+            "reference_images": reference_images_used,
+            "finish_attempts": len((run.raw_output or {}).get("finish_diagnostics", {})),
+            "usage_steps": usage_steps,
+        },
         **({"temporal_review_version": 1,
             "reviewed_atlases": [entry.atlas_index for entry in workspace.atlases if entry.reason != "overview"]}
            if review_required else {}),
