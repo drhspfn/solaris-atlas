@@ -223,6 +223,9 @@ async def test_new_runs_review_and_resample_before_publication_and_replay(runtim
     report = next(ref.metadata_json for ref in db.refs if ref.reference_type == "cutscene_visual_description")
     assert len(requests) == 3
     assert report["temporal_review_version"] == 1 and report["reviewed_atlases"]
+    assert report["analysis_metrics"]["resample_requests"] == 1
+    assert report["analysis_metrics"]["finish_attempts"] == 2
+    assert len(report["analysis_metrics"]["usage_steps"]) == 3
     assert all(event["evidence_kind"] == "observed" for event in report["events"])
     assert report["identity_tracks"][0]["confidence"] == "uncertain"
     assert "1:0" in run.raw_output["tool_results"]
