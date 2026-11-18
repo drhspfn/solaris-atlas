@@ -61,7 +61,8 @@ MAX_REFERENCE_IMAGES = 6
 MAX_SPATIAL_INSPECTIONS = 4
 
 
-def _order_evidence_frames(arguments: dict[str, Any], workspace: VideoWorkspace, *, order_events: bool = False) -> dict[str, Any]:
+def _order_evidence_frames(arguments: dict[str, Any], workspace: VideoWorkspace, *, order_events: bool = False,
+                           order_story_events: bool = False) -> dict[str, Any]:
     """Sort known frame lists by scene time; never invent or discard evidence."""
     result = copy.deepcopy(arguments)
     if not isinstance(result, dict):
@@ -79,6 +80,12 @@ def _order_evidence_frames(arguments: dict[str, Any], workspace: VideoWorkspace,
                 if isinstance(decision, dict) and isinstance(decision.get("final_indices"), list):
                     decision["final_indices"] = [remap.get(index, index) if type(index) is int else index
                                                  for index in decision["final_indices"]]
+    story_events = result.get("story_events")
+    if order_story_events and isinstance(story_events, list) and all(
+        isinstance(item, dict) and type(item.get("time_start")) in (int, float)
+        and math.isfinite(item["time_start"]) for item in story_events
+    ):
+        result["story_events"] = sorted(story_events, key=lambda item: item["time_start"])
     for collection in ("events", "story_events", "identity_tracks"):
         items = result.get(collection, [])
         if not isinstance(items, list):
@@ -937,7 +944,8 @@ async def run_video_analysis_agent(
                 if turn.text:
                     try:
                         candidate = VideoAnalysisResult.model_validate(
-                            _order_evidence_frames(json.loads(turn.text), workspace, order_events=evidence_review_required))
+                            _order_evidence_frames(json.loads(turn.text), workspace, order_events=evidence_review_required,
+                                                   order_story_events=evidence_review_required and review_started))
                     except (ValidationError, ValueError, TypeError) as exc:
                         finish_corrections += 1
                         outcome = {"error": "invalid_finish_text", "details": str(exc)[:2000]}
@@ -973,9 +981,14 @@ async def run_video_analysis_agent(
             for tool_index, tc in enumerate(turn.calls):
                 if tc.name == "finish_video_analysis":
                     finish_key = f"{step}:{tool_index}"
+                    previous_finish = (run.raw_output or {}).get("finish_diagnostics", {}).get(finish_key)
+                    if call is not None and step in accounted and previous_finish and previous_finish.get("error"):
+                        history.append(provider.tool_result(tc, previous_finish))
+                        continue
                     try:
                         candidate = VideoAnalysisResult.model_validate(
-                            _order_evidence_frames(tc.arguments, workspace, order_events=evidence_review_required))
+                            _order_evidence_frames(tc.arguments, workspace, order_events=evidence_review_required,
+                                                   order_story_events=evidence_review_required and review_started))
                     except ValidationError as exc:
                         finish_corrections += 1
                         details = [{"field": list(error["loc"]), "type": error["type"], "message": error["msg"]}
