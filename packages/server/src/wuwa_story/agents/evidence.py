@@ -192,6 +192,27 @@ async def quest_visual_reference(session, variant_id: int, asset_id: int, releas
     return await current_scene_report(session, roots[0], release.game_version, plan) or legacy
 
 
+async def visual_text_context(session, report, release_id: int):
+    """Use only the snapshot frozen with this completed visual report."""
+    from wuwa_story.agents.video_context import scene_text_context
+    from wuwa_story.db.models.ops import ProcessingRun
+
+    metadata = report.metadata_json or {}
+    run_id = metadata.get("run_id")
+    if type(run_id) is not int:
+        return None
+    run = await session.get(ProcessingRun, run_id)
+    if (run is None or run.status != "completed" or run.target_node_id != report.owner_node_id
+            or (run.raw_output or {}).get("report_reference_id") != report.id):
+        return None
+    settings = run.metadata_json or {}
+    if (settings.get("source_sha256") != metadata.get("source_sha256")
+            or settings.get("file_id") != metadata.get("source_file_id")):
+        return None
+    return scene_text_context(settings.get("text_context") or {}, settings.get("analysis_plan"),
+                              settings.get("file_id"), release_id)
+
+
 async def quest_fingerprint(
     session: AsyncSession,
     quest: Quest,
@@ -419,6 +440,7 @@ class EvidenceTools:
                     "quest_association": asset["quest_association"],
                     "context_warning": asset["context_warning"]}
         metadata = report.metadata_json
+        context = await visual_text_context(self.session, report, self.release_id)
         events = metadata["events"][offset : offset + limit]
         receipt = self.visual_evidence.get(
             str(report.id), {"hash": hash_value(metadata).hex(), "indices": []}
@@ -427,6 +449,7 @@ class EvidenceTools:
             set(receipt["indices"]) | set(range(offset, offset + len(events)))
         )
         receipt["snapshot_id"] = self.release_id
+        receipt["context_hash"] = hash_value(context).hex() if context is not None else None
         self.visual_evidence[str(report.id)] = receipt
         return {
             "asset_node_id": asset_node_id,
@@ -442,6 +465,7 @@ class EvidenceTools:
             "events": [{"index": offset + index, **event} for index, event in enumerate(events)],
             "story_events": metadata.get("story_events", []),
             "identity_tracks": metadata.get("identity_tracks", []),
+            "source_context": context if offset == 0 else None,
             "next_offset": offset + len(events)
             if offset + len(events) < len(metadata["events"])
             else None,
@@ -1039,7 +1063,15 @@ class EvidenceTools:
                 item["asset_node_id"] for item in inventory
             }:
                 raise ValueError("Cutscene description is outside this quest")
-            validate_description(description, report.metadata_json, receipt["indices"])
+            source_context = await visual_text_context(self.session, report, receipt["snapshot_id"])
+            if ("context_hash" in receipt and source_context and source_context.get("captions")
+                    and source_context.get("dialogue_lines") and not description.narrative_events):
+                raise ValueError("Combine scene visuals and the available source context in at least one cited narrative event")
+            if description.narrative_events and (
+                source_context is None or hash_value(source_context).hex() != receipt.get("context_hash")
+            ):
+                raise ValueError("Scene dialogue context was unavailable or changed before publication")
+            validate_description(description, report.metadata_json, receipt["indices"], source_context)
         if result.sections:
             positions = await self.target_positions()
             end_position = -1

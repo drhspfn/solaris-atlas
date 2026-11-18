@@ -77,3 +77,19 @@ async def test_visual_reader_returns_timeline_and_uses_available_variant(monkeyp
     assert result["story_events"] == metadata["story_events"]
     assert result["identity_tracks"] == metadata["identity_tracks"]
     assert lookup.await_args.args[1] == 2
+
+
+@pytest.mark.asyncio
+async def test_visual_text_context_requires_matching_completed_report_and_snapshot():
+    snapshot = {"basis": "source_captions", "release": {"id": 7}, "language": "en",
+                "rows": [{"node_id": 20, "text": "Together?", "start_seconds": 2, "end_seconds": 3}]}
+    report = SimpleNamespace(id=12, owner_node_id=500,
+                             metadata_json={"run_id": 1, "source_sha256": "hash", "source_file_id": 9})
+    run = SimpleNamespace(status="completed", target_node_id=500, raw_output={"report_reference_id": 12},
+                          metadata_json={"file_id": 9, "source_sha256": "hash", "text_context": snapshot})
+    session = SimpleNamespace(get=AsyncMock(return_value=run))
+    result = await evidence.visual_text_context(session, report, 7)
+    assert result["captions"][0]["text"] == "Together?"
+    assert await evidence.visual_text_context(session, report, 8) is None
+    run.raw_output["report_reference_id"] = 13
+    assert await evidence.visual_text_context(session, report, 7) is None

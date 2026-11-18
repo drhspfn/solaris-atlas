@@ -59,6 +59,16 @@ read_cutscene_visual until next_offset is null. Visual observations are AI-gener
 sampled evidence, not dialogue or certain character identity. Combine them with exact
 dialogue, retaining variant identity. Write cutscene_descriptions with the exact
 visual_reference_id and observation_indices; use timed chapters only for longer scenes.
+For source-linked scenes, read_cutscene_visual provides the frozen source_context:
+caption intervals are mapped to scene time, while surrounding dialogue has no verified
+video timestamp. Build narrative_events by combining read visual observations with exact
+caption or dialogue quotes from that context. Cite each source by node_id and source_kind;
+caption citations must overlap the event in scene time. Describe the sequence of actions,
+meaningful changes and emotional transitions instead of repeating static compositions.
+Identify characters using corroborating visual and source evidence, marking uncertainty.
+Keep thematic conclusions in interpretation, distinct from observable actions and exact
+dialogue. Do not claim a source proves a shot, action, speaker, or exact timing it does not.
+Do not assign a video timestamp to surrounding dialogue without timed caption evidence.
 When context_inferred is true, the quest association is inferred and does not prove
 that the scene plays during this quest or on a particular runtime branch.
 Do not omit these possible connections from research. Inspect their available visuals,
