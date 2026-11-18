@@ -92,6 +92,15 @@ class VideoPreviewCandidate(BaseModel):
     score: int = Field(ge=0, le=100)
 
 
+class VideoReviewDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    draft_index: int = Field(ge=0)
+    status: Literal["retained", "revised", "disputed", "unresolved"]
+    final_indices: list[int] = Field(default_factory=list, max_length=20)
+    reason: str = Field(default="", max_length=500)
+    evidence_frames: list[int] = Field(default_factory=list, max_length=24)
+
+
 class VideoAnalysisResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str | None = Field(default=None, min_length=1, max_length=120, pattern=r"^[^\r\n]+$")
@@ -102,6 +111,8 @@ class VideoAnalysisResult(BaseModel):
     lore_topics: list[str] = Field(default_factory=list, max_length=32)
     preview_candidates: list[VideoPreviewCandidate] = Field(default_factory=list, max_length=5)
     identity_tracks: list[VideoIdentityTrack] = Field(default_factory=list, max_length=64)
+    event_review: list[VideoReviewDecision] = Field(default_factory=list, max_length=200)
+    identity_review: list[VideoReviewDecision] = Field(default_factory=list, max_length=64)
 
     @field_validator("title", mode="before")
     @classmethod
@@ -357,6 +368,7 @@ async def enqueue_visual_job(
                 "version": reference.metadata_json.get("asset_version"),
                 "protocol": VISION_VERSION,
                 "temporal_review_version": 1,
+                "review_evidence_version": 1,
                 "config": config,
                 "text_context": text_context,
                 "title_source_report": report.id if report else None,
@@ -394,6 +406,7 @@ async def enqueue_visual_job(
             "settings": config,
             "text_context": text_context,
             "temporal_review_version": 1,
+            "review_evidence_version": 1,
             **({"title_only_report_id": report.id} if report else {}),
         },
         raw_output={"batches": [], "step": 0},

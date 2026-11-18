@@ -58,13 +58,27 @@ logger = logging.getLogger(__name__)
 MAX_AGENT_TURNS = 14
 MAX_FINISH_CORRECTIONS = 2
 MAX_REFERENCE_IMAGES = 6
+MAX_SPATIAL_INSPECTIONS = 4
 
 
-def _order_evidence_frames(arguments: dict[str, Any], workspace: VideoWorkspace) -> dict[str, Any]:
+def _order_evidence_frames(arguments: dict[str, Any], workspace: VideoWorkspace, *, order_events: bool = False) -> dict[str, Any]:
     """Sort known frame lists by scene time; never invent or discard evidence."""
     result = copy.deepcopy(arguments)
     if not isinstance(result, dict):
         return result
+    events = result.get("events")
+    if order_events and isinstance(events, list) and all(
+        isinstance(item, dict) and type(item.get("time")) in (int, float) and math.isfinite(item["time"])
+        for item in events
+    ):
+        order = sorted(range(len(events)), key=lambda index: events[index]["time"])
+        remap = {old: new for new, old in enumerate(order)}
+        result["events"] = [events[index] for index in order]
+        if isinstance(result.get("event_review"), list):
+            for decision in result["event_review"]:
+                if isinstance(decision, dict) and isinstance(decision.get("final_indices"), list):
+                    decision["final_indices"] = [remap.get(index, index) if type(index) is int else index
+                                                 for index in decision["final_indices"]]
     for collection in ("events", "story_events", "identity_tracks"):
         items = result.get(collection, [])
         if not isinstance(items, list):
@@ -74,6 +88,100 @@ def _order_evidence_frames(arguments: dict[str, Any], workspace: VideoWorkspace)
             if isinstance(frames, list) and all(type(frame) is int and frame in workspace.frame_times for frame in frames):
                 item["evidence_frames"] = sorted(frames, key=lambda frame: (workspace.frame_times[frame], frame))
     return result
+
+
+def _review_evidence_errors(draft: VideoAnalysisResult, final: VideoAnalysisResult, workspace: VideoWorkspace) -> list[str]:
+    """Require an explicit, evidence-backed disposition for each provisional entry."""
+    errors = []
+    for name, before, after, decisions in (
+        ("event", draft.events, final.events, final.event_review),
+        ("identity", draft.identity_tracks, final.identity_tracks, final.identity_review),
+    ):
+        indices = [decision.draft_index for decision in decisions]
+        if sorted(indices) != list(range(len(before))):
+            errors.append(f"{name}_review must cover each draft index exactly once")
+            continue
+        for decision in decisions:
+            label = f"{name}_review {decision.draft_index}"
+            if any(index < 0 or index >= len(after) for index in decision.final_indices):
+                errors.append(f"{label}: invalid final index")
+                continue
+            if decision.status in ("retained", "revised") and not decision.final_indices:
+                errors.append(f"{label}: retained or revised entries need final indices")
+            if decision.status in ("disputed", "unresolved") and decision.final_indices:
+                errors.append(f"{label}: disputed or unresolved entries must not claim final indices")
+            if decision.status != "retained" and not decision.reason.strip():
+                errors.append(f"{label}: explain changes or uncertainty")
+            if decision.status in ("revised", "disputed"):
+                item = before[decision.draft_index]
+                start = item.time if name == "event" else item.time_start
+                end = (item.time_end if item.time_end is not None else start) if name == "event" else item.time_end
+                if not decision.evidence_frames or any(
+                    frame not in workspace.frame_times or not start - 3 <= workspace.frame_times[frame] <= end + 3
+                    for frame in decision.evidence_frames
+                ):
+                    errors.append(f"{label}: cite known nearby frames to revise or dispute")
+            if name == "identity" and decision.status == "retained" and any(
+                after[index].identity.strip().casefold() != before[decision.draft_index].identity.strip().casefold()
+                or after[index].appearance.strip().casefold() != before[decision.draft_index].appearance.strip().casefold()
+                or after[index].confidence != before[decision.draft_index].confidence
+                or after[index].basis != before[decision.draft_index].basis
+                or after[index].time_start > before[decision.draft_index].time_end + 3
+                or after[index].time_end < before[decision.draft_index].time_start - 3
+                for index in decision.final_indices
+            ):
+                errors.append(f"{label}: a changed identity requires revision and evidence")
+            if name == "event" and decision.status == "retained" and decision.final_indices:
+                item = before[decision.draft_index]
+                end = item.time_end if item.time_end is not None else item.time
+                if not any(after[index].time <= end + 3 and
+                           (after[index].time_end if after[index].time_end is not None else after[index].time) >= item.time - 3
+                           for index in decision.final_indices):
+                    errors.append(f"{label}: retained observation must overlap the draft time")
+                if not any(" ".join(item.observation.split()).casefold() in
+                           " ".join(after[index].observation.split()).casefold()
+                           for index in decision.final_indices):
+                    errors.append(f"{label}: changed wording requires revision and evidence")
+    return errors[:20]
+
+
+async def _previous_scene_evidence(db: AsyncSession, run: ProcessingRun) -> dict[str, Any]:
+    """Only reuse an explicitly matching, completed analysis as fallible prior evidence."""
+    from wuwa_story.agents.cutscene_vision import visual_reference
+    from wuwa_story.agents.scene_analysis_reader import current_scene_report
+
+    metadata = run.metadata_json or {}
+    plan, version = metadata.get("analysis_plan"), metadata.get("asset_version")
+    if run.target_node_id is None or not version:
+        return {"available": False}
+    if plan:
+        report = await current_scene_report(db, run.target_node_id, version, plan)
+    else:
+        report = await visual_reference(db, run.target_node_id, version)
+    if report is None:
+        return {"available": False}
+    previous = report.metadata_json or {}
+    previous_run_id = previous.get("run_id")
+    if (type(previous_run_id) is not int or previous_run_id == run.id or
+            previous.get("source_sha256") != metadata.get("source_sha256") or
+            previous.get("source_file_id") != metadata.get("file_id")):
+        return {"available": False}
+    previous_run = await db.get(ProcessingRun, previous_run_id)
+    if (previous_run is None or previous_run.status != "completed"
+            or (previous_run.raw_output or {}).get("report_reference_id") != report.id
+            or (previous_run.metadata_json or {}).get("text_context") != metadata.get("text_context")):
+        return {"available": False}
+    events = previous.get("events") or []
+    tracks = previous.get("identity_tracks") or []
+    def spread(items, limit):
+        indices = range(len(items)) if len(items) <= limit else (
+            index * (len(items) - 1) // (limit - 1) for index in range(limit))
+        return [{"prior_index": index, **items[index]} for index in indices]
+
+    return {"available": True, "report_id": report.id, "run_id": previous_run_id,
+            "meaning": "Earlier AI observations of the same selected video and source context; provisional, not verified facts.",
+            "events": spread(events, 30), "identity_tracks": spread(tracks, 20),
+            "events_omitted": max(0, len(events) - 30), "identity_tracks_omitted": max(0, len(tracks) - 20)}
 
 
 @dataclass
@@ -103,6 +211,29 @@ class VideoWorkspace:
     frame_times: dict[int, float] = field(default_factory=dict)
     next_atlas_index: int = 1
     next_frame_index: int = 1
+
+    async def inspect_region(self, global_frame: int, bbox: list[float]) -> tuple[dict[str, Any], bytes]:
+        if (type(global_frame) is not int or global_frame not in self.frame_times or not isinstance(bbox, list)
+                or len(bbox) != 4 or any(type(value) not in (int, float) or not math.isfinite(value) for value in bbox)):
+            raise ValueError("Choose a known frame and four finite normalized coordinates")
+        left, top, right, bottom = bbox
+        if not (0 <= left < right <= 1 and 0 <= top < bottom <= 1 and right - left >= 0.02 and bottom - top >= 0.02):
+            raise ValueError("Crop must be inside the frame and at least 2% of its width and height")
+        timestamp = self.frame_times[global_frame]
+        movie, local_time, duration, source = self.source_at(timestamp)
+        safe_ts = (source["decode_source_time"] if source else
+                   min(max(0.0, float(local_time)), max(0.0, duration - 0.1)))
+        region_key = hashlib.sha256(json.dumps([global_frame, bbox]).encode()).hexdigest()[:16]
+        path = self.root / f"region_{region_key}.jpg"
+        crop = (f"crop=trunc(iw*{right - left:.8f}/2)*2:trunc(ih*{bottom - top:.8f}/2)*2:"
+                f"trunc(iw*{left:.8f}/2)*2:trunc(ih*{top:.8f}/2)*2,scale=1024:-2:flags=lanczos,format=yuvj420p")
+        await run_tool([str(self.ffmpeg), "-v", "error", "-y", "-ss", str(safe_ts), "-i", str(movie),
+                        "-frames:v", "1", "-vf", crop, "-threads", "1", "-q:v", "3", str(path)], 60)
+        data = path.read_bytes()
+        if not data or len(data) > 2_000_000:
+            raise ValueError("Region image is empty or exceeds the size limit")
+        return {"global_frame": global_frame, "scene_time": timestamp, "bbox": bbox,
+                "sha256": hashlib.sha256(data).hexdigest(), "mime_type": "image/jpeg"}, data
 
     def source_at(self, timestamp: float) -> tuple[Path, float, float, dict]:
         return self.movie, timestamp, self.duration, {}
@@ -525,7 +656,7 @@ async def _publish_cutscene_knowledge(
             )
 
 
-def _estimate_input_tokens(payload: Any, atlases: list[AtlasEntry]) -> int:
+def _estimate_input_tokens(payload: Any, atlases: list[AtlasEntry], *, extra_images: int = 0) -> int:
     """Estimate text tokens without counting raw base64 image bytes, plus per-atlas image tokens."""
     def _strip_images(obj: Any) -> Any:
         if isinstance(obj, str):
@@ -550,7 +681,8 @@ def _estimate_input_tokens(payload: Any, atlases: list[AtlasEntry]) -> int:
         )
         for entry in atlases
     )
-    return max(4096, text_len // 4 + image_tokens + 1024)
+    # Reference and region images are bounded to 1024x1024 pixels.
+    return max(4096, text_len // 4 + image_tokens + extra_images * 8192 + 1024)
 
 
 def _temporal_evidence_errors(result: VideoAnalysisResult, workspace: VideoWorkspace) -> list[str]:
@@ -634,6 +766,18 @@ TEMPORAL_REVIEW_INSTRUCTION = (
     "set evidence_kind for every event, and call finish_video_analysis again."
 )
 
+EVIDENCE_REVIEW_INSTRUCTION = (
+    "The draft is provisional evidence, not confirmed identity. Review every draft event and identity track "
+    "by its zero-based index. In event_review and identity_review return exactly one decision for each: "
+    "retained, revised, disputed, or unresolved. Retained/revised decisions need final_indices; disputed/"
+    "unresolved have none. For revised/disputed cite nearby numbered evidence_frames and explain why; "
+    "for unresolved explain the uncertainty. A retained identity must keep the same label; revise it with "
+    "evidence if its name, appearance, confidence, or basis changes. Retained observations must keep their "
+    "original wording; mark paraphrases as revised with nearby evidence. Keep distinct simultaneous appearances separate. Do not silently drop "
+    "an earlier observation, guess a name, or treat a draft claim as confirmed. Include the review "
+    "decisions in your final finish_video_analysis result."
+)
+
 
 async def run_video_analysis_agent(
     db: AsyncSession,
@@ -655,6 +799,18 @@ async def run_video_analysis_agent(
         "atlases": workspace.manifest(overview_atlases),
         "source_text_context": context or {},
     }
+    if run.metadata_json.get("review_evidence_version") == 1:
+        previous = (run.raw_output or {}).get("previous_scene_evidence")
+        if previous is None:
+            previous = await _previous_scene_evidence(db, run)
+            run.raw_output = {**(run.raw_output or {}), "previous_scene_evidence": previous}
+            await db.commit()
+        intro["previous_scene_evidence"] = previous
+        if previous.get("available"):
+            intro["previous_evidence_instruction"] = (
+                "Compare prior observations and identity tracks with current frames and context; "
+                "reinspect consequential differences. Prior AI output is not proof and may be incomplete or wrong."
+            )
     if run.metadata_json.get("analysis_plan"):
         intro["analysis_plan"] = run.metadata_json["analysis_plan"]
         intro["timeline_rules"] = (
@@ -680,10 +836,15 @@ async def run_video_analysis_agent(
 
         final_result: VideoAnalysisResult | None = None
         review_required = run.metadata_json.get("temporal_review_version") == 1
+        evidence_review_required = run.metadata_json.get("review_evidence_version") == 1
+        if evidence_review_required and not review_required:
+            raise ValueError("Evidence review requires temporal review")
         review_started = False
         review_started_at = -1
+        review_draft: VideoAnalysisResult | None = None
         finish_corrections = 0
         reference_images_used = 0
+        spatial_inspections_used = 0
         usage_steps = []
 
         async def record_finish(key: str, result: dict[str, Any]) -> None:
@@ -692,12 +853,30 @@ async def run_video_analysis_agent(
             run.raw_output = {**(run.raw_output or {}), "finish_diagnostics": diagnostics}
             await db.commit()
 
+        def remember_draft(candidate: VideoAnalysisResult) -> None:
+            nonlocal review_draft
+            review_draft = candidate
+            if evidence_review_required:
+                saved = candidate.model_dump()
+                previous = (run.raw_output or {}).get("review_draft")
+                if previous is not None and previous != saved:
+                    raise ProviderFailure("video_agent_review_draft_changed_on_replay")
+                run.raw_output = {**(run.raw_output or {}), "review_draft": saved}
+
+        def review_errors(candidate: VideoAnalysisResult) -> list[str]:
+            errors = _temporal_evidence_errors(candidate, workspace) if review_required else []
+            if evidence_review_required:
+                errors.extend(_review_evidence_errors(review_draft, candidate, workspace) if review_draft is not None
+                              else ["A saved draft is required before final review"])
+            return errors[:20]
+
         accounted = set((run.raw_output or {}).get(
             "accounted_steps", range(int((run.raw_output or {}).get("step", 0)))))
         for turn_index in range(MAX_AGENT_TURNS):
             step = turn_index
             route, payload = provider.request(history, tools)
-            input_bound = _estimate_input_tokens(payload, workspace.atlases)
+            input_bound = _estimate_input_tokens(payload, workspace.atlases,
+                                                  extra_images=reference_images_used + spatial_inspections_used)
             call = await db.scalar(
                 select(AgentCall).where(AgentCall.run_id == run.id, AgentCall.step == step)
             )
@@ -758,7 +937,7 @@ async def run_video_analysis_agent(
                 if turn.text:
                     try:
                         candidate = VideoAnalysisResult.model_validate(
-                            _order_evidence_frames(json.loads(turn.text), workspace))
+                            _order_evidence_frames(json.loads(turn.text), workspace, order_events=evidence_review_required))
                     except (ValidationError, ValueError, TypeError) as exc:
                         finish_corrections += 1
                         outcome = {"error": "invalid_finish_text", "details": str(exc)[:2000]}
@@ -771,10 +950,12 @@ async def run_video_analysis_agent(
                         review_started = True
                         review_started_at = step
                         finish_corrections = 0
+                        remember_draft(candidate)
                         await record_finish(f"{step}:text", {"status": "draft"})
-                        history.append(_multimodal_user_message(provider, TEMPORAL_REVIEW_INSTRUCTION, []))
+                        history.append(_multimodal_user_message(provider, TEMPORAL_REVIEW_INSTRUCTION +
+                            (" " + EVIDENCE_REVIEW_INSTRUCTION if evidence_review_required else ""), []))
                         continue
-                    errors = _temporal_evidence_errors(candidate, workspace) if review_required else []
+                    errors = review_errors(candidate)
                     if errors:
                         finish_corrections += 1
                         await record_finish(f"{step}:text", {"error": "invalid_temporal_evidence", "details": errors})
@@ -793,7 +974,8 @@ async def run_video_analysis_agent(
                 if tc.name == "finish_video_analysis":
                     finish_key = f"{step}:{tool_index}"
                     try:
-                        candidate = VideoAnalysisResult.model_validate(_order_evidence_frames(tc.arguments, workspace))
+                        candidate = VideoAnalysisResult.model_validate(
+                            _order_evidence_frames(tc.arguments, workspace, order_events=evidence_review_required))
                     except ValidationError as exc:
                         finish_corrections += 1
                         details = [{"field": list(error["loc"]), "type": error["type"], "message": error["msg"]}
@@ -808,7 +990,9 @@ async def run_video_analysis_agent(
                         review_started = True
                         review_started_at = step
                         finish_corrections = 0
-                        outcome = {"status": "draft", "instruction": TEMPORAL_REVIEW_INSTRUCTION}
+                        remember_draft(candidate)
+                        outcome = {"status": "draft", "instruction": TEMPORAL_REVIEW_INSTRUCTION +
+                                   (" " + EVIDENCE_REVIEW_INSTRUCTION if evidence_review_required else "")}
                         await record_finish(finish_key, outcome)
                         history.append(provider.tool_result(tc, outcome))
                         continue
@@ -817,7 +1001,7 @@ async def run_video_analysis_agent(
                         await record_finish(finish_key, outcome)
                         history.append(provider.tool_result(tc, outcome))
                         continue
-                    errors = _temporal_evidence_errors(candidate, workspace) if review_required else []
+                    errors = review_errors(candidate)
                     if errors:
                         finish_corrections += 1
                         outcome = {"error": "invalid_temporal_evidence", "details": errors}
@@ -833,6 +1017,29 @@ async def run_video_analysis_agent(
                     break
                 tool_key = f"{step}:{tool_index}"
                 cached = (run.raw_output or {}).get("tool_results", {}).get(tool_key)
+                if tc.name == "inspect_video_region":
+                    if spatial_inspections_used >= MAX_SPATIAL_INSPECTIONS:
+                        tool_out, image = {"error": "spatial_inspection_limit"}, None
+                    else:
+                        try:
+                            tool_out, image = await workspace.inspect_region(tc.arguments.get("global_frame"),
+                                                                             tc.arguments.get("bbox"))
+                        except (ValueError, OSError) as exc:
+                            tool_out, image = {"error": "invalid_or_unavailable_region", "detail": str(exc)[:200]}, None
+                        except RuntimeError:
+                            tool_out, image = {"error": "region_extraction_failed"}, None
+                    if cached is not None and cached["output"] != tool_out:
+                        raise ProviderFailure("video_agent_region_changed_on_replay")
+                    if cached is None:
+                        tool_results = dict((run.raw_output or {}).get("tool_results", {}))
+                        tool_results[tool_key] = {"output": tool_out, "atlases": []}
+                        run.raw_output = {**(run.raw_output or {}), "tool_results": tool_results}
+                        await db.commit()
+                    history.append(provider.tool_result(tc, tool_out))
+                    if image is not None:
+                        spatial_inspections_used += 1
+                        reference_images.append(image)
+                    continue
                 if tc.name == "get_character_reference_image":
                     from wuwa_story_worker.video_identity import character_reference_image
 
@@ -882,7 +1089,7 @@ async def run_video_analysis_agent(
                 )
             if reference_images:
                 history.append(_multimodal_user_message(
-                    provider, "Requested character reference images, in tool-call order; compare with scene frames.",
+                    provider, "Requested character reference images and video region crops, in tool-call order; compare with scene frames.",
                     reference_images,
                 ))
 
@@ -1012,6 +1219,12 @@ async def run_video_analysis_agent(
         "entity_links": [link.model_dump() for link in final_result.entity_links],
         "lore_topics": final_result.lore_topics,
         "identity_tracks": [track.model_dump() for track in final_result.identity_tracks],
+        "spatial_evidence": [entry["output"] for entry in (run.raw_output or {}).get("tool_results", {}).values()
+                             if "global_frame" in entry.get("output", {}) and "bbox" in entry.get("output", {})],
+        **({"review_evidence_version": 1, "review_draft": review_draft.model_dump(),
+            "event_review": [decision.model_dump() for decision in final_result.event_review],
+            "identity_review": [decision.model_dump() for decision in final_result.identity_review]}
+           if evidence_review_required and review_draft is not None else {}),
         "atlases": workspace.manifest(),
         "atlas_references": atlas_refs,
         "preview_file_ids": preview_ids,
@@ -1025,6 +1238,7 @@ async def run_video_analysis_agent(
             "resample_requests": sum("new_atlases" in item.get("output", {})
                                      for item in (run.raw_output or {}).get("tool_results", {}).values()),
             "reference_images": reference_images_used,
+            "spatial_inspections": spatial_inspections_used,
             "finish_attempts": len((run.raw_output or {}).get("finish_diagnostics", {})),
             "usage_steps": usage_steps,
         },

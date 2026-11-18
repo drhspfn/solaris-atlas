@@ -7,6 +7,17 @@ import pytest
 from wuwa_story.agents import evidence
 
 
+def test_review_audit_exposes_uncertainty_without_treating_draft_as_fact():
+    metadata = {"review_evidence_version": 1, "review_draft": {
+        "events": [{"observation": "Two figures walk"}], "identity_tracks": [{"identity": "Lily"}]},
+        "event_review": [{"draft_index": 0, "status": "unresolved", "reason": "Too distant"}],
+        "identity_review": [{"draft_index": 0, "status": "retained"}]}
+    audit = evidence.visual_review_audit(metadata)
+    assert len(audit["items"]) == 1
+    assert audit["items"][0]["provisional_excerpt"] == "Two figures walk"
+    assert "not established facts" in audit["meaning"]
+
+
 @pytest.mark.asyncio
 async def test_inventory_includes_inferred_scenario_and_prefers_explicit(monkeypatch):
     monkeypatch.setattr(evidence, "quest_states", AsyncMock(return_value=[20]))

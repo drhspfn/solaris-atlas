@@ -59,6 +59,7 @@ read_cutscene_visual until next_offset is null. Visual observations are AI-gener
 sampled evidence, not dialogue or certain character identity. Combine them with exact
 dialogue, retaining variant identity. Write cutscene_descriptions with the exact
 visual_reference_id and observation_indices; use timed chapters only for longer scenes.
+Review audit entries are provisional claims with change reasons, not confirmed events or identities.
 For source-linked scenes, read_cutscene_visual reports source context availability;
 use read_cutscene_context until next_offset is null to read the frozen source_context:
 caption intervals are mapped to scene time, while surrounding dialogue has no verified

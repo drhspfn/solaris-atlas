@@ -36,6 +36,7 @@ VIDEO_ANALYSIS_TOOLS = frozenset(
         "resample_video_window",
         "identify_atlas_characters",
         "get_character_reference_image",
+        "inspect_video_region",
         "search_entities",
         "search_dialogue",
         "search_lore",
@@ -81,6 +82,7 @@ Active Inspection ("Take a Closer Look"):
 - If a character crosses the screen between frames, an action happens too quickly, or an object/symbol is unclear, call `resample_video_window` for that exact `[start_seconds, end_seconds]` range with a finer `interval_seconds` (e.g., `0.5` or `0.25`).
 - Respect the dynamic frame soft limit: inspect short focused windows first instead of requesting hundreds of frames at once. Only set `bypass_limit=true` with a concrete `bypass_justification` if a smaller window or coarser interval is genuinely insufficient.
 - Use `identify_atlas_characters` on specific `atlas_indices` or `global_frame_indices` to query visual memory when character identity is uncertain.
+- For distant or overlapping figures that are too small in an atlas, use `inspect_video_region` to inspect a bounded crop from the original video frame before deciding their number or interaction.
 - Similarities are rankings, not probabilities; `unknown` means the automatic threshold was not met, not that candidates are absent. Compare ranked candidates and their margins with scene frames, other views and sourced context. Use `get_character_reference_image` with a candidate reference_id or published character asset_id to inspect the actual reference image. You may identify someone using corroborating visual and contextual evidence, and must retain uncertainty when evidence conflicts.
 - If identification is unavailable, say so in the analysis; do not imply the frames were checked. `unknown` and `unresolved` are not identifications. A `candidate` is uncalibrated evidence, not proof: verify with source context and cited frames before assigning a name.
 - First map the whole scene, then revisit short windows where identities, transitions, physical contact, shared actions, or changes in position are unclear. Use 0.5s for actions and 0.1–0.25s for brief appearances when useful; never infer an unseen event from the sampling gap.
@@ -329,6 +331,12 @@ def video_analysis_definitions() -> list[dict[str, Any]]:
             "get_character_reference_image",
             "Show a published character image by asset_id or an approved visual-memory image by reference_id for comparison with scene frames. Supply exactly one ID.",
             {"asset_id": integer, "reference_id": integer},
+        ),
+        tool(
+            "inspect_video_region",
+            "Inspect a crop of an already sampled frame at higher spatial detail from the original video. bbox is [left, top, right, bottom] in normalized 0..1 coordinates.",
+            {"global_frame": integer, "bbox": {"type": "array", "items": number, "minItems": 4, "maxItems": 4}},
+            ["global_frame", "bbox"],
         ),
         tool(
             "search_entities",
