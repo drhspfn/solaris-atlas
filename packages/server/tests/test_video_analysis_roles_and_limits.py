@@ -1,5 +1,6 @@
 """Tests for video_analysis role separation, dynamic limits, bypass, and admin cleanup."""
 
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -18,6 +19,20 @@ from wuwa_story.agents.cutscene_vision import (
     wipe_cutscene_analysis,
 )
 from wuwa_story.agents.settings import AgentSettings
+
+
+def test_visual_model_has_separate_pinned_prices():
+    settings = AgentSettings(_env_file=None, model="gpt-6-luna", vision_model="gpt-6.1-terra",
+                             vision_input_usd_per_million=1, vision_output_usd_per_million=5,
+                             vision_cached_input_usd_per_million=Decimal("0.05"))
+    visual = settings.for_vision()
+    assert settings.model == "gpt-6-luna"
+    assert visual.model == "gpt-6.1-terra"
+    assert visual.public_config()["input_usd_per_million"] == "1"
+    assert visual.public_config()["output_usd_per_million"] == "5"
+    assert visual.public_config()["cached_input_usd_per_million"] == "0.05"
+    with pytest.raises(ValueError, match="prices"):
+        AgentSettings(_env_file=None, vision_model="gpt-6.1-terra").for_vision()
 
 
 def test_video_analysis_role_and_tools_are_separated():
