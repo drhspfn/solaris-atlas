@@ -273,6 +273,34 @@ async def test_story_events_must_follow_timeline(runtime):
     assert "story events must be chronological" in errors
 
 
+def test_evidence_frames_are_ordered_by_time_not_frame_number():
+    ws = SimpleNamespace(frame_times={1: 10, 2: 20, 3: 11})
+    original = {"events": [{"evidence_frames": [1, 2, 3]}],
+                "story_events": [{"evidence_frames": [2, 3, 1]}],
+                "identity_tracks": [{"evidence_frames": [99, 1]}]}
+    result = agent._order_evidence_frames(original, ws)
+    assert result["events"][0]["evidence_frames"] == [1, 3, 2]
+    assert result["story_events"][0]["evidence_frames"] == [1, 3, 2]
+    assert result["identity_tracks"][0]["evidence_frames"] == [99, 1]
+    assert original["events"][0]["evidence_frames"] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_finish_errors_are_saved_and_retries_bounded(runtime, monkeypatch):
+    db, run, settings, storage, _, _, _ = runtime
+    run.metadata_json["temporal_review_version"] = 1
+    invalid = result()
+    invalid["identity_tracks"] = [{"identity": "Lily", "appearance": "coat", "confidence": "identified",
+                                   "basis": "bad", "time_start": 0, "time_end": 1}]
+    post = AsyncMock(return_value=response("finish_video_analysis", invalid))
+    monkeypatch.setattr(agent.Provider, "post", post)
+    with pytest.raises(ProviderFailure, match="finish_correction_limit"):
+        await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
+    assert post.await_count == agent.MAX_FINISH_CORRECTIONS + 1
+    assert run.raw_output["finish_diagnostics"]["0:0"]["error"] == "invalid_finish_arguments"
+    assert run.raw_output["finish_diagnostics"]["0:0"]["details"][0]["field"] == ["identity_tracks", 0, "basis"]
+
+
 @pytest.mark.asyncio
 async def test_overview_keeps_short_unique_parts_and_never_samples_gap(runtime):
     runtime[2].vision_max_frames = 6
