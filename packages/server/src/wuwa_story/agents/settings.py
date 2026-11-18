@@ -53,7 +53,7 @@ class AgentSettings(BaseSettings):
     public_query_embeddings: bool = False
     query_requests_per_hour: int = Field(default=30, ge=1, le=1000)
     vision_enabled: bool = False
-    vision_frame_interval: float = Field(default=3, ge=1, le=30)
+    vision_frame_interval: float = Field(default=2, ge=1, le=30)
     vision_max_frames: int = Field(default=600, ge=2, le=1200)
     vision_batch_frames: int = Field(default=48, ge=1, le=64)
     vision_atlas_frames: int = Field(default=12, ge=1, le=24)
