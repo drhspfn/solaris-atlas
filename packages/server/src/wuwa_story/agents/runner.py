@@ -59,6 +59,18 @@ read_cutscene_visual until next_offset is null. Visual observations are AI-gener
 sampled evidence, not dialogue or certain character identity. Combine them with exact
 dialogue, retaining variant identity. Write cutscene_descriptions with the exact
 visual_reference_id and observation_indices; use timed chapters only for longer scenes.
+For source-linked scenes, read_cutscene_visual reports source context availability;
+use read_cutscene_context until next_offset is null to read the frozen source_context:
+caption intervals are mapped to scene time, while surrounding dialogue has no verified
+video timestamp. Build narrative_events by combining read visual observations with exact
+caption or dialogue quotes from that context. Cite each source by node_id and source_kind;
+caption citations must overlap the event in scene time. Describe the sequence of actions,
+meaningful changes and emotional transitions instead of repeating static compositions.
+Identify characters using corroborating visual and source evidence, marking uncertainty.
+Keep thematic conclusions in interpretation, distinct from observable actions and exact
+dialogue. Do not claim a source proves a shot, action, speaker, or exact timing it does not.
+Do not assign a video timestamp, before/after relationship, or speaker to surrounding
+dialogue without explicit evidence; shared quest state does not establish chronology.
 When context_inferred is true, the quest association is inferred and does not prove
 that the scene plays during this quest or on a particular runtime branch.
 Do not omit these possible connections from research. Inspect their available visuals,
@@ -613,7 +625,7 @@ async def run_locked(
                 history.extend(provider.initial(
                     "", "Finalization only: use existing research, read required missing dialogue/visual pages or exact cited sources, then submit finish_analysis. Do not explore new connections or reassess depth. All citation, coverage and budget checks remain enforced.")[1:])
                 allowed = {"finish_analysis", "read_quest",
-                           "read_cutscene_visual", "read_node"}
+                           "read_cutscene_visual", "read_cutscene_context", "read_node"}
                 step_tools = [
                     tool for tool in step_tools if tool["name"] in allowed]
             if adaptive and not finalization_end:
@@ -752,7 +764,7 @@ async def run_locked(
                 previous_source_evidence = dict(evidence.source_evidence)
                 previous_source_nodes = dict(evidence.source_nodes)
                 try:
-                    if finalization_end and tool_call.name not in {"finish_analysis", "read_quest", "read_cutscene_visual", "read_node"}:
+                    if finalization_end and tool_call.name not in {"finish_analysis", "read_quest", "read_cutscene_visual", "read_cutscene_context", "read_node"}:
                         raise ValueError(
                             "Finalization permits only missing required sources and finish_analysis")
                     if tool_index >= settings.max_tool_calls_per_step:

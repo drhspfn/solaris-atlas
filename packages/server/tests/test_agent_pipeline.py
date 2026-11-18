@@ -1889,7 +1889,7 @@ async def test_finalization_uses_saved_run_and_cannot_restart_or_explore(world):
     def transport(request):
         payload = json.loads(request.content)
         calls.append(payload)
-        assert {tool["name"] for tool in payload["tools"]} == {"read_quest", "read_node", "read_cutscene_visual", "finish_analysis"}
+        assert {tool["name"] for tool in payload["tools"]} == {"read_quest", "read_node", "read_cutscene_visual", "read_cutscene_context", "finish_analysis"}
         name, args = actions[len(calls) - 1]
         return httpx.Response(200, json={"status": "completed", "usage": {"input_tokens": 100, "output_tokens": 30},
             "output": [{"type": "function_call", "call_id": str(len(calls)), "name": name, "arguments": json.dumps(args)}]})

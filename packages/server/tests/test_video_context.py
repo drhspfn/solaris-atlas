@@ -10,9 +10,25 @@ from wuwa_story.agents.video_context import (
     MAX_CONTEXT_CHARACTERS,
     MAX_CONTEXT_ROWS,
     _caption_query,
+    scene_text_context,
     video_context_snapshot,
 )
 from wuwa_story.db.models.storage import FileReference
+
+
+def test_scene_context_maps_only_selected_source_and_preserves_untimed_dialogue():
+    snapshot = {"basis": "source_captions", "release": {"id": 2}, "language": "en",
+                "rows": [{"node_id": 1, "text": "Together?", "start_seconds": 3, "end_seconds": 5},
+                         {"node_id": 2, "text": "Outside", "start_seconds": 9, "end_seconds": 10}],
+                "dialogue_lines": [{"node_id": 3, "speaker": "Lily", "text": "I will live"}]}
+    plan = {"segments": [{"file_id": 11, "source_start": 2, "source_end": 6, "scene_start": 10},
+                          {"file_id": 12, "source_start": 0, "source_end": 10, "scene_start": 0}]}
+    result = scene_text_context(snapshot, plan, 11, 2)
+    assert [(row["node_id"], row["start_seconds"], row["end_seconds"]) for row in result["captions"]] == [(1, 11, 13)]
+    assert result["dialogue_timing"] == "surrounding_state_only"
+    assert result["dialogue_lines"][0]["speaker"] == "Lily"
+    assert scene_text_context(snapshot, plan, 11, 3) is None
+    assert scene_text_context(snapshot, plan, 13, 2) is None
 
 
 def reference(**kwargs):

@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -77,3 +78,46 @@ async def test_visual_reader_returns_timeline_and_uses_available_variant(monkeyp
     assert result["story_events"] == metadata["story_events"]
     assert result["identity_tracks"] == metadata["identity_tracks"]
     assert lookup.await_args.args[1] == 2
+
+
+@pytest.mark.asyncio
+async def test_visual_text_context_requires_matching_completed_report_and_snapshot():
+    snapshot = {"basis": "source_captions", "release": {"id": 7}, "language": "en",
+                "rows": [{"node_id": 20, "text": "Together?", "start_seconds": 2, "end_seconds": 3}]}
+    report = SimpleNamespace(id=12, owner_node_id=500,
+                             metadata_json={"run_id": 1, "source_sha256": "hash", "source_file_id": 9})
+    run = SimpleNamespace(status="completed", target_node_id=500, raw_output={"report_reference_id": 12},
+                          metadata_json={"file_id": 9, "source_sha256": "hash", "text_context": snapshot})
+    session = SimpleNamespace(get=AsyncMock(return_value=run))
+    result = await evidence.visual_text_context(session, report, 7)
+    assert result["captions"][0]["text"] == "Together?"
+    assert await evidence.visual_text_context(session, report, 8) is None
+    run.raw_output["report_reference_id"] = 13
+    assert await evidence.visual_text_context(session, report, 7) is None
+
+
+@pytest.mark.asyncio
+async def test_context_paginates_and_records_exact_read_coverage(monkeypatch):
+    metadata = {"events": [], "asset_version": "3.8.0"}
+    report = SimpleNamespace(id=12, metadata_json=metadata)
+    context = {"language": "en", "coverage": "source_video", "dialogue_timing": "surrounding_state_only",
+               "truncated": False, "captions": [{"node_id": 1, "text": "Together?"}],
+               "dialogue_lines": [{"node_id": 2, "text": "I'll live."}]}
+    tools = evidence.EvidenceTools(SimpleNamespace(), run_id=1, quest=SimpleNamespace(node_id=5),
+        release_id=7, locale=SimpleNamespace(), settings=SimpleNamespace(tool_result_chars=18000))
+    monkeypatch.setattr(tools, "remember_node", AsyncMock())
+    monkeypatch.setattr(tools, "cutscene_inventory", AsyncMock(return_value=[
+        {"asset_node_id": 100, "variant_node_id": 2, "visual_reference_id": 12}]))
+    monkeypatch.setattr(evidence, "quest_visual_reference", AsyncMock(return_value=report))
+    monkeypatch.setattr(evidence, "visual_text_context", AsyncMock(return_value=context))
+    first = await tools.read_cutscene_context(100, limit=1)
+    assert first["items"][0]["source_kind"] == "caption" and first["next_offset"] == 1
+    second = await tools.read_cutscene_context(100, offset=1, limit=1)
+    assert second["items"][0]["source_kind"] == "dialogue" and second["next_offset"] is None
+    assert tools.visual_evidence["12"]["context_indices"] == [0, 1]
+    tools.settings.tool_result_chars = 1000
+    context["dialogue_lines"] = [{"node_id": i + 10, "text": "x" * 180} for i in range(8)]
+    tools.visual_evidence = {}
+    page = await tools.read_cutscene_context(100, limit=50)
+    assert len(json.dumps(page, ensure_ascii=False)) <= 1000
+    assert page["next_offset"] is not None

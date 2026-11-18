@@ -274,7 +274,7 @@ def validate_batch(raw: str, times: list[float]) -> dict:
 
 
 def validate_description(
-    description: CutsceneDescription, metadata: dict, read_indices: list[int]
+    description: CutsceneDescription, metadata: dict, read_indices: list[int], source_context: dict | None = None
 ) -> None:
     if set(read_indices) != set(range(len(metadata["events"]))):
         raise ValueError("Read every visual page before describing the whole cutscene")
@@ -298,6 +298,25 @@ def validate_description(
             for i in chapter.observation_indices
         ):
             raise ValueError("Chapter observations must fall inside its time range")
+    previous_start = 0.0
+    for event in description.narrative_events:
+        if event.start < previous_start or event.end <= event.start or event.end > metadata["duration"]:
+            raise ValueError("Narrative events must follow valid scene time")
+        previous_start = event.start
+        if any(i not in read_indices or not event.start <= metadata["events"][i]["time"] <= event.end
+               for i in event.observation_indices):
+            raise ValueError("Narrative event must cite read visual observations within its interval")
+        for citation in event.citations:
+            sources = (source_context or {}).get("captions" if citation.source_kind == "caption" else "dialogue_lines", [])
+            matches = [row for row in sources if row.get("node_id") == citation.node_id
+                       and citation.quote in (row.get("text") or "")]
+            if not matches:
+                raise ValueError("Narrative citation must quote the pinned scene source exactly")
+            if citation.source_kind == "caption" and not any(
+                row.get("timing_basis") == "source_caption"
+                and row["start_seconds"] < event.end and row["end_seconds"] > event.start for row in matches
+            ):
+                raise ValueError("Narrative caption must overlap the event in scene time")
 
 
 async def enqueue_visual_job(

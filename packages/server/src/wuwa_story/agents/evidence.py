@@ -192,6 +192,27 @@ async def quest_visual_reference(session, variant_id: int, asset_id: int, releas
     return await current_scene_report(session, roots[0], release.game_version, plan) or legacy
 
 
+async def visual_text_context(session, report, release_id: int):
+    """Use only the snapshot frozen with this completed visual report."""
+    from wuwa_story.agents.video_context import scene_text_context
+    from wuwa_story.db.models.ops import ProcessingRun
+
+    metadata = report.metadata_json or {}
+    run_id = metadata.get("run_id")
+    if type(run_id) is not int:
+        return None
+    run = await session.get(ProcessingRun, run_id)
+    if (run is None or run.status != "completed" or run.target_node_id != report.owner_node_id
+            or (run.raw_output or {}).get("report_reference_id") != report.id):
+        return None
+    settings = run.metadata_json or {}
+    if (settings.get("source_sha256") != metadata.get("source_sha256")
+            or settings.get("file_id") != metadata.get("source_file_id")):
+        return None
+    return scene_text_context(settings.get("text_context") or {}, settings.get("analysis_plan"),
+                              settings.get("file_id"), release_id)
+
+
 async def quest_fingerprint(
     session: AsyncSession,
     quest: Quest,
@@ -419,6 +440,7 @@ class EvidenceTools:
                     "quest_association": asset["quest_association"],
                     "context_warning": asset["context_warning"]}
         metadata = report.metadata_json
+        context = await visual_text_context(self.session, report, self.release_id)
         events = metadata["events"][offset : offset + limit]
         receipt = self.visual_evidence.get(
             str(report.id), {"hash": hash_value(metadata).hex(), "indices": []}
@@ -427,6 +449,7 @@ class EvidenceTools:
             set(receipt["indices"]) | set(range(offset, offset + len(events)))
         )
         receipt["snapshot_id"] = self.release_id
+        receipt["context_required"] = bool(context and context.get("captions") and context.get("dialogue_lines"))
         self.visual_evidence[str(report.id)] = receipt
         return {
             "asset_node_id": asset_node_id,
@@ -442,10 +465,52 @@ class EvidenceTools:
             "events": [{"index": offset + index, **event} for index, event in enumerate(events)],
             "story_events": metadata.get("story_events", []),
             "identity_tracks": metadata.get("identity_tracks", []),
+            "source_context": ({"available": True, "captions": len(context["captions"]),
+                                "dialogue_lines": len(context["dialogue_lines"]),
+                                "truncated": context["truncated"]} if context else {"available": False}),
             "next_offset": offset + len(events)
             if offset + len(events) < len(metadata["events"])
             else None,
         }
+
+    async def read_cutscene_context(self, asset_node_id: int, offset: int = 0, limit: int = 30) -> dict:
+        if offset < 0 or not 1 <= limit <= 50:
+            raise ValueError("Invalid scene context pagination")
+        await self.remember_node(asset_node_id)
+        candidates = [item for item in await self.cutscene_inventory(self.quest)
+                      if item["asset_node_id"] == asset_node_id and item["visual_reference_id"] is not None]
+        if not candidates:
+            raise ValueError("No linked scene report available for this asset")
+        report = await quest_visual_reference(self.session, candidates[0]["variant_node_id"], asset_node_id, self.release_id)
+        if report is None:
+            raise ValueError("Scene report is unavailable")
+        context = await visual_text_context(self.session, report, self.release_id)
+        if context is None:
+            return {"asset_node_id": asset_node_id, "available": False, "next_offset": None}
+        items = ([{"source_kind": "caption", **row} for row in context["captions"]]
+                 + [{"source_kind": "dialogue", **row} for row in context["dialogue_lines"]])
+        payload = {"asset_node_id": asset_node_id, "visual_reference_id": report.id, "available": True,
+                   "snapshot_id": self.release_id, "language": context["language"],
+                   "coverage": context["coverage"], "dialogue_timing": context["dialogue_timing"],
+                   "truncated": context["truncated"], "offset": offset, "items": [], "next_offset": None}
+        budget = self.settings.tool_result_chars
+        for item in items[offset:offset + limit]:
+            candidate = {**payload, "items": [*payload["items"], item], "next_offset": offset + len(payload["items"]) + 1}
+            if len(json.dumps(candidate, ensure_ascii=False)) > budget:
+                if not payload["items"]:
+                    raise ValueError("A source context entry exceeds the tool result limit")
+                break
+            payload["items"].append(item)
+        end = offset + len(payload["items"])
+        payload["next_offset"] = end if end < len(items) else None
+        receipt = self.visual_evidence.get(str(report.id), {"hash": hash_value(report.metadata_json).hex(), "indices": []})
+        digest = hash_value(context).hex()
+        if receipt.get("context_hash") not in (None, digest):
+            raise ValueError("Scene source context changed during pagination")
+        receipt.update(snapshot_id=self.release_id, context_hash=digest, context_total=len(items))
+        receipt["context_indices"] = sorted(set(receipt.get("context_indices", [])) | set(range(offset, end)))
+        self.visual_evidence[str(report.id)] = receipt
+        return payload
 
     async def snapshot_for_node(self, node_id: int) -> int:
         releases = set(
@@ -944,7 +1009,7 @@ class EvidenceTools:
             return {"staged_resolution": request.model_dump(), "status": "staged_for_publication"}
         if call.name == "list_snapshots":
             return await self.snapshots()
-        if call.name in ("read_quest", "read_node", "graph_neighbors", "read_cutscene_visual"):
+        if call.name in ("read_quest", "read_node", "graph_neighbors", "read_cutscene_visual", "read_cutscene_context"):
             snapshot_id = args.pop("snapshot_id", None)
             if call.name == "graph_neighbors":
                 return await self.graph(**args, snapshot_id=snapshot_id)
@@ -964,6 +1029,8 @@ class EvidenceTools:
                 return await target.read_node(**args)
             if call.name == "read_cutscene_visual":
                 return await target.read_cutscene_visual(**args)
+            if call.name == "read_cutscene_context":
+                return await target.read_cutscene_context(**args)
         if call.name == "search_entities":
             return await self.search(**args)
         if call.name == "search_lore":
@@ -1039,7 +1106,16 @@ class EvidenceTools:
                 item["asset_node_id"] for item in inventory
             }:
                 raise ValueError("Cutscene description is outside this quest")
-            validate_description(description, report.metadata_json, receipt["indices"])
+            source_context = await visual_text_context(self.session, report, receipt["snapshot_id"])
+            if receipt.get("context_required") and not description.narrative_events:
+                raise ValueError("Combine scene visuals and the available source context in at least one cited narrative event")
+            if description.narrative_events and (
+                source_context is None or hash_value(source_context).hex() != receipt.get("context_hash")
+            ):
+                raise ValueError("Scene dialogue context was unavailable or changed before publication")
+            if description.narrative_events and set(receipt.get("context_indices", [])) != set(range(receipt.get("context_total", -1))):
+                raise ValueError("Read every scene context page before writing narrative events")
+            validate_description(description, report.metadata_json, receipt["indices"], source_context)
         if result.sections:
             positions = await self.target_positions()
             end_position = -1
@@ -1212,6 +1288,14 @@ def definitions() -> list[dict[str, Any]]:
                 "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 12},
                 "snapshot_id": snapshot,
             },
+            ["asset_node_id"],
+        ),
+        tool(
+            "read_cutscene_context",
+            "Read paginated source captions and surrounding dialogue pinned to a visual report. Caption times are scene-relative; surrounding dialogue is not timed. Follow next_offset.",
+            {"asset_node_id": integer, "offset": {"type": "integer", "minimum": 0},
+             "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 30},
+             "snapshot_id": snapshot},
             ["asset_node_id"],
         ),
         tool(

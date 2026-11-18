@@ -233,6 +233,21 @@ class CutsceneChapter(StrictModel):
     observation_indices: list[int] = Field(min_length=1, max_length=20)
 
 
+class CutsceneContextCitation(StrictModel):
+    node_id: int = Field(gt=0)
+    source_kind: Literal["caption", "dialogue"]
+    quote: str = Field(min_length=1, max_length=1000)
+
+
+class CutsceneNarrativeEvent(StrictModel):
+    start: float = Field(ge=0, allow_inf_nan=False)
+    end: float = Field(gt=0, allow_inf_nan=False)
+    text: str = Field(min_length=1, max_length=1200)
+    interpretation: str | None = Field(default=None, min_length=1, max_length=1000)
+    observation_indices: list[int] = Field(min_length=1, max_length=20)
+    citations: list[CutsceneContextCitation] = Field(min_length=1, max_length=8)
+
+
 class CutsceneDescription(StrictModel):
     asset_node_id: int = Field(gt=0)
     visual_reference_id: int = Field(gt=0)
@@ -241,6 +256,7 @@ class CutsceneDescription(StrictModel):
     chapters: list[CutsceneChapter] = Field(
         default_factory=list, max_length=12)
     observation_indices: list[int] = Field(min_length=1, max_length=40)
+    narrative_events: list[CutsceneNarrativeEvent] = Field(default_factory=list, max_length=20)
 
     @field_validator("title")
     @classmethod
