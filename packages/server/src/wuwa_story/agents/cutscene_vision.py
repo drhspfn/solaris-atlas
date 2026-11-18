@@ -56,6 +56,18 @@ class VideoAnalysisEvent(BaseModel):
     actors: list[str] = Field(default_factory=list, max_length=16)
     items: list[str] = Field(default_factory=list, max_length=16)
     lore_topics: list[str] = Field(default_factory=list, max_length=16)
+    time_end: float | None = Field(default=None, ge=0)
+    evidence_kind: Literal["observed", "inferred", "contextual"] | None = None
+    evidence_frames: list[int] = Field(default_factory=list, max_length=24)
+    context_sources: list[str] = Field(default_factory=list, max_length=16)
+
+    @model_validator(mode="after")
+    def valid_interval(self):
+        if self.time_end is not None and self.time_end < self.time:
+            raise ValueError("Event end cannot precede its start")
+        if any(frame < 1 for frame in self.evidence_frames):
+            raise ValueError("Evidence frame numbers must be positive")
+        return self
 
 
 class VideoPreviewCandidate(BaseModel):
@@ -309,6 +321,7 @@ async def enqueue_visual_job(
                 "owner": reference.owner_node_id,
                 "version": reference.metadata_json.get("asset_version"),
                 "protocol": VISION_VERSION,
+                "temporal_review_version": 1,
                 "config": config,
                 "text_context": text_context,
                 "title_source_report": report.id if report else None,
@@ -345,6 +358,7 @@ async def enqueue_visual_job(
             "asset_version": reference.metadata_json.get("asset_version"),
             "settings": config,
             "text_context": text_context,
+            "temporal_review_version": 1,
             **({"title_only_report_id": report.id} if report else {}),
         },
         raw_output={"batches": [], "step": 0},
