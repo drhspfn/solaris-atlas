@@ -23,6 +23,38 @@ MAX_CONTEXT_ROWS = 100
 MAX_DIALOGUE_ROWS = 40
 
 
+def scene_text_context(snapshot: dict[str, Any], plan: dict | None, source_file_id: int, release_id: int) -> dict[str, Any] | None:
+    """Map pinned source captions to scene time; surrounding dialogue stays untimed."""
+    if (snapshot.get("basis") != "source_captions"
+            or (snapshot.get("release") or {}).get("id") != release_id):
+        return None
+    segments = (plan or {}).get("segments") if plan else None
+    if segments:
+        segments = [segment for segment in segments if segment.get("file_id") == source_file_id]
+        if not segments:
+            return None
+    rows = []
+    for row in snapshot.get("rows", []):
+        start, end = row.get("start_seconds"), row.get("end_seconds")
+        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)) or start >= end:
+            rows.append({**row, "timing_basis": "unavailable"})
+            continue
+        if not segments:
+            rows.append({**row, "timing_basis": "source_caption"})
+            continue
+        for segment in segments:
+            first, last = max(start, segment["source_start"]), min(end, segment["source_end"])
+            if first < last:
+                offset = segment["scene_start"] - segment["source_start"]
+                rows.append({**row, "start_seconds": round(first + offset, 3),
+                             "end_seconds": round(last + offset, 3), "timing_basis": "source_caption",
+                             "source_start_seconds": start, "source_end_seconds": end})
+    return {"basis": "source_captions", "snapshot_id": release_id, "language": snapshot.get("language"),
+            "captions": rows, "dialogue_lines": snapshot.get("dialogue_lines", []),
+            "dialogue_timing": "surrounding_state_only", "truncated": bool(snapshot.get("truncated")),
+            "coverage": "first_selected_source_only" if plan else "source_video"}
+
+
 def _source_links(relation: str, release_id: int) -> Subquery:
     return (
         select(Edge.from_node_id.label("parent"),

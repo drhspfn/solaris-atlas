@@ -126,6 +126,26 @@ def test_description_needs_complete_read_coverage_and_correct_chapter_times():
         validate_description(invalid, report, [0, 1])
 
 
+def test_narrative_event_requires_matching_pinned_sources_and_visual_time():
+    report = {"duration": 10, "events": [{"time": 1}, {"time": 8}]}
+    context = {"captions": [{"node_id": 20, "text": "Together?", "start_seconds": 7,
+                             "end_seconds": 9, "timing_basis": "source_caption"}],
+               "dialogue_lines": [{"node_id": 30, "text": "I'll live."}]}
+    event = {"start": 7, "end": 9, "text": "Lily acts alongside her other self",
+             "interpretation": "They support each other", "observation_indices": [1],
+             "citations": [{"node_id": 20, "source_kind": "caption", "quote": "Together?"},
+                           {"node_id": 30, "source_kind": "dialogue", "quote": "I'll live."}]}
+    candidate = description(narrative_events=[event])
+    validate_description(candidate, report, [0, 1], context)
+    candidate.narrative_events[0].citations[0].quote = "Invented"
+    with pytest.raises(ValueError, match="quote the pinned"):
+        validate_description(candidate, report, [0, 1], context)
+    candidate.narrative_events[0].citations[0].quote = "Together?"
+    context["captions"][0].update(start_seconds=2, end_seconds=4)
+    with pytest.raises(ValueError, match="must overlap"):
+        validate_description(candidate, report, [0, 1], context)
+
+
 def test_main_quest_cannot_be_downgraded_to_region_lore():
     assessment = QuestAssessment.model_validate(
         {
