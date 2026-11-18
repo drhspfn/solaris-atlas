@@ -62,7 +62,7 @@ MAX_SPATIAL_INSPECTIONS = 4
 
 
 def _order_evidence_frames(arguments: dict[str, Any], workspace: VideoWorkspace, *, order_events: bool = False,
-                           order_story_events: bool = False) -> dict[str, Any]:
+                           order_story_events: bool = False, normalize_intervals: bool = False) -> dict[str, Any]:
     """Sort known frame lists by scene time; never invent or discard evidence."""
     result = copy.deepcopy(arguments)
     if not isinstance(result, dict):
@@ -97,7 +97,7 @@ def _order_evidence_frames(arguments: dict[str, Any], workspace: VideoWorkspace,
             if isinstance(frames, list) and all(type(frame) is int and frame in workspace.frame_times for frame in frames):
                 item["evidence_frames"] = sorted(frames, key=lambda frame: (workspace.frame_times[frame], frame))
                 known_times = [workspace.frame_times[frame] for frame in item["evidence_frames"]]
-                if known_times:
+                if normalize_intervals and known_times:
                     if collection == "events":
                         gf = item.get("global_frame")
                         if type(gf) is int and gf in workspace.frame_times:
@@ -997,7 +997,8 @@ async def run_video_analysis_agent(
                     try:
                         candidate = VideoAnalysisResult.model_validate(
                             _order_evidence_frames(json.loads(turn.text), workspace, order_events=evidence_review_required,
-                                                   order_story_events=evidence_review_required and review_started))
+                                                   order_story_events=evidence_review_required and review_started,
+                                                   normalize_intervals=review_started))
                     except (ValidationError, ValueError, TypeError) as exc:
                         finish_corrections += 1
                         outcome = {"error": "invalid_finish_text", "details": str(exc)[:2000]}
@@ -1040,7 +1041,8 @@ async def run_video_analysis_agent(
                     try:
                         candidate = VideoAnalysisResult.model_validate(
                             _order_evidence_frames(tc.arguments, workspace, order_events=evidence_review_required,
-                                                   order_story_events=evidence_review_required and review_started))
+                                                   order_story_events=evidence_review_required and review_started,
+                                                   normalize_intervals=review_started))
                     except ValidationError as exc:
                         finish_corrections += 1
                         digest = hashlib.sha256(
