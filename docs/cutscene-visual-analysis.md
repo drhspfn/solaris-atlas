@@ -41,6 +41,12 @@ every approximately 3 seconds, at most 600 frames, 48 frames per request and
 8192 output tokens. The capped sampling plan always includes the ending; it is
 not exhaustive coverage. Each supplied frame needs its own observation.
 
+To select a separate model for new visual jobs, set `AGENT_VISION_MODEL`,
+`AGENT_VISION_INPUT_USD_PER_MILLION`, `AGENT_VISION_OUTPUT_USD_PER_MILLION`,
+and optionally `AGENT_VISION_CACHED_INPUT_USD_PER_MILLION` on the API and CLI
+workers. Rates must match the provider and service tier. Existing jobs retain
+their pinned model and rates; the daily budget remains shared.
+
 ### Dense frame atlases (visual protocol v2)
 
 The default request contains up to four JPEG contact sheets of twelve frames,
