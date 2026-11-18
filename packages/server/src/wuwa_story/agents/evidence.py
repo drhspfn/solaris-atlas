@@ -212,6 +212,26 @@ async def visual_text_context(session, report, release_id: int):
                               settings.get("file_id"), release_id)
 
 
+def visual_review_audit(metadata: dict) -> dict | None:
+    """Expose a bounded warning about changed or unresolved provisional observations."""
+    draft = metadata.get("review_draft")
+    if metadata.get("review_evidence_version") != 1 or not isinstance(draft, dict):
+        return None
+    items = []
+    for name, key in (("event", "events"), ("identity", "identity_tracks")):
+        entries = draft.get(key, [])
+        for decision in metadata.get(f"{name}_review", []):
+            index = decision.get("draft_index")
+            if decision.get("status") not in {"revised", "disputed", "unresolved"} or type(index) is not int or not 0 <= index < len(entries):
+                continue
+            entry = entries[index]
+            text = entry.get("observation") if name == "event" else entry.get("identity")
+            items.append({"kind": name, "draft_index": index, "status": decision["status"],
+                          "provisional_excerpt": (text or "")[:180], "reason": (decision.get("reason") or "")[:160]})
+    return {"meaning": "Provisional draft claims; changes and unresolved claims are not established facts.",
+            "items": items[:3], "truncated": len(items) > 3}
+
+
 async def quest_fingerprint(
     session: AsyncSession,
     quest: Quest,
@@ -464,6 +484,7 @@ class EvidenceTools:
             "events": [{"index": offset + index, **event} for index, event in enumerate(events)],
             "story_events": metadata.get("story_events", []),
             "identity_tracks": metadata.get("identity_tracks", []),
+            "review_audit": visual_review_audit(metadata) if offset == 0 else None,
             "source_context": ({"available": True, "captions": len(context["captions"]),
                                 "dialogue_lines": len(context["dialogue_lines"]),
                                 "truncated": context["truncated"]} if context else {"available": False}),

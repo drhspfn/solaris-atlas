@@ -21,6 +21,7 @@ async def enqueue_logical_visual_job(session, plan: dict, reference, settings):
     context = await video_context_snapshot(session, reference)
     identity = hashlib.sha256(json.dumps({"analysis_plan": plan, "protocol": VISION_VERSION,
         "temporal_review_version": 1,
+        "review_evidence_version": 1,
         "config": config, "text_context": context}, sort_keys=True).encode()).digest()
     await session.execute(text("SELECT pg_advisory_xact_lock(:key)"),
                           {"key": int.from_bytes(identity[:7], "big")})
@@ -38,6 +39,7 @@ async def enqueue_logical_visual_job(session, plan: dict, reference, settings):
             "source_sha256": first["source_sha256"], "asset_version": first["asset_version"],
             "analysis_plan": plan, "settings": config, "text_context": context,
             "temporal_review_version": 1,
+            "review_evidence_version": 1,
             "cutscene_node_id": plan["cutscene_node_id"],
             "selected_asset_node_ids": plan["selection"]["selected_asset_node_ids"],
             "ignored_alternative_asset_node_ids": plan["selection"]["ignored_alternative_asset_node_ids"],

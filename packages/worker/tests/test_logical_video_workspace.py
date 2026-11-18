@@ -237,6 +237,66 @@ async def test_new_runs_review_and_resample_before_publication_and_replay(runtim
 
 
 @pytest.mark.asyncio
+async def test_review_ledger_persists_draft_and_replays_without_provider(runtime, monkeypatch):
+    db, run, settings, storage, _, _, _ = runtime
+    run.metadata_json.update(temporal_review_version=1, review_evidence_version=1)
+    monkeypatch.setattr(agent, "_previous_scene_evidence", AsyncMock(return_value={"available": False}))
+    ws = await workspace(runtime)
+    calls = []
+
+    async def post(_, route, payload):
+        calls.append(payload)
+        initial = result()
+        if len(calls) == 1:
+            return response("finish_video_analysis", initial)
+        for event in initial["events"]:
+            event["global_frame"] = next(i for i, time in ws.frame_times.items() if time == event["time"])
+            event["evidence_kind"] = "observed"
+        initial["story_events"][0].update(time_start=6, time_end=10, evidence_kind="observed",
+                                          evidence_frames=[initial["events"][1]["global_frame"],
+                                                           initial["events"][2]["global_frame"]])
+        initial["event_review"] = [{"draft_index": index, "status": "retained", "final_indices": [index]}
+                                   for index in range(len(initial["events"]))]
+        initial["preview_candidates"] = []
+        return response("finish_video_analysis", initial)
+
+    monkeypatch.setattr(agent.Provider, "post", post)
+    await agent.run_video_analysis_agent(db, run, settings, ws, storage, {})
+    report = next(ref.metadata_json for ref in db.refs if ref.reference_type == "cutscene_visual_description")
+    assert len(report["review_draft"]["events"]) == len(report["event_review"]) == 3
+    assert run.raw_output["review_draft"]["events"] == report["review_draft"]["events"]
+    monkeypatch.setattr(agent.Provider, "post", AsyncMock(side_effect=AssertionError("unexpected paid call")))
+    await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
+    assert run.tokens_input == 200
+
+
+@pytest.mark.asyncio
+async def test_previous_evidence_requires_exact_source_plan_and_context(monkeypatch):
+    from wuwa_story.agents import scene_analysis_reader
+
+    plan = scene_plan()
+    context = {"release": {"id": 22}, "rows": [{"text": "Together?"}]}
+    run = SimpleNamespace(id=2, target_node_id=15537, metadata_json={"analysis_plan": plan,
+        "asset_version": "3.8.0", "source_sha256": "same", "file_id": 20, "text_context": context})
+    report = SimpleNamespace(id=5, metadata_json={"run_id": 1, "source_sha256": "same", "source_file_id": 20,
+        "events": [{"time": index} for index in range(40)], "identity_tracks": [{"identity": "Lily"}]})
+    previous = SimpleNamespace(status="completed", raw_output={"report_reference_id": 5},
+                               metadata_json={"text_context": context})
+    db = SimpleNamespace(get=AsyncMock(return_value=previous))
+    lookup = AsyncMock(return_value=report)
+    monkeypatch.setattr(scene_analysis_reader, "current_scene_report", lookup)
+    result = await agent._previous_scene_evidence(db, run)
+    assert result["available"] and len(result["events"]) == 30
+    assert result["events"][0]["prior_index"] == 0 and result["events"][-1]["prior_index"] == 39
+    lookup.assert_awaited_once_with(db, 15537, "3.8.0", plan)
+    report.metadata_json["source_sha256"] = "other_variant"
+    assert not (await agent._previous_scene_evidence(db, run))["available"]
+    report.metadata_json["source_sha256"] = "same"
+    previous.metadata_json["text_context"] = {"release": {"id": 21}}
+    assert not (await agent._previous_scene_evidence(db, run))["available"]
+
+
+@pytest.mark.asyncio
 async def test_temporal_review_rejects_missing_or_mismatched_evidence(runtime):
     ws = await workspace(runtime)
     await ws.build_atlases(ws.overview_times(), reason="overview")
@@ -288,6 +348,46 @@ def test_evidence_frames_are_ordered_by_time_not_frame_number():
     assert original["events"][0]["evidence_frames"] == [1, 2, 3]
 
 
+def test_chronological_sort_remaps_review_indices():
+    ws = SimpleNamespace(frame_times={1: 10, 2: 20})
+    original = {"events": [{"time": 20}, {"time": 10}],
+                "event_review": [{"draft_index": 0, "final_indices": [0, 1]}]}
+    result = agent._order_evidence_frames(original, ws, order_events=True)
+    assert [event["time"] for event in result["events"]] == [10, 20]
+    assert result["event_review"][0]["final_indices"] == [1, 0]
+    assert original["event_review"][0]["final_indices"] == [0, 1]
+
+
+def test_review_requires_each_draft_event_and_identity_to_be_accounted_for():
+    ws = SimpleNamespace(frame_times={1: 1, 2: 2, 3: 30})
+    payload = {"summary": "scene", "events": [{"time": 1, "global_frame": 1,
+               "observation": "Two people meet", "confidence": "observed"}],
+               "identity_tracks": [{"identity": "Lily", "appearance": "coat", "confidence": "identified",
+                                    "basis": "observed", "time_start": 1, "time_end": 2, "evidence_frames": [1]}]}
+    draft = VideoAnalysisResult.model_validate(payload)
+    final = VideoAnalysisResult.model_validate(payload)
+    assert len(agent._review_evidence_errors(draft, final, ws)) == 2
+    final = VideoAnalysisResult.model_validate({**payload,
+        "event_review": [{"draft_index": 0, "status": "retained", "final_indices": [0]}],
+        "identity_review": [{"draft_index": 0, "status": "retained", "final_indices": [0]}]})
+    assert agent._review_evidence_errors(draft, final, ws) == []
+    final.events[0].observation = "One person stands"
+    assert any("changed wording" in error for error in agent._review_evidence_errors(draft, final, ws))
+    final.event_review[0].status = "revised"
+    final.event_review[0].reason = "The second figure was background"
+    final.event_review[0].evidence_frames = [2]
+    assert agent._review_evidence_errors(draft, final, ws) == []
+    final.identity_tracks[0].identity = "Another person"
+    assert any("changed identity" in error for error in agent._review_evidence_errors(draft, final, ws))
+    final.identity_review[0].status = "disputed"
+    final.identity_review[0].final_indices = []
+    final.identity_review[0].reason = "Different appearance"
+    final.identity_review[0].evidence_frames = [3]
+    assert any("nearby frames" in error for error in agent._review_evidence_errors(draft, final, ws))
+    final.identity_review[0].evidence_frames = [2]
+    assert agent._review_evidence_errors(draft, final, ws) == []
+
+
 @pytest.mark.asyncio
 async def test_finish_errors_are_saved_and_retries_bounded(runtime, monkeypatch):
     db, run, settings, storage, _, _, _ = runtime
@@ -321,6 +421,47 @@ async def test_character_reference_is_sent_to_model_and_replayed(runtime, monkey
     await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
     post.assert_not_awaited()
     assert reference.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_region_inspection_uses_original_video_and_rejects_invalid_crop(tmp_path):
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        pytest.skip("FFmpeg unavailable")
+    movie = tmp_path / "source.mp4"
+    subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i",
+                    "color=red:size=640x360:rate=10:duration=2", "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p", str(movie)], check=True, capture_output=True)
+    ws = agent.VideoWorkspace(root=tmp_path, ffmpeg=Path(ffmpeg), movie=movie, duration=2,
+                              settings=AgentSettings(_env_file=None), limits={}, frame_times={1: 1.0})
+    metadata, data = await ws.inspect_region(1, [0.25, 0.25, 0.75, 0.75])
+    with Image.open(io.BytesIO(data)) as image:
+        assert image.width == 1024
+        assert image.getpixel((100, 100))[0] > 200
+    assert metadata["global_frame"] == 1 and metadata["scene_time"] == 1.0
+    assert (await ws.inspect_region(1, [0.25, 0.25, 0.75, 0.75]))[0]["sha256"] == metadata["sha256"]
+    with pytest.raises(ValueError):
+        await ws.inspect_region(1, [0, 0, 0.001, 1])
+    with pytest.raises(ValueError):
+        await ws.inspect_region(99, [0, 0, 1, 1])
+
+
+@pytest.mark.asyncio
+async def test_region_inspection_is_sent_to_model_and_replayed(runtime, monkeypatch):
+    db, run, settings, storage, _, _, _ = runtime
+    crop = AsyncMock(return_value=({"global_frame": 1, "sha256": "stable"}, jpeg()))
+    monkeypatch.setattr(agent.VideoWorkspace, "inspect_region", crop)
+    post = AsyncMock(side_effect=[response("inspect_video_region", {"global_frame": 1, "bbox": [0, 0, 1, 1]}),
+                                  response("finish_video_analysis", {**result(), "preview_candidates": []})])
+    monkeypatch.setattr(agent.Provider, "post", post)
+    await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
+    assert "video region crops" in json.dumps(post.await_args_list[1].args[-1])
+    report = next(ref.metadata_json for ref in db.refs if ref.reference_type == "cutscene_visual_description")
+    assert report["analysis_metrics"]["spatial_inspections"] == 1
+    post.reset_mock()
+    await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
+    post.assert_not_awaited()
+    assert crop.await_count == 2
 
 
 @pytest.mark.asyncio
