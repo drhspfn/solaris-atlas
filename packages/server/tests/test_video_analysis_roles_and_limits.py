@@ -50,6 +50,10 @@ def test_dynamic_sampling_plan_scales_with_duration():
     long = dynamic_sampling_plan(1800.0, settings)
 
     assert short["overview_interval"] <= medium["overview_interval"]
+    assert medium["overview_interval"] == 2.0
+    assert medium["max_overview_frames"] <= settings.vision_max_frames
+    existing = AgentSettings(_env_file=None, vision_frame_interval=3)
+    assert dynamic_sampling_plan(180.0, existing)["overview_interval"] == 3.0
     assert long["overview_interval"] >= medium["overview_interval"]
     assert short["soft_zoom_frames"] <= medium["soft_zoom_frames"] <= 48
     assert long["hard_zoom_frames"] == 96

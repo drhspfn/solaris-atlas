@@ -45,6 +45,21 @@ class VideoStoryEvent(BaseModel):
     time_end: float = Field(ge=0)
     participants: list[str] = Field(default_factory=list, max_length=24)
     topics: list[str] = Field(default_factory=list, max_length=24)
+    evidence_kind: Literal["observed", "inferred", "contextual"] | None = None
+    evidence_frames: list[int] = Field(default_factory=list, max_length=24)
+    context_sources: list[str] = Field(default_factory=list, max_length=16)
+
+
+class VideoIdentityTrack(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    identity: str = Field(min_length=1, max_length=200)
+    appearance: str = Field(min_length=1, max_length=300)
+    confidence: Literal["identified", "uncertain"]
+    basis: Literal["observed", "inferred", "contextual"]
+    time_start: float = Field(ge=0)
+    time_end: float = Field(ge=0)
+    evidence_frames: list[int] = Field(default_factory=list, max_length=24)
+    context_sources: list[str] = Field(default_factory=list, max_length=16)
 
 
 class VideoAnalysisEvent(BaseModel):
@@ -56,6 +71,18 @@ class VideoAnalysisEvent(BaseModel):
     actors: list[str] = Field(default_factory=list, max_length=16)
     items: list[str] = Field(default_factory=list, max_length=16)
     lore_topics: list[str] = Field(default_factory=list, max_length=16)
+    time_end: float | None = Field(default=None, ge=0)
+    evidence_kind: Literal["observed", "inferred", "contextual"] | None = None
+    evidence_frames: list[int] = Field(default_factory=list, max_length=24)
+    context_sources: list[str] = Field(default_factory=list, max_length=16)
+
+    @model_validator(mode="after")
+    def valid_interval(self):
+        if self.time_end is not None and self.time_end < self.time:
+            raise ValueError("Event end cannot precede its start")
+        if any(frame < 1 for frame in self.evidence_frames):
+            raise ValueError("Evidence frame numbers must be positive")
+        return self
 
 
 class VideoPreviewCandidate(BaseModel):
@@ -74,6 +101,7 @@ class VideoAnalysisResult(BaseModel):
     entity_links: list[VideoEntityLink] = Field(default_factory=list, max_length=64)
     lore_topics: list[str] = Field(default_factory=list, max_length=32)
     preview_candidates: list[VideoPreviewCandidate] = Field(default_factory=list, max_length=5)
+    identity_tracks: list[VideoIdentityTrack] = Field(default_factory=list, max_length=64)
 
     @field_validator("title", mode="before")
     @classmethod
@@ -309,6 +337,7 @@ async def enqueue_visual_job(
                 "owner": reference.owner_node_id,
                 "version": reference.metadata_json.get("asset_version"),
                 "protocol": VISION_VERSION,
+                "temporal_review_version": 1,
                 "config": config,
                 "text_context": text_context,
                 "title_source_report": report.id if report else None,
@@ -345,6 +374,7 @@ async def enqueue_visual_job(
             "asset_version": reference.metadata_json.get("asset_version"),
             "settings": config,
             "text_context": text_context,
+            "temporal_review_version": 1,
             **({"title_only_report_id": report.id} if report else {}),
         },
         raw_output={"batches": [], "step": 0},
