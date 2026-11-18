@@ -69,7 +69,8 @@ meaningful changes and emotional transitions instead of repeating static composi
 Identify characters using corroborating visual and source evidence, marking uncertainty.
 Keep thematic conclusions in interpretation, distinct from observable actions and exact
 dialogue. Do not claim a source proves a shot, action, speaker, or exact timing it does not.
-Do not assign a video timestamp to surrounding dialogue without timed caption evidence.
+Do not assign a video timestamp, before/after relationship, or speaker to surrounding
+dialogue without explicit evidence; shared quest state does not establish chronology.
 When context_inferred is true, the quest association is inferred and does not prove
 that the scene plays during this quest or on a particular runtime branch.
 Do not omit these possible connections from research. Inspect their available visuals,
