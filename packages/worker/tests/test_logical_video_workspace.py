@@ -379,7 +379,7 @@ def test_order_evidence_frames_expands_intervals_to_cover_known_evidence_frames(
             "evidence_frames": [76, 80],
         }],
     }
-    ordered = agent._order_evidence_frames(payload, ws)
+    ordered = agent._order_evidence_frames(payload, ws, normalize_intervals=True)
     assert ordered["events"][0]["time_end"] == pytest.approx(157.957)
     assert ordered["story_events"][0]["time_start"] == pytest.approx(149.958)
     assert ordered["story_events"][0]["time_end"] == pytest.approx(157.957)
