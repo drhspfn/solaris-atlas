@@ -49,6 +49,7 @@ def scene_text_context(snapshot: dict[str, Any], plan: dict | None, source_file_
                 rows.append({**row, "start_seconds": round(first + offset, 3),
                              "end_seconds": round(last + offset, 3), "timing_basis": "source_caption",
                              "source_start_seconds": start, "source_end_seconds": end})
+    rows.sort(key=lambda row: (row.get("timing_basis") != "source_caption", row.get("start_seconds", 0)))
     return {"basis": "source_captions", "snapshot_id": release_id, "language": snapshot.get("language"),
             "captions": rows, "dialogue_lines": snapshot.get("dialogue_lines", []),
             "dialogue_timing": "surrounding_state_only", "truncated": bool(snapshot.get("truncated")),
