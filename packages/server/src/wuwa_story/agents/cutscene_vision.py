@@ -45,6 +45,21 @@ class VideoStoryEvent(BaseModel):
     time_end: float = Field(ge=0)
     participants: list[str] = Field(default_factory=list, max_length=24)
     topics: list[str] = Field(default_factory=list, max_length=24)
+    evidence_kind: Literal["observed", "inferred", "contextual"] | None = None
+    evidence_frames: list[int] = Field(default_factory=list, max_length=24)
+    context_sources: list[str] = Field(default_factory=list, max_length=16)
+
+
+class VideoIdentityTrack(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    identity: str = Field(min_length=1, max_length=200)
+    appearance: str = Field(min_length=1, max_length=300)
+    confidence: Literal["identified", "uncertain"]
+    basis: Literal["observed", "inferred", "contextual"]
+    time_start: float = Field(ge=0)
+    time_end: float = Field(ge=0)
+    evidence_frames: list[int] = Field(default_factory=list, max_length=24)
+    context_sources: list[str] = Field(default_factory=list, max_length=16)
 
 
 class VideoAnalysisEvent(BaseModel):
@@ -86,6 +101,7 @@ class VideoAnalysisResult(BaseModel):
     entity_links: list[VideoEntityLink] = Field(default_factory=list, max_length=64)
     lore_topics: list[str] = Field(default_factory=list, max_length=32)
     preview_candidates: list[VideoPreviewCandidate] = Field(default_factory=list, max_length=5)
+    identity_tracks: list[VideoIdentityTrack] = Field(default_factory=list, max_length=64)
 
     @field_validator("title", mode="before")
     @classmethod

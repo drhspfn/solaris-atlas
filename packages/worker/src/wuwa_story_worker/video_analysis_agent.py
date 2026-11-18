@@ -531,6 +531,37 @@ def _estimate_input_tokens(payload: Any, atlases: list[AtlasEntry]) -> int:
 
 def _temporal_evidence_errors(result: VideoAnalysisResult, workspace: VideoWorkspace) -> list[str]:
     errors = []
+
+    def crosses_gap(start, end):
+        if not hasattr(workspace, "sources"):
+            return False
+        cursor = start
+        for source in workspace.sources:
+            segment = source.segment
+            if segment["scene_end"] <= cursor:
+                continue
+            if segment["scene_start"] > cursor:
+                break
+            cursor = max(cursor, segment["scene_end"])
+            if cursor >= end:
+                break
+        return cursor < end
+
+    def check_span(label, start, end, frames, kind, sources):
+        if not 0 <= start <= end <= workspace.duration:
+            errors.append(f"{label}: invalid scene interval")
+        times = [workspace.frame_times.get(frame) for frame in frames]
+        if not frames or any(time is None for time in times):
+            errors.append(f"{label}: cite known evidence_frames")
+        elif any(time < start - 0.1 or time > end + 0.1 for time in times):
+            errors.append(f"{label}: evidence frames must be inside the interval")
+        elif times != sorted(times):
+            errors.append(f"{label}: evidence frames must be chronological")
+        if kind is None:
+            errors.append(f"{label}: specify evidence basis")
+        if kind == "contextual" and not any(source.strip() for source in sources):
+            errors.append(f"{label}: cite contextual source identifiers")
+
     for index, event in enumerate(result.events):
         if event.time > workspace.duration or (event.time_end is not None and event.time_end > workspace.duration):
             errors.append(f"event {index}: interval exceeds scene duration")
@@ -542,10 +573,31 @@ def _temporal_evidence_errors(result: VideoAnalysisResult, workspace: VideoWorks
             errors.append(f"event {index}: time does not match global_frame {event.global_frame}")
         if any(frame not in workspace.frame_times for frame in event.evidence_frames):
             errors.append(f"event {index}: evidence_frames contains an unknown frame")
+        elif event.evidence_frames:
+            times = [workspace.frame_times[frame] for frame in event.evidence_frames]
+            if times != sorted(times):
+                errors.append(f"event {index}: evidence frames must be chronological")
+            if event.time_end is not None and any(time < event.time - 0.1 or time > event.time_end + 0.1 for time in times):
+                errors.append(f"event {index}: evidence frames must be inside the interval")
+        if event.time_end is not None and event.evidence_kind == "observed" and crosses_gap(event.time, event.time_end):
+            errors.append(f"event {index}: observed action crosses a scene gap")
         if event.evidence_kind is None:
             errors.append(f"event {index}: specify observed, inferred or contextual evidence_kind")
-        if event.evidence_kind == "contextual" and not event.context_sources:
+        if event.evidence_kind == "contextual" and not any(source.strip() for source in event.context_sources):
             errors.append(f"event {index}: cite contextual source identifiers")
+    if [event.time_start for event in result.story_events] != sorted(event.time_start for event in result.story_events):
+        errors.append("story events must be chronological")
+    for index, event in enumerate(result.story_events):
+        label = f"story event {index}"
+        check_span(label, event.time_start, event.time_end, event.evidence_frames,
+                   event.evidence_kind, event.context_sources)
+        if event.time_end - event.time_start > 1 and len(set(event.evidence_frames)) < 2:
+            errors.append(f"{label}: cite at least two frames for a multi-second action")
+        if event.evidence_kind == "observed" and crosses_gap(event.time_start, event.time_end):
+            errors.append(f"{label}: observed action crosses a scene gap")
+    for index, track in enumerate(result.identity_tracks):
+        check_span(f"identity track {index}", track.time_start, track.time_end,
+                   track.evidence_frames, track.basis, track.context_sources)
     return errors[:20]
 
 
@@ -864,6 +916,7 @@ async def run_video_analysis_agent(
         "story_events": [sev.model_dump() for sev in final_result.story_events],
         "entity_links": [link.model_dump() for link in final_result.entity_links],
         "lore_topics": final_result.lore_topics,
+        "identity_tracks": [track.model_dump() for track in final_result.identity_tracks],
         "atlases": workspace.manifest(),
         "atlas_references": atlas_refs,
         "preview_file_ids": preview_ids,

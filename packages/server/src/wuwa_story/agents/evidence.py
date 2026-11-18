@@ -168,6 +168,30 @@ async def quest_cutscene_assets(session: AsyncSession, quest_id: int, release_id
         result.items(), key=lambda item: (item[0][1], item[0][0], item[0][2]))]
 
 
+async def quest_visual_reference(session, variant_id: int, asset_id: int, release_id: int):
+    """Resolve scene-owned evidence only for a source-linked selected variant."""
+    legacy = await visual_reference(session, asset_id)
+    roots = list(await session.scalars(select(Edge.from_node_id).join(RelationType).where(
+        Edge.to_node_id == variant_id, RelationType.key == "has_variant",
+        Edge.id.in_(source_edges(release_id)),
+    ).distinct()))
+    if len(roots) != 1:
+        return legacy
+    release = await session.get(GameRelease, release_id)
+    if release is None or not release.game_version:
+        return legacy
+    from wuwa_story.agents.scene_analysis_reader import current_scene_report
+    from wuwa_story.api.routes.cutscene_analysis import _logical_plan
+
+    try:
+        plan, _, _ = await _logical_plan(session, roots[0], release.game_version)
+    except (ValueError, KeyError, TypeError):
+        return legacy
+    if asset_id not in plan["selection"]["selected_asset_node_ids"]:
+        return legacy
+    return await current_scene_report(session, roots[0], release.game_version, plan) or legacy
+
+
 async def quest_fingerprint(
     session: AsyncSession,
     quest: Quest,
@@ -263,8 +287,8 @@ async def quest_fingerprint(
     if include_visual:
         visual = []
         inferred_assets = []
-        for _, asset_id, _, inferred in await quest_cutscene_assets(session, quest.node_id, release_id):
-            report = await visual_reference(session, asset_id)
+        for variant, asset_id, _, inferred in await quest_cutscene_assets(session, quest.node_id, release_id):
+            report = await quest_visual_reference(session, variant, asset_id, release_id)
             if report:
                 visual.append(
                     (asset_id, report.id, hash_value(report.metadata_json).hex())
@@ -337,7 +361,7 @@ class EvidenceTools:
         rows = await quest_cutscene_assets(self.session, quest.node_id, self.release_id)
         result = []
         for variant, asset_id, key, inferred in rows:
-            report = await visual_reference(self.session, asset_id)
+            report = await quest_visual_reference(self.session, variant, asset_id, self.release_id)
             result.append(
                 {
                     "variant_node_id": variant,
@@ -382,11 +406,13 @@ class EvidenceTools:
             raise ValueError("Invalid visual pagination: offset >= 0, limit 1..20 (default 12)")
         await self.remember_node(asset_node_id)
         # Only explicitly linked or conservatively inferred scenario assets are allowed.
-        asset = next((item for item in await self.cutscene_inventory(self.quest)
-                      if item["asset_node_id"] == asset_node_id), None)
+        candidates = [item for item in await self.cutscene_inventory(self.quest)
+                      if item["asset_node_id"] == asset_node_id]
+        asset = next((item for item in candidates if item["visual_reference_id"] is not None),
+                     candidates[0] if candidates else None)
         if asset is None:
             raise ValueError("Asset is not a linked cutscene variant in this quest")
-        report = await visual_reference(self.session, asset_node_id)
+        report = await quest_visual_reference(self.session, asset["variant_node_id"], asset_node_id, self.release_id)
         if report is None:
             return {"asset_node_id": asset_node_id, "status": "not_analyzed",
                     "context_inferred": asset["context_inferred"],
@@ -414,6 +440,8 @@ class EvidenceTools:
             "duration": metadata["duration"],
             "limitations": "AI observations of sampled frames in the stated recording version, not proof of historical visuals. Variant-specific, not game-authored dialogue; gaps do not prove absence.",
             "events": [{"index": offset + index, **event} for index, event in enumerate(events)],
+            "story_events": metadata.get("story_events", []),
+            "identity_tracks": metadata.get("identity_tracks", []),
             "next_offset": offset + len(events)
             if offset + len(events) < len(metadata["events"])
             else None,
@@ -996,7 +1024,11 @@ class EvidenceTools:
             if receipt is None:
                 raise ValueError("Read visual evidence before describing a cutscene")
             context = await self.context(receipt["snapshot_id"])
-            report = await visual_reference(self.session, description.asset_node_id)
+            inventory = await context.cutscene_inventory(context.quest)
+            item = next((item for item in inventory if item["asset_node_id"] == description.asset_node_id
+                         and item["visual_reference_id"] == description.visual_reference_id), None)
+            report = (await quest_visual_reference(self.session, item["variant_node_id"],
+                                                   description.asset_node_id, receipt["snapshot_id"])) if item else None
             if (
                 report is None
                 or report.id != description.visual_reference_id
@@ -1004,7 +1036,7 @@ class EvidenceTools:
             ):
                 raise ValueError("Visual source changed before publication")
             if description.asset_node_id not in {
-                item["asset_node_id"] for item in await context.cutscene_inventory(context.quest)
+                item["asset_node_id"] for item in inventory
             }:
                 raise ValueError("Cutscene description is outside this quest")
             validate_description(description, report.metadata_json, receipt["indices"])

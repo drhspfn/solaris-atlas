@@ -206,6 +206,12 @@ async def test_new_runs_review_and_resample_before_publication_and_replay(runtim
         for event in final["events"]:
             event["global_frame"] = next(i for i, time in ws.frame_times.items() if time == event["time"])
             event["evidence_kind"] = "observed"
+        final["story_events"][0].update(time_start=6, time_end=10, evidence_kind="observed",
+                                        evidence_frames=[final["events"][1]["global_frame"],
+                                                         final["events"][2]["global_frame"]])
+        final["identity_tracks"] = [{"identity": "Unknown", "appearance": "Dark coat", "confidence": "uncertain",
+                                     "basis": "observed", "time_start": 6, "time_end": 10,
+                                     "evidence_frames": [final["events"][1]["global_frame"]]}]
         return response("finish_video_analysis", final)
 
     async def preview_tool(args, *_):
@@ -218,6 +224,7 @@ async def test_new_runs_review_and_resample_before_publication_and_replay(runtim
     assert len(requests) == 3
     assert report["temporal_review_version"] == 1 and report["reviewed_atlases"]
     assert all(event["evidence_kind"] == "observed" for event in report["events"])
+    assert report["identity_tracks"][0]["confidence"] == "uncertain"
     assert "1:0" in run.raw_output["tool_results"]
 
     fresh = await workspace(runtime)
@@ -239,6 +246,31 @@ async def test_temporal_review_rejects_missing_or_mismatched_evidence(runtime):
     assert any("contextual source" in error for error in errors)
     assert any("time does not match" in error for error in errors)
     assert any("evidence_frames" in error for error in errors)
+
+
+@pytest.mark.asyncio
+async def test_observed_action_cannot_claim_continuity_across_scene_gap(runtime):
+    ws = await workspace(runtime)
+    await ws.build_atlases(ws.overview_times(), reason="overview")
+    payload = result()
+    payload["story_events"][0].update(evidence_kind="observed", evidence_frames=[1, len(ws.frame_times)])
+    errors = agent._temporal_evidence_errors(VideoAnalysisResult.model_validate(payload), ws)
+    assert any("crosses a scene gap" in error for error in errors)
+
+
+@pytest.mark.asyncio
+async def test_story_events_must_follow_timeline(runtime):
+    ws = await workspace(runtime)
+    await ws.build_atlases(ws.overview_times(), reason="overview")
+    payload = result()
+    payload["story_events"] = [
+        {"title": "Later", "summary": "Later action", "time_start": 6, "time_end": 6,
+         "evidence_kind": "observed", "evidence_frames": [1]},
+        {"title": "Earlier", "summary": "Earlier action", "time_start": 2, "time_end": 2,
+         "evidence_kind": "observed", "evidence_frames": [1]},
+    ]
+    errors = agent._temporal_evidence_errors(VideoAnalysisResult.model_validate(payload), ws)
+    assert "story events must be chronological" in errors
 
 
 @pytest.mark.asyncio
