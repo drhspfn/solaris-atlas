@@ -390,6 +390,56 @@ def test_review_requires_each_draft_event_and_identity_to_be_accounted_for():
     assert agent._review_evidence_errors(draft, final, ws) == []
 
 
+def test_review_revised_falls_back_to_target_evidence_and_allows_distant_confirming_frames():
+    ws = SimpleNamespace(frame_times={1: 1, 2: 2, 10: 55}, duration=60)
+    draft = VideoAnalysisResult.model_validate({
+        "summary": "scene",
+        "events": [{"time": 1, "global_frame": 1, "observation": "A dark-haired figure stands near the door",
+                    "confidence": "observed", "evidence_kind": "observed"}],
+        "identity_tracks": [{"identity": "unknown", "appearance": "dark jacket", "confidence": "uncertain",
+                             "basis": "observed", "time_start": 1, "time_end": 2, "evidence_frames": [1]}],
+    })
+    final = VideoAnalysisResult.model_validate({
+        "summary": "scene",
+        "events": [{"time": 1, "global_frame": 1, "observation": "Rover stands near the door",
+                    "confidence": "observed", "evidence_kind": "observed", "evidence_frames": [1, 10]}],
+        "identity_tracks": [{"identity": "Rover", "appearance": "dark jacket", "confidence": "identified",
+                             "basis": "observed", "time_start": 1, "time_end": 55, "evidence_frames": [1, 10]}],
+        "event_review": [{"draft_index": 0, "status": "revised", "final_indices": [0],
+                          "reason": "Identity confirmed as Rover at 00:55"}],
+        "identity_review": [{"draft_index": 0, "status": "revised", "final_indices": [0],
+                             "reason": "Later close-up at frame 10 confirms Rover", "evidence_frames": [1, 10]}],
+    })
+    assert agent._review_evidence_errors(draft, final, ws) == []
+
+
+def test_temporal_evidence_rejects_adjacent_duplicate_observations():
+    ws = SimpleNamespace(frame_times={1: 38.0, 2: 39.0, 3: 45.0}, duration=60.0)
+    dup = VideoAnalysisResult.model_validate({
+        "summary": "scene",
+        "events": [
+            {"time": 38.0, "global_frame": 1, "observation": "A small female figure is surrounded by pink light",
+             "confidence": "observed", "evidence_kind": "observed"},
+            {"time": 39.0, "global_frame": 2, "observation": "A small female figure is surrounded by pink light",
+             "confidence": "observed", "evidence_kind": "observed"},
+        ],
+    })
+    errors = agent._temporal_evidence_errors(dup, ws)
+    assert any("duplicate adjacent observation" in error for error in errors)
+
+    merged = VideoAnalysisResult.model_validate({
+        "summary": "scene",
+        "events": [
+            {"time": 38.0, "time_end": 39.0, "global_frame": 1, "evidence_frames": [1, 2],
+             "observation": "A small female figure is surrounded by pink light",
+             "confidence": "observed", "evidence_kind": "observed"},
+            {"time": 45.0, "global_frame": 3, "observation": "She lowers her gaze and smiles faintly",
+             "confidence": "observed", "evidence_kind": "observed"},
+        ],
+    })
+    assert agent._temporal_evidence_errors(merged, ws) == []
+
+
 @pytest.mark.asyncio
 async def test_finish_errors_are_saved_and_retries_bounded(runtime, monkeypatch):
     db, run, settings, storage, _, _, _ = runtime
@@ -403,6 +453,7 @@ async def test_finish_errors_are_saved_and_retries_bounded(runtime, monkeypatch)
     assert post.await_count == agent.MAX_FINISH_CORRECTIONS + 1
     assert run.raw_output["finish_diagnostics"]["0:0"]["error"] == "invalid_finish_arguments"
     assert run.raw_output["finish_diagnostics"]["0:0"]["details"][0]["field"] == ["identity_tracks", 0, "basis"]
+    assert run.raw_output["finish_diagnostics"]["1:0"]["duplicate_payload"] is True
 
     valid = result()
     valid["preview_candidates"] = []
