@@ -15,6 +15,7 @@ from pathlib import Path
 
 import httpx
 from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from wuwa_story.agents.budget import BudgetExceeded, reserve, settle
 from wuwa_story.agents.cutscene_vision import (
@@ -315,7 +316,9 @@ async def process_cutscene_vision(payload: dict) -> None:
                     run.error = (
                         "Visual batch failed; inspect recorded usage before resuming"
                         if uncertain
-                        else "Source download or frame extraction failed; repair input before resuming"
+                        else "Visual analysis database operation failed; inspect worker logs before resuming"
+                        if isinstance(exc, SQLAlchemyError)
+                        else "Visual analysis failed; inspect worker logs before resuming"
                     )
                     logger.warning(
                         "cutscene.visual_paused run_id=%s status=%s error_type=%s",

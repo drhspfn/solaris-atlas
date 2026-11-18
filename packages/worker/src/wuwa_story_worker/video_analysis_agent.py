@@ -17,7 +17,7 @@ from typing import Any
 
 import httpx
 from pydantic import ValidationError
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -484,9 +484,14 @@ async def _publish_cutscene_knowledge(
         rel_key = relation_map.get(link.relation, "MENTIONS")
         rel_id = await db.scalar(select(RelationType.id).where(RelationType.key == rel_key))
         if rel_id is None:
+            # Seeded relation IDs are explicit, so their sequence may lag behind MAX(id).
+            # Serialize allocation with other ontology writers before selecting the next ID.
+            await db.execute(text("LOCK TABLE ontology.relation_type IN SHARE ROW EXCLUSIVE MODE"))
             await db.execute(
                 insert(RelationType)
-                .values(key=rel_key, description=f"Generated video-analysis relation {rel_key}")
+                .values(id=select(func.coalesce(func.max(RelationType.id), 0) + 1).scalar_subquery(),
+                        key=rel_key, label=rel_key.replace("_", " ").title(),
+                        description=f"Generated video-analysis relation {rel_key}")
                 .on_conflict_do_nothing(index_elements=[RelationType.key])
             )
             rel_id = await db.scalar(select(RelationType.id).where(RelationType.key == rel_key))
