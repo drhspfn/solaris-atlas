@@ -904,14 +904,82 @@ async def character_profile(
         state_ids = set(await session.scalars(select(participation.c.state_id).distinct())) if hasattr(session, "scalars") else set()
         quests_with_dialogue = []
         if state_ids:
-            links = quest_state_links(release_id, state_ids=state_ids)
+            quest_links = quest_state_links(release_id, state_ids=state_ids)
+            seen_quests: set[int] = set()
             for quest, _state_id in await session.execute(
-                select(Quest, links.c.state_id).join(links, links.c.quest_id == Quest.node_id)
-                .where(links.c.state_id.in_(state_ids)).order_by(Quest.game_quest_id)
+                select(Quest, quest_links.c.state_id).join(quest_links, quest_links.c.quest_id == Quest.node_id)
+                .where(quest_links.c.state_id.in_(state_ids)).order_by(Quest.game_quest_id)
             ):
+                if quest.node_id in seen_quests:
+                    continue
+                seen_quests.add(quest.node_id)
                 quests_with_dialogue.append(await _quest_info(session, quest, locale, game_version))
 
-        links = await _explicit_entity_links(session, candidate.id, locale) if hasattr(session, "scalars") else []
+        semantic_links: list[dict[str, Any]] = []
+        co_present_characters: list[dict[str, Any]] = []
+        if hasattr(session, "execute"):
+            seen_semantic_targets: set[tuple[int, str]] = set()
+            for from_id, to_id, rel_key, basis in list(
+                await session.execute(
+                    select(Edge.from_node_id, Edge.to_node_id, RelationType.key, Edge.basis)
+                    .join(RelationType, RelationType.id == Edge.relation_type_id)
+                    .where(
+                        (Edge.from_node_id == candidate.id) | (Edge.to_node_id == candidate.id),
+                        Edge.layer.in_(("semantic", "canonical", "manual")),
+                    )
+                    .limit(30)
+                )
+            ):
+                other_id = to_id if from_id == candidate.id else from_id
+                direction = "outgoing" if from_id == candidate.id else "incoming"
+                if (other_id, rel_key) in seen_semantic_targets:
+                    continue
+                seen_semantic_targets.add((other_id, rel_key))
+                other_rows = list(
+                    await session.execute(
+                        select(Node, NodeType.key)
+                        .join(NodeType, NodeType.id == Node.type_id)
+                        .where(Node.id == other_id)
+                    )
+                )
+                other_row = other_rows[0] if other_rows else None
+                if other_row is None:
+                    continue
+                other_node, other_type = other_row
+                other_label = (other_node.slug or "").split("-", 1)[-1].replace("-", " ").title() or other_node.canonical_key
+                href = f"/characters/{other_node.slug or other_node.canonical_key}" if other_type in {"character", "speaker"} else f"/nodes/{other_node.slug or other_node.canonical_key}"
+                semantic_links.append(
+                    {
+                        "relation": rel_key.lower(),
+                        "direction": direction,
+                        "node": {
+                            "id": other_node.id,
+                            "canonical_key": other_node.canonical_key,
+                            "slug": other_node.slug,
+                            "href": href,
+                            "type": other_type,
+                            "label": other_label,
+                            "status": other_node.status,
+                        },
+                        "basis": basis,
+                        "provenance": None,
+                    }
+                )
+                if other_type in {"character", "speaker"}:
+                    co_present_characters.append(
+                        {
+                            "id": other_node.id,
+                            "canonical_key": other_node.canonical_key,
+                            "slug": other_node.slug,
+                            "name": other_label,
+                            "relation": rel_key.lower(),
+                            "shared_scenes_count": 1,
+                            "shared_scenes": [],
+                        }
+                    )
+
+        raw_links = await _explicit_entity_links(session, candidate.id, locale) if hasattr(session, "scalars") else []
+        links = [*semantic_links, *raw_links]
         profile_data = {
             "character": {
                 "id": candidate.id,
@@ -931,7 +999,7 @@ async def character_profile(
                 "label": speaker_name,
             }],
             "quests_with_dialogue": quests_with_dialogue,
-            "co_present_characters": [],
+            "co_present_characters": co_present_characters,
             "co_present_speakers": [],
             "progression_materials": [],
             "explicit_links": links,
@@ -939,7 +1007,7 @@ async def character_profile(
             "connection_summary": {
                 "confirmed_speakers": 1,
                 "quests_with_dialogue": len(quests_with_dialogue),
-                "co_present_characters": 0,
+                "co_present_characters": len(co_present_characters),
                 "explicit_entity_links": len(links),
                 "configuration_records": 0,
                 "narrative_status": "speaker_mapped",
@@ -949,14 +1017,25 @@ async def character_profile(
         }
         if connections_limit is not None:
             from wuwa_story.read_models.readers.character_connections import page_connections
+
+            quests_page = page_connections(
+                profile_data, "quests", identity=candidate.canonical_key,
+                generation=1, locale=locale, limit=connections_limit,
+            )
+            chars_page = page_connections(
+                profile_data, "characters", identity=candidate.canonical_key,
+                generation=1, locale=locale, limit=connections_limit,
+            )
+            pages = {"quests": quests_page, "characters": chars_page}
             return {
                 **profile_data,
                 "fandom_reference": await _safe_fandom_reference(session, candidate.id),
-                "connection_pages": {
-                    "quests": page_connections(profile_data, "quests", identity=candidate.canonical_key,
-                                               generation=1, locale=locale, limit=connections_limit),
-                    "characters": {"results": [], "total": 0, "has_more": False, "next_cursor": None},
+                "connections_preview": pages,
+                "connections_summary": {
+                    section: {k: v for k, v in page.items() if k != "results"}
+                    for section, page in pages.items()
                 },
+                "connection_pages": pages,
             }
         return {
             **profile_data,

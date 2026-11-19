@@ -197,6 +197,11 @@ async def post_fact(
                 "importance": importance,
                 "confidence": confidence[:24],
                 "status": status[:24],
+                "object_node_id": func.coalesce(object_node_id, AgentFactBoard.object_node_id),
+                "relation_type": func.coalesce(
+                    relation_type[:64] if relation_type else None,
+                    AgentFactBoard.relation_type,
+                ),
                 "question_id": func.coalesce(AgentFactBoard.question_id, question_id),
                 "note_id": func.coalesce(AgentFactBoard.note_id, note_id),
                 "tags": list(tags or []),
