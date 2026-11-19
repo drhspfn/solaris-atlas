@@ -3,6 +3,11 @@
   globalThis.createVisualMemoryVideoReview = ({
     root,
     api,
+    apiPrefix = () =>
+      typeof location !== "undefined" &&
+      (location?.hostname?.startsWith("api.") || location?.port === "8000")
+        ? ""
+        : "/api",
     escape: esc,
     message,
     chooseLinks,
@@ -283,7 +288,7 @@
         source.asset_version &&
         source.cutscene_key
       )
-        video.src = `/admin/visual-memory/videos/sources/${encodeURIComponent(sourceKey(source))}/video?${new URLSearchParams({ game_version: source.game_version, asset_version: source.asset_version, cutscene_key: source.cutscene_key })}`;
+        video.src = `${apiPrefix()}/admin/visual-memory/videos/sources/${encodeURIComponent(sourceKey(source))}/video?${new URLSearchParams({ game_version: source.game_version, asset_version: source.asset_version, cutscene_key: source.cutscene_key })}`;
       else {
         status(
           "This source is missing its cutscene or version context. Reload the source list before scanning.",

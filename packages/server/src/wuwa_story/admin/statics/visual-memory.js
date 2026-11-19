@@ -266,7 +266,7 @@
       message(result.duplicate ? 'This crop already exists; its existing links and moderation were preserved.' : 'Crop saved.'); load();
     }, 'Save crop');
   }
-  const videoReview = globalThis.createVisualMemoryVideoReview?.({root: $('#vm-cutscenes'), api, escape: esc, message, dialog, closeDialog, isBusy:()=>working, chooseLinks: (box, onSave) => chooseLinks(null, box, onSave)});
+  const videoReview = globalThis.createVisualMemoryVideoReview?.({root: $('#vm-cutscenes'), api, apiPrefix, escape: esc, message, dialog, closeDialog, isBusy:()=>working, chooseLinks: (box, onSave) => chooseLinks(null, box, onSave)});
   load();
   if (new URL(location.href).searchParams.get('tab') === 'cutscenes') root.querySelector('[data-tab="cutscenes"]')?.click();
 })();
