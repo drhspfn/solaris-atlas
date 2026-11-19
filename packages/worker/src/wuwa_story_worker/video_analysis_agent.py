@@ -1865,6 +1865,8 @@ async def run_video_analysis_agent(
 
                     if reference_images_used >= MAX_REFERENCE_IMAGES:
                         tool_out, image = {"error": "reference_image_limit"}, None
+                    elif cached is not None and "error" in (cached.get("output") or {}):
+                        tool_out, image = cached["output"], None
                     else:
                         tool_out, image = await character_reference_image(db, tc.arguments)
                     if cached is not None and cached["output"] != tool_out:
