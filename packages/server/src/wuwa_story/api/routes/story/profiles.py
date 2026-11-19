@@ -838,7 +838,10 @@ async def character_profile(
     # NPC metadata is stored on its typed character, independently of playable projections.
     from wuwa_story.api.routes.story.npc_profile import npc_profile, npc_record
 
-    candidate = await get_node(session, canonical_key, ("character",)) if hasattr(session, "scalars") else None
+    # Story speakers without a proven character crosswalk (e.g. Cassandra, speaker:1696) are
+    # addressable as profiles too; otherwise "Open Profile" from a dialogue line has no target.
+    candidate = (await get_node(session, canonical_key, ("character", "speaker"))
+                 if hasattr(session, "scalars") else None)
     if candidate is None and (identifier := numeric_id(canonical_key)) is not None and hasattr(session, "get"):
         candidate = await session.get(Node, identifier)
     candidate_character = await session.get(Character, candidate.id) if candidate and hasattr(session, "get") else None
@@ -852,10 +855,14 @@ async def character_profile(
 
         # 1. Check if speaker links to a character entity
         target_char_id = await session.scalar(
-            select(Edge.target_node_id).where(
-                Edge.source_node_id == candidate.id,
-                Edge.relation_type == "references_character",
+            select(Edge.to_node_id)
+            .join(RelationType, RelationType.id == Edge.relation_type_id)
+            .where(
+                Edge.from_node_id == candidate.id,
+                Edge.layer == "source",
+                RelationType.key == "references_character",
             )
+            .limit(1)
         )
         if target_char_id is None:
             target_char_id = await session.scalar(
