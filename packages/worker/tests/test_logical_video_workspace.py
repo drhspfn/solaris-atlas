@@ -480,6 +480,44 @@ def test_temporal_evidence_rejects_adjacent_duplicate_observations():
     assert agent._temporal_evidence_errors(merged, ws) == []
 
 
+def test_temporal_evidence_enforces_ending_coverage_and_rover_dialogue_identity():
+    ws = SimpleNamespace(frame_times={1: 153.957, 2: 168.0}, duration=180.0)
+    context = {"dialogue_lines": [{"speaker": "{PlayerName}", "text": "Sorry. The Tacet Discords held me up.", "node_id": 7987613}]}
+    truncated = VideoAnalysisResult.model_validate({
+        "summary": "scene",
+        "events": [
+            {"time": 153.957, "time_end": 168.0, "global_frame": 1, "evidence_frames": [1, 2],
+             "observation": "A white feline appears and energy sweeps across the field",
+             "confidence": "observed", "evidence_kind": "observed"},
+        ],
+        "identity_tracks": [
+            {"identity": "Lily", "appearance": "flower crown", "confidence": "identified",
+             "basis": "observed", "time_start": 153.957, "time_end": 168.0, "evidence_frames": [1]},
+        ],
+    })
+    errors = agent._temporal_evidence_errors(truncated, ws, context)
+    assert any("timeline ending coverage" in error for error in errors)
+    assert any("'{PlayerName}' (Rover)" in error for error in errors)
+
+    complete = VideoAnalysisResult.model_validate({
+        "summary": "scene",
+        "events": [
+            {"time": 153.957, "global_frame": 1, "evidence_frames": [1],
+             "observation": "A white feline appears and energy sweeps across the field",
+             "confidence": "observed", "evidence_kind": "observed"},
+            {"time": 168.0, "global_frame": 2, "evidence_frames": [2], "actors": ["Rover", "Lily"],
+             "observation": "Rover supports Lily as they walk together across the flower field at sunset",
+             "confidence": "observed", "evidence_kind": "observed"},
+        ],
+        "identity_tracks": [
+            {"identity": "Rover", "appearance": "dark jacket and trousers", "confidence": "identified",
+             "basis": "contextual", "context_sources": ["7987613"], "time_start": 153.957, "time_end": 168.0,
+             "evidence_frames": [1, 2]},
+        ],
+    })
+    assert agent._temporal_evidence_errors(complete, ws, context) == []
+
+
 @pytest.mark.asyncio
 async def test_finish_errors_are_saved_and_retries_bounded(runtime, monkeypatch):
     db, run, settings, storage, _, _, _ = runtime
