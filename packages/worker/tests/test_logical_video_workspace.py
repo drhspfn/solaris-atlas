@@ -518,6 +518,33 @@ def test_temporal_evidence_enforces_ending_coverage_and_rover_dialogue_identity(
     assert agent._temporal_evidence_errors(complete, ws, context) == []
 
 
+def test_order_evidence_frames_backfills_off_by_one_trailing_event_review():
+    ws = SimpleNamespace(frame_times={1: 10.0, 2: 20.0}, duration=30.0)
+    draft = VideoAnalysisResult.model_validate({
+        "summary": "scene",
+        "events": [
+            {"time": 10.0, "global_frame": 1, "observation": "First action", "confidence": "observed", "evidence_kind": "observed"},
+            {"time": 20.0, "global_frame": 2, "observation": "The image fades to black and remains black.", "confidence": "observed", "evidence_kind": "observed"},
+        ],
+    })
+    raw_final = {
+        "summary": "scene",
+        "events": [
+            {"time": 10.0, "global_frame": 1, "observation": "First action", "confidence": "observed", "evidence_kind": "observed"},
+            {"time": 20.0, "global_frame": 2, "evidence_frames": [2], "observation": "The image fades to black; no further action.", "confidence": "observed", "evidence_kind": "observed"},
+        ],
+        "event_review": [
+            {"draft_index": 0, "status": "retained", "final_indices": [0]},
+        ],
+    }
+    ordered = agent._order_evidence_frames(raw_final, ws, order_events=True, normalize_intervals=True, draft=draft)
+    final = VideoAnalysisResult.model_validate(ordered)
+    assert len(final.event_review) == 2
+    assert final.event_review[1].draft_index == 1
+    assert final.event_review[1].final_indices == [1]
+    assert agent._review_evidence_errors(draft, final, ws) == []
+
+
 @pytest.mark.asyncio
 async def test_finish_errors_are_saved_and_retries_bounded(runtime, monkeypatch):
     db, run, settings, storage, _, _, _ = runtime
