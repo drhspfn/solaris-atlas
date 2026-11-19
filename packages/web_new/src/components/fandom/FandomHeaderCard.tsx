@@ -4,12 +4,21 @@ import { useEffect, useState } from "react";
 import { api } from "@/api/client";
 import { BookOpen, ExternalLink } from "lucide-react";
 
+import { Link } from "@/lib/router";
+
+export type FandomRelationChip = {
+  relation_type?: string | null;
+  target_name: string;
+  href?: string | null;
+};
+
 export type FandomReference = {
   page_title: string;
   page_url: string;
   gallery_url?: string | null;
   summary?: string | null;
   license?: string | null;
+  relations?: FandomRelationChip[];
 };
 
 export function FandomHeaderCard({
@@ -125,6 +134,49 @@ export function FandomHeaderCard({
           </span>
         )}
       </div>
+      {ref.relations && ref.relations.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "0.4rem",
+            paddingTop: "0.25rem",
+          }}
+        >
+          {ref.relations.map((rel, idx) =>
+            rel.href ? (
+              <Link
+                key={`${rel.target_name}-${idx}`}
+                to={rel.href}
+                style={{
+                  fontSize: "0.8rem",
+                  padding: "0.2rem 0.55rem",
+                  borderRadius: "999px",
+                  border: "1px solid var(--border, rgba(255,255,255,0.16))",
+                  textDecoration: "none",
+                }}
+              >
+                {rel.relation_type ? `${rel.relation_type}: ` : ""}
+                {rel.target_name} →
+              </Link>
+            ) : (
+              <span
+                key={`${rel.target_name}-${idx}`}
+                style={{
+                  fontSize: "0.8rem",
+                  padding: "0.2rem 0.55rem",
+                  borderRadius: "999px",
+                  border: "1px solid var(--border, rgba(255,255,255,0.12))",
+                  opacity: 0.85,
+                }}
+              >
+                {rel.relation_type ? `${rel.relation_type}: ` : ""}
+                {rel.target_name}
+              </span>
+            ),
+          )}
+        </div>
+      )}
     </aside>
   );
 }

@@ -53,12 +53,48 @@ async def get_fandom_reference(session: AsyncSession, node_id: int) -> dict[str,
     citations = fact.citations or []
     license_text = citations[0].get("license") if citations and isinstance(
         citations[0], dict) else None
+    rel_facts = list(
+        await session.scalars(
+            select(AgentFactBoard)
+            .where(
+                AgentFactBoard.subject_node_id == node_id,
+                AgentFactBoard.source_kind == "fandom",
+                AgentFactBoard.fact_type == "relationship",
+                AgentFactBoard.status == "active",
+            )
+            .order_by(AgentFactBoard.importance.desc(), AgentFactBoard.id)
+            .limit(12)
+        )
+    )
+    target_ids = [r.object_node_id for r in rel_facts if r.object_node_id]
+    targets_by_id: dict[int, tuple[str, str | None, str]] = {}
+    if target_ids:
+        for tid, ckey, slug, ntype in (
+            await session.execute(
+                select(Node.id, Node.canonical_key, Node.slug, NodeType.key)
+                .join(NodeType, NodeType.id == Node.type_id)
+                .where(Node.id.in_(target_ids))
+            )
+        ).all():
+            targets_by_id[tid] = (ckey, slug, ntype)
+    relations_out = []
+    for rel in rel_facts:
+        tinfo = targets_by_id.get(rel.object_node_id) if rel.object_node_id else None
+        target_label = rel.title.split(f" {rel.relation_type} ", 1)[-1] if rel.relation_type else rel.title
+        relations_out.append(
+            {
+                "relation_type": rel.relation_type,
+                "target_name": target_label,
+                "href": entity_href(tinfo[0], tinfo[1], tinfo[2]) if tinfo else None,
+            }
+        )
     return {
         "page_title": fact.title.removeprefix("Fandom: ").strip() or fact.title,
         "page_url": page_url,
         "gallery_url": meta.get("gallery_url"),
         "summary": fact.description,
         "license": license_text or "CC-BY-SA",
+        "relations": relations_out,
     }
 
 
