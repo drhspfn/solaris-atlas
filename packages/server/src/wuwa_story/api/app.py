@@ -15,6 +15,7 @@ from wuwa_story.api.routes import (
     admin_data,
     character_models,
     cutscenes,
+    fandom,
     game_events,
     graph_paths,
     health,
@@ -124,6 +125,7 @@ app.include_router(story_agent.router)
 app.include_router(story_agent.admin)
 app.include_router(visual_memory.router)
 app.include_router(visual_memory_video.router)
+app.include_router(fandom.router)
 app.include_router(auth_router)
 
 app.include_router(mcp.router)
