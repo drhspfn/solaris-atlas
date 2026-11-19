@@ -355,22 +355,32 @@ export function EntityProfileClient({
               <PlayerText value={name} display={playerDisplay} />
               <span className="heading-period">.</span>
             </h1>
-            {kind === "character" && entity?.canonical_key && (
+            {kind === "character" && entity?.canonical_key ? (
               <CharacterModelImport
                 characterKey={entity.canonical_key}
                 variant="actions"
                 onComplete={() => setModelRevision((value) => value + 1)}
+                extraActions={
+                  <FandomSyncAction
+                    standalone={false}
+                    canonicalKey={entity.canonical_key}
+                    entityKind={
+                      entity.canonical_key.startsWith("speaker:")
+                        ? "speaker"
+                        : kind
+                    }
+                  />
+                }
               />
-            )}
-            {entity?.canonical_key && (
+            ) : entity?.canonical_key ? (
               <FandomSyncAction
                 canonicalKey={entity.canonical_key}
                 entityKind={
                   entity.canonical_key.startsWith("speaker:") ? "speaker" : kind
                 }
-                menuLabel={`${kind} Fandom actions`}
+                menuLabel={`${kind} actions`}
               />
-            )}
+            ) : null}
           </div>
           <p>
             <PlayerText value={introduction} display={playerDisplay} />

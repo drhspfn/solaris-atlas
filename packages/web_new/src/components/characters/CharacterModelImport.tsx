@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useEffect, useId, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { api, ApiError } from "@/api/client";
 import { useAuth } from "@/auth/AuthProvider";
 import { Select } from "@/components/ui/Select";
@@ -38,6 +38,7 @@ export function CharacterModelImport({
   active = true,
   variant = "inline",
   onComplete,
+  extraActions,
 }: {
   characterKey?: string;
   initialGameVersion?: string;
@@ -45,6 +46,7 @@ export function CharacterModelImport({
   active?: boolean;
   variant?: "inline" | "actions";
   onComplete?: () => void;
+  extraActions?: ReactNode;
 }) {
   const { user } = useAuth();
   if (user?.role !== "admin") return null;
@@ -57,6 +59,7 @@ export function CharacterModelImport({
       active={active}
       variant={variant}
       onComplete={onComplete}
+      extraActions={extraActions}
     />
   );
 }
@@ -68,6 +71,7 @@ function ImportControls({
   active,
   variant,
   onComplete,
+  extraActions,
 }: {
   characterKey?: string;
   initialGameVersion?: string;
@@ -75,6 +79,7 @@ function ImportControls({
   active: boolean;
   variant: "inline" | "actions";
   onComplete?: () => void;
+  extraActions?: ReactNode;
 }) {
   const { refresh: refreshAuth } = useAuth();
   const id = useId();
@@ -498,6 +503,7 @@ function ImportControls({
         >
           <Upload size={16} aria-hidden="true" /> Import character model
         </button>
+        {extraActions}
       </ActionMenu>
       <dialog
         ref={dialog}
