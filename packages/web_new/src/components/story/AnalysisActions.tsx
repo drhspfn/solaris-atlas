@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
 import { ActionMenu } from "../ui/ActionMenu";
+import { FandomSyncAction } from "../fandom/FandomSyncAction";
 
 type Target =
   | { kind: "quest"; questId: number }
@@ -90,6 +91,14 @@ export function AnalysisActions({ target }: { target: Target }) {
       <a href={`${path}${job !== null ? `?job=${job}` : ""}`}>
         View analysis tasks
       </a>
+      <FandomSyncAction
+        standalone={false}
+        nodeId={target.kind === "cutscene" ? target.assetIds[0] : undefined}
+        canonicalKey={
+          target.kind === "quest" ? `quest:${target.questId}` : undefined
+        }
+        entityKind={target.kind === "cutscene" ? "cutscene" : "quest"}
+      />
     </ActionMenu>
   );
 }

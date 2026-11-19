@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Volume2, X } from "lucide-react";
 import { api } from "@/api/client";
 import { CharacterModelImport } from "@/components/characters/CharacterModelImport";
+import { FandomSyncAction } from "@/components/fandom/FandomSyncAction";
 import { CharacterProfileVisual } from "@/components/characters/CharacterProfileVisual";
 import { NpcFlowParticipants } from "@/components/profile/NpcFlowParticipants";
 import { NpcInstances } from "@/components/profile/NpcInstances";
@@ -468,6 +469,11 @@ export function NpcProfile({
               characterKey={character.canonical_key}
               variant="actions"
               onComplete={() => setRevision((value) => value + 1)}
+            />
+            <FandomSyncAction
+              canonicalKey={character.canonical_key}
+              entityKind="npc"
+              menuLabel="NPC Fandom actions"
             />
           </div>
           <p>

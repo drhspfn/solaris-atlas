@@ -12,6 +12,7 @@ import {
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "@/lib/router";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
+import { FandomSyncAction } from "@/components/fandom/FandomSyncAction";
 
 import { api } from "@/api/client";
 import { PlayerText } from "@/components/dialogue/PlayerText";
@@ -186,6 +187,11 @@ export function NodeExplorerPage({
             )}
             <span className="heading-period">.</span>
           </h1>
+          <FandomSyncAction
+            canonicalKey={node.canonical_key}
+            entityKind={isSpeaker ? "speaker" : undefined}
+            menuLabel="Node Fandom actions"
+          />
           {isSpeaker && (
             <span className="speaker-role-pill">Story Speaker &amp; Voice</span>
           )}
