@@ -735,7 +735,7 @@ async def _execute_video_tool(
     }:
         from wuwa_story.agents import workspace as agent_workspace
         from wuwa_story.agents.capabilities import execute_fact_board_tool
-        from wuwa_story.agents.contracts import MemoryWrite
+        from wuwa_story.agents.workspace import MemoryWrite
 
         run_id = getattr(workspace, "run_id", None)
         if call.name == "read_workspace_memory":

@@ -60,3 +60,12 @@ async def test_link_fact_to_question():
     res = await fact_board.link_fact_to_question(session, fact_id=5, question_id=99)
     assert res == {"fact_id": 5, "question_id": 99, "linked": True}
     assert fact.question_id == 99
+
+
+def test_memory_write_import_from_workspace():
+    from wuwa_story.agents.workspace import MemoryWrite
+
+    item = MemoryWrite.model_validate(
+        {"key": "long:test", "scope": "long", "text": "note", "expected_revision": 0}
+    )
+    assert item.key == "long:test"
