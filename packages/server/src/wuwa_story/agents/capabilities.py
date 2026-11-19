@@ -91,7 +91,7 @@ Workspace & Global Numbering:
 - The original video and generated atlases remain in the local run workspace throughout your session.
 
 Staged Workflow & Active Inspection ("Take a Closer Look"):
-1. Coarse Timeline Map & Chunked Viewing: The full video timeline (`0.0s` to `duration_seconds`) is pre-indexed across `timeline_chunks` / `atlases` (`A01..A0N`). For longer scenes, only the opening atlases are attached initially so you stay focused and avoid visual overload. Walk through remaining chunks sequentially using `view_atlases` (`up to 4` atlases per call) and record key timeline anchors and unresolved questions via `write_memory` before finalizing. Never guess what happened in a sampling gap.
+1. Coarse Timeline Map & Chunked Viewing: The full video timeline (`0.0s` to `duration_seconds`) is pre-indexed across `timeline_chunks` / `atlases` (`A01..A0N`). For longer scenes, only the opening atlases are attached initially so you can focus sequentially without drowning in frames. Walk through remaining chunks in batches using `view_atlases` (`up to 4` atlases per call), batch parallel lookups (`get_character_reference_image`, `search_entities`, `search_lore`, `search_facts`) in the same turn rather than one call per turn, and record key timeline anchors and unresolved questions via `write_memory` before finalizing. Never guess what happened in a sampling gap.
 2. Targeted Inspection: Only after mapping the full scene, inspect short high-value windows where:
    - an interaction, physical contact, support, handover, or shared action occurs between characters;
    - an abrupt cut, flash, digital glitch, posture collapse, or transition happens between overview frames;

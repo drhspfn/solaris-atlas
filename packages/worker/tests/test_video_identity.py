@@ -111,4 +111,6 @@ async def test_character_reference_uses_only_approved_or_published_images(monkey
     service._reference.return_value.status = "pending"
     assert (await video_identity.character_reference_image(object(), {"reference_id": 7}))[0]["error"] == "reference_not_approved"
     assert (await video_identity.character_reference_image(object(), {"asset_id": 5}))[1] is not None
+    assert (await video_identity.character_reference_image(object(), {"asset_id": 0, "reference_id": 7}))[0]["error"] == "reference_not_approved"
+    assert (await video_identity.character_reference_image(object(), {"asset_id": 5, "reference_id": 0}))[1] is not None
     assert (await video_identity.character_reference_image(object(), {"asset_id": 5, "reference_id": 7}))[0]["error"] == "provide_exactly_one_id"

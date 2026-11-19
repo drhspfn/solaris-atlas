@@ -63,7 +63,7 @@ from wuwa_story_worker.video_atlas import write_atlas
 
 logger = logging.getLogger(__name__)
 
-MAX_AGENT_TURNS = 20
+MAX_AGENT_TURNS = 28
 MAX_FINISH_CORRECTIONS = 2
 MAX_REFERENCE_IMAGES = 10
 MAX_SPATIAL_INSPECTIONS = 6
@@ -1914,6 +1914,13 @@ async def run_video_analysis_agent(
                 history.append(_multimodal_user_message(
                     provider, "Requested character reference images and video region crops, in tool-call order; compare with scene frames.",
                     reference_images,
+                ))
+            if turn_index == MAX_AGENT_TURNS - 2 and final_result is None:
+                history.append(_multimodal_user_message(
+                    provider,
+                    "Turn budget notice: only 1 turn remains before MAX_AGENT_TURNS. Batch no further exploratory calls; "
+                    "submit `finish_video_analysis` now with your verified findings.",
+                    [],
                 ))
 
     if final_result is None:

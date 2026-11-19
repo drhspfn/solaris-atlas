@@ -90,3 +90,26 @@ async def test_post_fact_coerces_zero_fk_ids_to_none():
         create_edge=False,
     )
     assert res["id"] == 123
+
+
+@pytest.mark.asyncio
+async def test_search_facts_ignores_zero_filter_ids():
+    session = MagicMock()
+    session.scalars = AsyncMock(return_value=[])
+    res = await fact_board.search_facts(
+        session,
+        query="Cassandra",
+        subject_node_id=0,
+        object_node_id=0,
+        quest_node_id=0,
+        cutscene_node_id=0,
+        question_id=0,
+        min_importance=0,
+    )
+    assert res == []
+    stmt_sql = str(session.scalars.call_args.args[0])
+    assert "subject_node_id =" not in stmt_sql
+    assert "object_node_id =" not in stmt_sql
+    assert "quest_node_id =" not in stmt_sql
+    assert "cutscene_node_id =" not in stmt_sql
+    assert "question_id =" not in stmt_sql

@@ -287,8 +287,14 @@ async def search_facts(
 ) -> list[dict[str, Any]]:
     """Search the shared cross-agent fact board."""
     limit = max(1, min(int(limit), 50))
+    subject_node_id = _pos_id(subject_node_id)
+    object_node_id = _pos_id(object_node_id)
+    quest_node_id = _pos_id(quest_node_id)
+    cutscene_node_id = _pos_id(cutscene_node_id)
+    question_id = _pos_id(question_id)
+    min_importance = max(1, int(min_importance or 1))
     stmt = select(AgentFactBoard).where(
-        AgentFactBoard.importance >= int(min_importance))
+        AgentFactBoard.importance >= min_importance)
     if status:
         stmt = stmt.where(AgentFactBoard.status == status)
     if fact_type:
@@ -358,6 +364,7 @@ async def search_notes(
 ) -> list[dict[str, Any]]:
     """Search ops.agent_note records so agents can inspect missing_data/contradiction alerts."""
     limit = max(1, min(int(limit), 50))
+    node_id = _pos_id(node_id)
     stmt = select(AgentNote)
     if status:
         stmt = stmt.where(AgentNote.status == status)

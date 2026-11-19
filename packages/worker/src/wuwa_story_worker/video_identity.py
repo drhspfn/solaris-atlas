@@ -19,8 +19,16 @@ MAX_IDENTITY_FRAMES = 16
 async def character_reference_image(db: Any, args: dict[str, Any]) -> tuple[dict[str, Any], bytes | None]:
     """Read a bounded published image or approved visual reference, never an arbitrary URL."""
     asset_id, reference_id = args.get("asset_id"), args.get("reference_id")
+    # Strict-schema models frequently pass 0 for omitted optional integer fields.
+    if asset_id == 0:
+        asset_id = None
+    if reference_id == 0:
+        reference_id = None
     if (asset_id is None) == (reference_id is None):
-        return {"error": "provide_exactly_one_id"}, None
+        return {
+            "error": "provide_exactly_one_id",
+            "hint": "Pass only reference_id (from identify_atlas_characters reference_ids) OR only asset_id; omit the other field instead of passing both.",
+        }, None
     selected = asset_id if asset_id is not None else reference_id
     if type(selected) is not int or selected <= 0:
         return {"error": "invalid_id"}, None
