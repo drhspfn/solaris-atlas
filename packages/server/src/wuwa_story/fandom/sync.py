@@ -8,6 +8,15 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.agents.fact_board import post_fact
+from wuwa_story.db.models.graph import Node, NodeType
+from wuwa_story.db.models.search import EntityAlias
+from wuwa_story.fandom.models import FandomEntityBundle, LicenseFilter
+from wuwa_story.visual_memory.web_enrichment import (
+    ensure_visual_identity_for_node,
+    validate_image_bytes,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -24,15 +33,6 @@ def _fetch_image_bytes(url: str, referer: str) -> bytes:
     with urllib.request.urlopen(req, timeout=20) as resp:
         return resp.read()
 
-from wuwa_story.agents.fact_board import post_fact
-from wuwa_story.db.models.graph import Node, NodeType
-from wuwa_story.db.models.search import EntityAlias
-from wuwa_story.fandom.models import FandomEntityBundle, LicenseFilter
-from wuwa_story.visual_memory.web_enrichment import (
-    ensure_visual_identity_for_node,
-    validate_image_bytes,
-)
-
 
 async def _find_node_by_name(session: AsyncSession, name: str) -> tuple[int, str, str | None, str] | None:
     normalized = " ".join(name.strip().lower().split())
@@ -47,7 +47,24 @@ async def _find_node_by_name(session: AsyncSession, name: str) -> tuple[int, str
             .limit(1)
         )
     ).first()
-    return tuple(row) if row else None
+    if row is not None:
+        return tuple(row)
+    slug_tail = "-".join(normalized.split())
+    if not slug_tail:
+        return None
+    fallback = (
+        await session.execute(
+            select(Node.id, Node.canonical_key, Node.slug, NodeType.key)
+            .join(NodeType, NodeType.id == Node.type_id)
+            .where(
+                Node.slug.ilike(f"%-{slug_tail}"),
+                NodeType.key.in_(("character", "speaker", "quest", "item", "location", "area")),
+            )
+            .order_by(func.length(Node.slug), Node.id)
+            .limit(1)
+        )
+    ).first()
+    return tuple(fallback) if fallback else None
 
 
 def entity_href(canonical_key: str, slug: str | None, node_type: str) -> str:
@@ -166,13 +183,13 @@ async def sync_fandom_bundle(
             try:
                 ref = await memory_service.add_reference(
                     content,
-                    identity_ids=[identity_id],
+                    links=[{"identity_id": identity_id}],
                     source_type="fandom",
                     source_url=asset.url,
                     source_page=bundle.page_url,
                     rights=asset.license.text or "CC-BY-SA",
                     status="pending",
-                    store_image=True,
+                    retention_mode="image",
                 )
             except Exception as exc:
                 logger.warning("fandom.add_reference_failed url=%s error=%s", asset.url, type(exc).__name__)
