@@ -1370,9 +1370,10 @@ TEMPORAL_REVIEW_INSTRUCTION = (
     "5) Deduplication without compression: merge adjacent (<=2-3s) observations that describe the "
     "exact same unchanging action (e.g., consecutive frames of aiming without a new beat), while "
     "keeping distinct micro-actions, emotional shifts, and multi-cut climax/ending beats separate. "
-    "6) Record major confirmed findings/relationships via `post_fact`. If concrete identity checks, target windows, "
-    "or story gaps should be fixed by the Writer, call `return_draft_for_revision`; otherwise cite actual frame numbers "
-    "and matching scene timestamps, set `evidence_kind` for every event, and call `finish_video_analysis`."
+    "6) Record major confirmed findings/relationships via `post_fact`. If concrete character checks, target windows, "
+    "or story gaps should be fixed by the Writer (and revisions remain), call `return_draft_for_revision`; do NOT return "
+    "a draft merely because `event_review`/`identity_review` are empty (you author those in your own final submission). "
+    "Otherwise cite actual frame numbers and matching scene timestamps, set `evidence_kind` for every event, and call `finish_video_analysis`."
 )
 
 VERIFIER_SYSTEM_PROMPT = (
@@ -1767,10 +1768,10 @@ async def run_video_analysis_agent(
                         tool_out = {"error": "revision_only_available_during_reader_review"}
                         history.append(provider.tool_result(tc, tool_out))
                         continue
-                    if revision_rounds >= MAX_REVISION_ROUNDS:
+                    if revision_rounds >= MAX_REVISION_ROUNDS or turn_index >= MAX_AGENT_TURNS - 3:
                         tool_out = {
                             "error": "revision_limit_reached",
-                            "hint": "Use view_atlases/get_character_reference_image/search tools directly and submit finish_video_analysis.",
+                            "hint": "Not enough turns or revisions remain; use view_atlases/get_character_reference_image/search tools directly and submit finish_video_analysis.",
                         }
                         history.append(provider.tool_result(tc, tool_out))
                         continue

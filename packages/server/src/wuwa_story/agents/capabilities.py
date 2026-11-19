@@ -476,8 +476,9 @@ def video_analysis_definitions() -> list[dict[str, Any]]:
         ),
         tool(
             "get_character_reference_image",
-            "Show a published character image by asset_id or an approved visual-memory image by reference_id for comparison with scene frames. Supply exactly one ID.",
-            {"asset_id": integer, "reference_id": integer},
+            "Show an approved visual-memory character reference portrait by its reference_id (from identify_atlas_characters or search_entities) for visual comparison with scene frames.",
+            {"reference_id": integer},
+            ["reference_id"],
         ),
         tool(
             "inspect_video_region",
