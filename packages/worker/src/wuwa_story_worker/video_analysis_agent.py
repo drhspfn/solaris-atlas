@@ -62,7 +62,8 @@ MAX_SPATIAL_INSPECTIONS = 4
 
 
 def _order_evidence_frames(arguments: dict[str, Any], workspace: VideoWorkspace, *, order_events: bool = False,
-                           order_story_events: bool = False, normalize_intervals: bool = False) -> dict[str, Any]:
+                           order_story_events: bool = False, normalize_intervals: bool = False,
+                           draft: VideoAnalysisResult | None = None) -> dict[str, Any]:
     """Sort known frame lists by scene time; never invent or discard evidence."""
     result = copy.deepcopy(arguments)
     if not isinstance(result, dict):
@@ -80,6 +81,78 @@ def _order_evidence_frames(arguments: dict[str, Any], workspace: VideoWorkspace,
                 if isinstance(decision, dict) and isinstance(decision.get("final_indices"), list):
                     decision["final_indices"] = [remap.get(index, index) if type(index) is int else index
                                                  for index in decision["final_indices"]]
+    if normalize_intervals and draft is not None:
+        for review_key, before, after_key in (
+            ("event_review", draft.events, "events"),
+            ("identity_review", draft.identity_tracks, "identity_tracks"),
+        ):
+            decisions = result.get(review_key)
+            after = result.get(after_key)
+            if not isinstance(decisions, list) or not isinstance(after, list) or not before:
+                continue
+            present = {d.get("draft_index") for d in decisions if isinstance(d, dict)}
+            missing = [idx for idx in range(len(before)) if idx not in present]
+            if (
+                len(missing) == 1
+                and missing[0] == len(before) - 1
+                and len(decisions) == len(before) - 1
+                and len(after) == len(before)
+                and all(
+                    isinstance(d, dict)
+                    and d.get("draft_index") == idx
+                    and d.get("final_indices") == [idx]
+                    for idx, d in enumerate(decisions)
+                )
+            ):
+                tail_idx = missing[0]
+                draft_tail = before[tail_idx]
+                final_tail = after[tail_idx]
+                if isinstance(final_tail, dict):
+                    if review_key == "event_review":
+                        f_time = final_tail.get("time")
+                        if type(f_time) in (int, float) and abs(float(f_time) - draft_tail.time) <= 3.0:
+                            d_obs = " ".join(draft_tail.observation.split()).casefold()
+                            f_obs = " ".join(str(final_tail.get("observation", "")).split()).casefold()
+                            if d_obs and d_obs in f_obs:
+                                decisions.append({"draft_index": tail_idx, "status": "retained", "final_indices": [tail_idx]})
+                            else:
+                                frames = list(final_tail.get("evidence_frames") or [])
+                                if not frames and type(final_tail.get("global_frame")) is int:
+                                    frames = [final_tail["global_frame"]]
+                                decisions.append({
+                                    "draft_index": tail_idx,
+                                    "status": "revised",
+                                    "final_indices": [tail_idx],
+                                    "reason": "Retained final event with minor wording refinement",
+                                    "evidence_frames": frames,
+                                })
+                continue
+            if len(missing) == 1 and len(decisions) == len(before) - 1:
+                miss_idx = missing[0]
+                draft_item = before[miss_idx]
+                claimed = {
+                    f_idx
+                    for d in decisions
+                    if isinstance(d, dict) and isinstance(d.get("final_indices"), list)
+                    for f_idx in d["final_indices"]
+                    if type(f_idx) is int
+                }
+                for f_idx, final_item in enumerate(after):
+                    if f_idx in claimed or not isinstance(final_item, dict):
+                        continue
+                    if review_key == "event_review":
+                        d_obs = " ".join(draft_item.observation.split()).casefold()
+                        f_obs = " ".join(str(final_item.get("observation", "")).split()).casefold()
+                        f_time = final_item.get("time")
+                        if type(f_time) in (int, float) and abs(float(f_time) - draft_item.time) <= 3.0 and d_obs and d_obs in f_obs:
+                            decisions.append({"draft_index": miss_idx, "status": "retained", "final_indices": [f_idx]})
+                            break
+                    else:
+                        d_id = draft_item.identity.strip().casefold()
+                        f_id = str(final_item.get("identity", "")).strip().casefold()
+                        if d_id and d_id == f_id:
+                            decisions.append({"draft_index": miss_idx, "status": "retained", "final_indices": [f_idx]})
+                            break
     story_events = result.get("story_events")
     if order_story_events and isinstance(story_events, list) and all(
         isinstance(item, dict) and type(item.get("time_start")) in (int, float)
@@ -122,8 +195,14 @@ def _review_evidence_errors(draft: VideoAnalysisResult, final: VideoAnalysisResu
         ("identity", draft.identity_tracks, final.identity_tracks, final.identity_review),
     ):
         indices = [decision.draft_index for decision in decisions]
-        if sorted(indices) != list(range(len(before))):
-            errors.append(f"{name}_review must cover each draft index exactly once")
+        expected = list(range(len(before)))
+        if sorted(indices) != expected:
+            missing = [idx for idx in expected if idx not in indices]
+            extra = [idx for idx in indices if idx not in expected or indices.count(idx) > 1]
+            errors.append(
+                f"{name}_review must cover each draft index 0..{len(before) - 1} exactly once "
+                f"(draft has {len(before)} items; missing draft_index={missing}, extra/duplicate={sorted(set(extra))})"
+            )
             continue
         for decision in decisions:
             label = f"{name}_review {decision.draft_index}"
@@ -1024,7 +1103,7 @@ async def run_video_analysis_agent(
                         candidate = VideoAnalysisResult.model_validate(
                             _order_evidence_frames(json.loads(turn.text), workspace, order_events=evidence_review_required,
                                                    order_story_events=evidence_review_required and review_started,
-                                                   normalize_intervals=review_started))
+                                                   normalize_intervals=review_started, draft=review_draft))
                     except (ValidationError, ValueError, TypeError) as exc:
                         finish_corrections += 1
                         outcome = {"error": "invalid_finish_text", "details": str(exc)[:2000]}
@@ -1068,7 +1147,7 @@ async def run_video_analysis_agent(
                         candidate = VideoAnalysisResult.model_validate(
                             _order_evidence_frames(tc.arguments, workspace, order_events=evidence_review_required,
                                                    order_story_events=evidence_review_required and review_started,
-                                                   normalize_intervals=review_started))
+                                                   normalize_intervals=review_started, draft=review_draft))
                     except ValidationError as exc:
                         finish_corrections += 1
                         digest = hashlib.sha256(
