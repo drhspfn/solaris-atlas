@@ -826,6 +826,16 @@ async def quest_profile(
         raise HTTPException(status_code=error.status_code, detail=error.detail) from error
 
 
+async def _safe_fandom_reference(session: AsyncSession, node_id: int) -> dict[str, Any] | None:
+    try:
+        from wuwa_story.api.routes.fandom import get_fandom_reference
+
+        res = await get_fandom_reference(session, node_id)
+        return res if isinstance(res, dict) else None
+    except Exception:
+        return None
+
+
 @router.get("/characters/{canonical_key:path}/profile")
 @public_addresses
 async def character_profile(
@@ -941,17 +951,22 @@ async def character_profile(
             from wuwa_story.read_models.readers.character_connections import page_connections
             return {
                 **profile_data,
+                "fandom_reference": await _safe_fandom_reference(session, candidate.id),
                 "connection_pages": {
                     "quests": page_connections(profile_data, "quests", identity=candidate.canonical_key,
                                                generation=1, locale=locale, limit=connections_limit),
                     "characters": {"results": [], "total": 0, "has_more": False, "next_cursor": None},
                 },
             }
-        return profile_data
+        return {
+            **profile_data,
+            "fandom_reference": await _safe_fandom_reference(session, candidate.id),
+        }
 
     if candidate and candidate.canonical_key.startswith("character:npc:"):
         node, character, npc, release_id = await npc_record(session, candidate.canonical_key, game_version)
-        return await npc_profile(session, node, character, npc, release_id, locale)
+        payload = await npc_profile(session, node, character, npc, release_id, locale)
+        return {**payload, "fandom_reference": await _safe_fandom_reference(session, node.id)}
     if connections_limit is not None:
         from wuwa_story.read_models.readers.character_connections import compact_character_profile
 
