@@ -169,3 +169,16 @@ async def test_conflict_update_explicitly_refreshes_updated_at():
     compiled = database.scalar.call_args.args[0].compile(dialect=postgresql.dialect())
     update = str(compiled).split("DO UPDATE SET", 1)[1].split(" WHERE ", 1)[0]
     assert "updated_at =" in update
+
+
+@pytest.mark.asyncio
+async def test_publish_entries_batches_multiple_locales_in_single_upsert():
+    from wuwa_story.read_models.publication import publish_entries
+
+    database = session()
+    database.scalars = AsyncMock(return_value=[7, 7])
+    entries = [entry(locale_id=1), entry(locale_id=2)]
+    assert await publish_entries(database, "character", entries, [relation()]) is True
+    assert database.scalars.await_count == 1
+    assert database.scalar.await_count == 0
+    assert database.execute.await_count == 2

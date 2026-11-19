@@ -321,3 +321,22 @@ async def test_watch_signal_wakes_idle_wait_and_removes_handlers(monkeypatch):
     callbacks[signal.SIGTERM]()
     await asyncio.wait_for(task, 1)
     assert remove.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_refresh_batch_runs_multiple_claims_concurrently(monkeypatch):
+    claims = [SimpleNamespace(kind="character", entity_id=i, snapshot_key="current", generation=1) for i in (1, 2, 3)]
+    monkeypatch.setattr(worker, "claim_refreshes", AsyncMock(return_value=claims))
+    active = 0
+    peak = 0
+
+    async def fake_refresh(factory, item):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+
+    monkeypatch.setattr(worker, "refresh_claim", fake_refresh)
+    assert await worker.refresh_batch(object(), limit=3, concurrency=2) == 3
+    assert peak == 2

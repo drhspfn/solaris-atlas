@@ -32,3 +32,27 @@ async def test_unlinked_story_speaker_opens_standalone_profile(monkeypatch):
     assert result["character"]["canonical_key"] == "speaker:1696"
     assert result["character"]["name"] == "Cassandra"
     assert result["speakers"][0]["game_speaker_id"] == 1696
+
+
+@pytest.mark.asyncio
+async def test_unlinked_speaker_archive_returns_404_instead_of_503(monkeypatch):
+    from fastapi import HTTPException
+
+    from wuwa_story.api.routes.story import character_archive
+
+    speaker = SimpleNamespace(id=7872446, canonical_key="speaker:1696", slug="7872446-cassandra")
+
+    async def fake_get_node(session, key, types=()):
+        return speaker if "speaker" in types else None
+
+    monkeypatch.setattr(character_archive.read_projections, "should_route_to_projection", lambda *a, **kw: True)
+    monkeypatch.setattr(
+        character_archive.read_projections,
+        "archive_page",
+        AsyncMock(side_effect=AssertionError("archive_page must not be called for standalone speakers")),
+    )
+    monkeypatch.setattr(character_archive, "get_node", fake_get_node)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await character_archive.character_archive("7872446-cassandra", session=MagicMock())
+    assert exc_info.value.status_code == 404
