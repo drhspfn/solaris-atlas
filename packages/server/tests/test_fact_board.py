@@ -22,7 +22,7 @@ def test_video_entity_link_accepts_character_and_quest_relations():
 @pytest.mark.asyncio
 async def test_post_fact_and_execute_fact_board_tool(monkeypatch):
     session = MagicMock()
-    session.scalar = AsyncMock(side_effect=[101, 7, SimpleNamespace(id=303)])
+    session.scalar = AsyncMock(side_effect=[101, 7, SimpleNamespace(id=303), None])
     session.scalars = AsyncMock(return_value=[10, 20])
     session.execute = AsyncMock()
     session.add = MagicMock()
@@ -69,3 +69,24 @@ def test_memory_write_import_from_workspace():
         {"key": "long:test", "scope": "long", "text": "note", "expected_revision": 0}
     )
     assert item.key == "long:test"
+
+
+@pytest.mark.asyncio
+async def test_post_fact_coerces_zero_fk_ids_to_none():
+    session = MagicMock()
+    session.scalars = AsyncMock(return_value=[7446719])
+    session.scalar = AsyncMock(return_value=123)
+    res = await fact_board.post_fact(
+        session,
+        fact_type="character_arc",
+        title="Lily arc",
+        description="desc",
+        subject_node_id=7446719,
+        object_node_id=0,
+        quest_node_id=0,
+        cutscene_node_id=0,
+        question_id=0,
+        note_id=0,
+        create_edge=False,
+    )
+    assert res["id"] == 123
