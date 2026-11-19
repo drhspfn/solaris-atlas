@@ -932,19 +932,28 @@ async def _execute_video_tool(
         from wuwa_story.agents.workspace import MemoryWrite
 
         run_id = getattr(workspace, "run_id", None)
-        if call.name == "read_workspace_memory":
-            return await agent_workspace.read_memory(db, AgentSettings(), run_id=run_id, **args), []
-        if call.name == "write_memory":
-            return await agent_workspace.save_memory(
-                db, AgentSettings(), MemoryWrite.model_validate(args), run_id=run_id
-            ), []
-        if call.name == "find_work":
-            return await agent_workspace.find_work(db, **args), []
-        fact_res = await execute_fact_board_tool(
-            db, call.name, args, run_id=run_id, source_kind="video_analysis"
-        )
-        if fact_res is not None:
-            return fact_res, []
+        try:
+            if call.name == "read_workspace_memory":
+                mem_args = dict(args)
+                if mem_args.get("node_id") in (0, "0"):
+                    mem_args["node_id"] = None
+                return await agent_workspace.read_memory(db, AgentSettings(), run_id=run_id, **mem_args), []
+            if call.name == "write_memory":
+                mem_args = dict(args)
+                if mem_args.get("node_id") in (0, "0"):
+                    mem_args["node_id"] = None
+                return await agent_workspace.save_memory(
+                    db, AgentSettings(), MemoryWrite.model_validate(mem_args), run_id=run_id
+                ), []
+            if call.name == "find_work":
+                return await agent_workspace.find_work(db, **args), []
+            fact_res = await execute_fact_board_tool(
+                db, call.name, args, run_id=run_id, source_kind="video_analysis"
+            )
+            if fact_res is not None:
+                return fact_res, []
+        except (ValidationError, ValueError) as exc:
+            return {"error": str(exc)[:300]}, []
 
     return {"error": f"Unknown tool: {call.name}"}, []
 
@@ -1453,6 +1462,7 @@ async def run_video_analysis_agent(
     context: dict[str, Any] | None,
 ) -> VideoAnalysisResult:
     """Execute the multi-turn video analysis agent and persist outputs."""
+    workspace.run_id = run.id
     overview_times = workspace.overview_times()
     overview_atlases = await workspace.build_atlases(overview_times, reason="overview")
 

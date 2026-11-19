@@ -1113,3 +1113,43 @@ async def test_unified_search_entities_and_search_lore(runtime, monkeypatch):
     assert len(lore_out["results"]) == 1
     assert lore_out["results"][0]["source_type"] == "fandom"
     assert "Liam's mother" in lore_out["results"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_write_memory_uses_run_id_and_handles_validation_errors(runtime, monkeypatch):
+    from wuwa_story.agents import workspace as agent_workspace
+
+    db, run, settings, storage, _, _, _ = runtime
+    ws = await workspace(runtime)
+    captured = {}
+
+    async def fake_save_memory(_db, _settings, req, *, run_id=None):
+        captured["run_id"] = run_id
+        captured["node_id"] = req.node_id
+        if req.expected_revision > 0:
+            raise ValueError("Memory revision conflict; read the current entry before updating")
+        return {"key": f"run:{run_id}:{req.key}", "revision": 1}
+
+    monkeypatch.setattr(agent_workspace, "save_memory", fake_save_memory)
+    calls = []
+
+    async def post(_, route, payload):
+        calls.append(copy.deepcopy(payload))
+        if len(calls) == 1:
+            return response(
+                "write_memory",
+                {"key": "timeline_anchor", "scope": "short", "text": "Opening note", "node_id": 0},
+            )
+        if len(calls) == 2:
+            return response(
+                "write_memory",
+                {"key": "timeline_anchor", "scope": "short", "text": "Bad rev", "expected_revision": 9},
+            )
+        return response("finish_video_analysis", result())
+
+    monkeypatch.setattr(agent.Provider, "post", post)
+    await agent.run_video_analysis_agent(db, run, settings, ws, storage, {})
+    assert captured["run_id"] == run.id
+    assert captured["node_id"] is None
+    assert run.raw_output["tool_results"]["0:0"]["output"]["revision"] == 1
+    assert "conflict" in run.raw_output["tool_results"]["1:0"]["output"]["error"]
