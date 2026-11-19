@@ -1016,25 +1016,62 @@ def _temporal_evidence_errors(result: VideoAnalysisResult, workspace: VideoWorks
 
 
 TEMPORAL_REVIEW_INSTRUCTION = (
-    "Draft received. Perform a separate consistency review before submitting the final result: "
-    "check identities and simultaneous appearances, short events between samples, actions and "
-    "physical contact, emotional shifts, chronology, gaps, ending coverage before final fade-out, "
-    "and unsupported interpretations. In source_text_context.dialogue_lines, speaker '{PlayerName}' "
-    "is Rover: ensure Rover is explicitly identified in identity_tracks and events.actors across all "
-    "shots where the dark-haired protagonist appears (such as arriving, clasping hands, embracing, "
-    "or supporting a companion at sunset), and never misattribute Rover's back/side shots to another "
-    "dark-clad character like Lily (Wartime). Do NOT compress distinct visual beats of a climax or "
-    "ending montage into one omnibus event: split multi-cut sequences so the final visual beats in "
-    "the last 20 seconds before fade-out (e.g., cosmic doorway/portal and characters walking/supporting "
-    "each other in the flower field at sunset) have their own chronological events. Persist confirmed "
-    "character identities across all shots of the same appearance, and preserve specific observable "
-    "visual nouns (such as 'white cat' or 'feline creature' rather than generalizing to 'animal-like "
-    "figure'). Merge redundant 1-second duplicate angles of the same continuing action into one event "
-    "with multiple evidence_frames, while keeping distinct sequential micro-actions and interactions "
-    "separate. Use the resample and identity tools for consequential uncertainty within the existing "
-    "budget. Revise earlier observations only when supported. Cite actual frame numbers and matching "
-    "scene timestamps, set evidence_kind for every event, and call finish_video_analysis again."
+    "Draft received. Perform an independent verification pass before submitting the final result: "
+    "1) Unresolved characters: for every unnamed person in draft events or identity_tracks (e.g., "
+    "uniformed woman, child, distant/dark-clad figure), call identify_atlas_characters on their "
+    "evidence_frames (and get_character_reference_image if candidates appear) plus search_lore, "
+    "search_entities, and search_facts to establish sourced identities and relationships. "
+    "2) Cross-cut persistence: ensure confirmed character identities (including Rover from "
+    "{PlayerName} context or visually matched characters) remain linked across cuts and back/side "
+    "shots instead of regressing to generic labels. "
+    "3) Ending & sparse windows: check the final 20-30s before fade-out with resample_video_window "
+    "or inspect_video_region whenever shots are sparse or show distant/back-view figures, verifying "
+    "whether one person is supporting/carrying another. "
+    "4) Deduplication without compression: merge adjacent (<=2-3s) observations that describe the "
+    "exact same unchanging action (e.g., consecutive frames of aiming without a new beat), while "
+    "keeping distinct micro-actions, emotional shifts, and multi-cut climax/ending beats separate. "
+    "5) Record major confirmed findings/relationships via post_fact. Cite actual frame numbers and "
+    "matching scene timestamps, set evidence_kind for every event, and call finish_video_analysis."
 )
+
+VERIFIER_SYSTEM_PROMPT = (
+    "You are an independent Visual & Continuity Verifier for Solaris Atlas cutscene analysis. "
+    "You receive a provisional draft analysis, the scene's source_text_context, and a manifest of "
+    "already-sampled frames/atlases. Do NOT trust draft labels blindly: verify unresolved people "
+    "with identify_atlas_characters + search_lore/search_entities/search_facts, verify sparse or "
+    "distant ending shots with resample_video_window/inspect_video_region, preserve cross-cut "
+    "identity persistence, merge true adjacent duplicates without losing emotional micro-beats, "
+    "and submit the final verified result via finish_video_analysis."
+)
+
+
+def _build_verifier_history(
+    provider: Any,
+    draft: VideoAnalysisResult,
+    workspace: VideoWorkspace,
+    context: dict[str, Any] | None,
+    *,
+    evidence_review_required: bool,
+) -> list[dict[str, Any]]:
+    """Start the second pass with a clean, low-token verifier context."""
+    payload = {
+        "duration_seconds": workspace.duration,
+        "limits": workspace.limits,
+        "available_atlases": workspace.manifest(workspace.atlases),
+        "source_text_context": context or {},
+        "draft": draft.model_dump(),
+        "instruction": TEMPORAL_REVIEW_INSTRUCTION
+        + (" " + EVIDENCE_REVIEW_INSTRUCTION if evidence_review_required else ""),
+    }
+    return [
+        {"role": "system", "content": VERIFIER_SYSTEM_PROMPT},
+        _multimodal_user_message(
+            provider,
+            "Independently verify and refine this draft cutscene analysis.\n"
+            + json.dumps(payload, ensure_ascii=False),
+            [],
+        ),
+    ]
 
 EVIDENCE_REVIEW_INSTRUCTION = (
     "The draft is provisional evidence, not confirmed identity. Review every draft event and identity track "
@@ -1228,8 +1265,10 @@ async def run_video_analysis_agent(
                         finish_corrections = 0
                         remember_draft(candidate)
                         await record_finish(f"{step}:text", {"status": "draft"})
-                        history.append(_multimodal_user_message(provider, TEMPORAL_REVIEW_INSTRUCTION +
-                            (" " + EVIDENCE_REVIEW_INSTRUCTION if evidence_review_required else ""), []))
+                        history = _build_verifier_history(
+                            provider, candidate, workspace, context,
+                            evidence_review_required=evidence_review_required,
+                        )
                         continue
                     errors = review_errors(candidate)
                     if errors:
@@ -1289,7 +1328,10 @@ async def run_video_analysis_agent(
                         outcome = {"status": "draft", "instruction": TEMPORAL_REVIEW_INSTRUCTION +
                                    (" " + EVIDENCE_REVIEW_INSTRUCTION if evidence_review_required else "")}
                         await record_finish(finish_key, outcome)
-                        history.append(provider.tool_result(tc, outcome))
+                        history = _build_verifier_history(
+                            provider, candidate, workspace, context,
+                            evidence_review_required=evidence_review_required,
+                        )
                         continue
                     if review_required and step == review_started_at:
                         outcome = {"error": "review_requires_a_separate_turn"}
