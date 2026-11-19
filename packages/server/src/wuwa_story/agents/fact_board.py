@@ -120,15 +120,31 @@ async def ensure_relation_edge(
         db.add(edge)
         await db.flush()
     if evidence:
-        db.add(
-            EdgeEvidence(
-                edge_id=edge.id,
-                evidence_node_id=evidence.get("evidence_node_id"),
-                source_file_path=evidence.get("source_file_path"),
-                explanation=str(evidence.get("excerpt") or "")[:2000] or None,
+        existing_ev = await db.scalar(
+            select(EdgeEvidence.id).where(
+                EdgeEvidence.edge_id == edge.id,
+                EdgeEvidence.release_id.is_(None),
+                EdgeEvidence.source_file_path == evidence.get("source_file_path"),
+                EdgeEvidence.source_raw_path.is_(None),
             )
         )
+        if existing_ev is None:
+            db.add(
+                EdgeEvidence(
+                    edge_id=edge.id,
+                    evidence_node_id=evidence.get("evidence_node_id"),
+                    source_file_path=evidence.get("source_file_path"),
+                    explanation=str(evidence.get("excerpt") or "")[:2000] or None,
+                )
+            )
     return edge
+
+
+def _pos_id(value: int | None) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    val = int(value)
+    return val if val > 0 else None
 
 
 async def post_fact(
@@ -157,6 +173,28 @@ async def post_fact(
 ) -> dict[str, Any]:
     """Upsert a structured fact on the shared fact board and optionally link nodes in graph.edge."""
     importance = max(1, min(int(importance), 5))
+    subject_node_id = _pos_id(subject_node_id)
+    object_node_id = _pos_id(object_node_id)
+    quest_node_id = _pos_id(quest_node_id)
+    cutscene_node_id = _pos_id(cutscene_node_id)
+    question_id = _pos_id(question_id)
+    note_id = _pos_id(note_id)
+    run_id = _pos_id(run_id)
+    node_candidates = [nid for nid in (subject_node_id, object_node_id, quest_node_id, cutscene_node_id) if nid is not None]
+    if node_candidates:
+        valid_nodes = set(await db.scalars(select(Node.id).where(Node.id.in_(node_candidates))))
+        if subject_node_id not in valid_nodes:
+            subject_node_id = None
+        if object_node_id not in valid_nodes:
+            object_node_id = None
+        if quest_node_id not in valid_nodes:
+            quest_node_id = None
+        if cutscene_node_id not in valid_nodes:
+            cutscene_node_id = None
+    if question_id is not None and await db.scalar(select(AgentWorkItem.id).where(AgentWorkItem.id == question_id)) is None:
+        question_id = None
+    if note_id is not None and await db.scalar(select(AgentNote.id).where(AgentNote.id == note_id)) is None:
+        note_id = None
     fact_key = key or _fact_key(
         fact_type=fact_type,
         title=title,
