@@ -260,8 +260,8 @@ services:
   projection-worker:
     <<: *worker
     command: ["python", "-m", "wuwa_story.read_models.worker", "--watch"]
-    cpus: 0.5
-    mem_limit: 1g
+    cpus: ${WUWA_PROJECTION_CPUS:-1.0}
+    mem_limit: ${WUWA_PROJECTION_MEMORY:-2g}
     deploy:
       replicas: ${WUWA_PROJECTION_REPLICAS:-0}
 

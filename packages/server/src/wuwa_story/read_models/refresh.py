@@ -46,7 +46,9 @@ from wuwa_story.db.models.read_refresh import (
 )
 from wuwa_story.db.repositories.read_models import ENTITY_READ_MODELS
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
-from wuwa_story.read_models.publication import publish_entry
+from wuwa_story.read_models.publication import publish_entries, publish_entry
+
+_DEFAULT_PUBLISH_ENTRY = publish_entry
 
 DIRTY_INSERT_BATCH_SIZE = 1000
 
@@ -245,8 +247,13 @@ async def claim_refreshes(
             or_(ReadProjectionDirty.lease_until.is_(None),
                 ReadProjectionDirty.lease_until <= func.clock_timestamp()),
             ~_active_snapshot_import(),
-        ).order_by(ReadProjectionDirty.available_at, ReadProjectionDirty.kind,
-                   ReadProjectionDirty.entity_id, ReadProjectionDirty.snapshot_key).limit(limit).with_for_update(skip_locked=True)
+        ).order_by(
+            ReadProjectionDirty.attempts > 0,
+            ReadProjectionDirty.available_at,
+            ReadProjectionDirty.kind,
+            ReadProjectionDirty.entity_id,
+            ReadProjectionDirty.snapshot_key,
+        ).limit(limit).with_for_update(skip_locked=True)
         if kinds is not None:
             statement = statement.where(ReadProjectionDirty.kind.in_(kinds))
         if entity_ids is not None:
@@ -283,9 +290,15 @@ async def release_claim(factory, claim):
         ).values(lease_token=None, lease_until=None))
 
 
+def _retry_delay_seconds(attempts):
+    if attempts <= 8:
+        return min(300, 2 ** attempts)
+    return min(3600, 2 ** min(attempts, 12))
+
+
 async def fail_claim(factory, claim, error):
     """Persist a safe error class and capped exponential retry; never log payloads."""
-    delay = min(300, 2 ** min(claim.attempts, 8))
+    delay = _retry_delay_seconds(claim.attempts)
     async with factory() as session, session.begin():
         await session.execute(update(ReadProjectionDirty).where(
             *_identity(claim), ReadProjectionDirty.lease_token == claim.lease_token,
@@ -346,13 +359,23 @@ async def publish_refresh(factory, claim, entries, relations=(), *, complete_loc
         ).limit(1))
         if newer is not None:
             raise ValueError("Projection is newer than its dirty scope")
-        for index, entry in enumerate(entries):
-            accepted = await publish_entry(
-                session, claim.kind, {**entry, "generation": claim.generation},
-                relations if index == len(entries) - 1 else None,
+        if len(entries) > 1 and publish_entry is _DEFAULT_PUBLISH_ENTRY:
+            accepted = await publish_entries(
+                session,
+                claim.kind,
+                [{**entry, "generation": claim.generation} for entry in entries],
+                relations,
             )
             if not accepted:
                 raise ValueError("Projection publication rejected an older generation")
+        else:
+            for index, entry in enumerate(entries):
+                accepted = await publish_entry(
+                    session, claim.kind, {**entry, "generation": claim.generation},
+                    relations if index == len(entries) - 1 else None,
+                )
+                if not accepted:
+                    raise ValueError("Projection publication rejected an older generation")
         if complete_locales:
             await session.execute(delete(model).where(
                 model.entity_id == claim.entity_id, model.snapshot_key == claim.snapshot_key,
@@ -422,6 +445,8 @@ def _source_ids(kind, snapshot_key="current"):
         Node.status == "active",
     )
     if snapshot_key != "current":
+        if kind == "character":
+            statement = statement.where(~Node.canonical_key.startswith("character:npc:"))
         statement = statement.where(Node.id.in_(select(NodeRevision.node_id).join(
             GameRelease, GameRelease.id == NodeRevision.release_id,
         ).where(GameRelease.game_version == snapshot_key)))
@@ -473,8 +498,8 @@ async def _estimate_backfill(session, kind, snapshot_key):
     sample = select(size.label("bytes")).where(
         model.snapshot_key.in_([snapshot_key, "current"]),
     ).order_by(model.entity_id, model.locale_id).limit(100).subquery()
-    count, maximum = (await session.execute(select(func.count(), func.max(sample.c.bytes)))).one()
-    row_bytes = max(4096, maximum) if count else 64 * 1024
+    count, average = (await session.execute(select(func.count(), func.avg(sample.c.bytes)))).one()
+    row_bytes = max(4096, int(float(average) * 1.5)) if count and average is not None else 64 * 1024
     rows = entities * locales
     if snapshot_key.startswith("download:"):
         selected = await session.scalar(select(func.count()).select_from(ReadProjectionScope).where(

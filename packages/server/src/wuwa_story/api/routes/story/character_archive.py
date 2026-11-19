@@ -265,6 +265,9 @@ async def character_archive(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     if read_projections.should_route_to_projection("character", game_version, locale=locale):
+        if await get_node(session, canonical_key, ("character",)) is None:
+            if await get_node(session, canonical_key, ("speaker",)) is not None:
+                raise HTTPException(status_code=404, detail="character not found")
         return await read_projections.archive_page(session, canonical_key, locale, game_version)
     node = await get_node(session, canonical_key, ('character',))
     if node is None or await session.get(Character, node.id) is None:

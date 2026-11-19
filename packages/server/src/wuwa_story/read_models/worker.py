@@ -32,8 +32,10 @@ logger = logging.getLogger(__name__)
 # Background-only DB budget; HTTP retains its separate statement limit.
 # The overall refresh claim remains bounded at 600 seconds.
 PROJECTION_STATEMENT_TIMEOUT_MS = 180_000
-PROJECTION_LOCK_TIMEOUT_MS = 1_000
+PROJECTION_LOCK_TIMEOUT_MS = 5_000
 CLAIM_TIMEOUT_SECONDS = 10 * 60
+DEFAULT_BATCH_LIMIT = 10
+DEFAULT_BATCH_CONCURRENCY = 4
 
 
 def create_worker_database(
@@ -45,7 +47,7 @@ def create_worker_database(
         raise ValueError("Worker database timeouts must be positive")
     worker_engine = create_async_engine(
         database_url or get_settings().database_url, pool_pre_ping=True,
-        pool_size=3, max_overflow=0, pool_timeout=5,
+        pool_size=10, max_overflow=5, pool_timeout=5,
     )
 
     @event.listens_for(worker_engine.sync_engine, "begin")
@@ -100,30 +102,46 @@ def _log_failure(claim, error, *, claim_timeout=False):
     )
 
 
+async def _run_claim(factory, claim, claim_timeout_seconds):
+    deadline = asyncio.timeout(claim_timeout_seconds)
+    try:
+        with source_build():
+            async with deadline:
+                await refresh_claim(factory, claim)
+    except asyncio.CancelledError:
+        raise
+    except TimeoutError as error:
+        _log_failure(claim, error, claim_timeout=deadline.expired())
+        if deadline.expired():
+            # The build has unwound before the durable timeout is recorded.
+            await fail_claim(factory, claim, error)
+    except Exception as error:
+        _log_failure(claim, error)
+
+
 async def refresh_batch(
-    factory=SessionFactory, *, limit=1, kinds=None, entity_ids=None, snapshot_key=None,
+    factory=SessionFactory, *, limit=DEFAULT_BATCH_LIMIT, concurrency=DEFAULT_BATCH_CONCURRENCY,
+    kinds=None, entity_ids=None, snapshot_key=None,
     claim_timeout_seconds=CLAIM_TIMEOUT_SECONDS,
 ):
     if claim_timeout_seconds <= 0:
         raise ValueError("Claim runtime timeout must be positive")
+    if concurrency < 1:
+        raise ValueError("Batch concurrency must be positive")
     claims = await claim_refreshes(
         factory, limit=limit, kinds=kinds, entity_ids=entity_ids, snapshot_key=snapshot_key,
     )
-    for claim in claims:
-        deadline = asyncio.timeout(claim_timeout_seconds)
-        try:
-            with source_build():
-                async with deadline:
-                    await refresh_claim(factory, claim)
-        except asyncio.CancelledError:
-            raise
-        except TimeoutError as error:
-            _log_failure(claim, error, claim_timeout=deadline.expired())
-            if deadline.expired():
-                # The build has unwound before the durable timeout is recorded.
-                await fail_claim(factory, claim, error)
-        except Exception as error:
-            _log_failure(claim, error)
+    if len(claims) <= 1 or concurrency == 1:
+        for claim in claims:
+            await _run_claim(factory, claim, claim_timeout_seconds)
+        return len(claims)
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def bounded(claim):
+        async with semaphore:
+            await _run_claim(factory, claim, claim_timeout_seconds)
+
+    await asyncio.gather(*(bounded(claim) for claim in claims))
     return len(claims)
 
 
