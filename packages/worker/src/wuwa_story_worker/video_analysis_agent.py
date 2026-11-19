@@ -718,7 +718,8 @@ def _estimate_input_tokens(payload: Any, atlases: list[AtlasEntry], *, extra_ima
     return max(4096, text_len // 4 + image_tokens + extra_images * 8192 + 1024)
 
 
-def _temporal_evidence_errors(result: VideoAnalysisResult, workspace: VideoWorkspace) -> list[str]:
+def _temporal_evidence_errors(result: VideoAnalysisResult, workspace: VideoWorkspace,
+                              context: dict[str, Any] | None = None) -> list[str]:
     errors = []
 
     def crosses_gap(start, end):
@@ -804,6 +805,25 @@ def _temporal_evidence_errors(result: VideoAnalysisResult, workspace: VideoWorks
     for index, track in enumerate(result.identity_tracks):
         check_span(f"identity track {index}", track.time_start, track.time_end,
                    track.evidence_frames, track.basis, track.context_sources)
+    if workspace.duration >= 60.0 and result.events:
+        tail_threshold = workspace.duration - 22.0
+        tail_frames = [frame for frame, f_time in workspace.frame_times.items() if f_time >= tail_threshold]
+        if tail_frames and max(event.time for event in result.events) < tail_threshold:
+            errors.append(
+                f"timeline ending coverage: last event starts at {round(max(event.time for event in result.events), 2)}s "
+                f"in a {round(workspace.duration, 2)}s scene; add separate event(s) for the final visual beats before fade-out"
+            )
+    dialogue_lines = (context or {}).get("dialogue_lines") if isinstance(context, dict) else None
+    if isinstance(dialogue_lines, list) and any(
+        isinstance(line, dict) and "{playername}" in str(line.get("speaker", "")).casefold()
+        for line in dialogue_lines
+    ):
+        has_rover_track = any("rover" in track.identity.casefold() for track in result.identity_tracks)
+        if not has_rover_track:
+            errors.append(
+                "identity_tracks: dialogue_lines include '{PlayerName}' (Rover); identify Rover in identity_tracks "
+                "and events.actors for shots where the protagonist appears (basis='contextual' or 'inferred')"
+            )
     return errors[:20]
 
 
@@ -811,15 +831,21 @@ TEMPORAL_REVIEW_INSTRUCTION = (
     "Draft received. Perform a separate consistency review before submitting the final result: "
     "check identities and simultaneous appearances, short events between samples, actions and "
     "physical contact, emotional shifts, chronology, gaps, ending coverage before final fade-out, "
-    "and unsupported interpretations. Persist confirmed character identities across all shots of "
-    "the same appearance (do not regress an identified character such as Rover into a conflicting "
-    "generic label like 'dark-haired woman'), and preserve specific observable visual nouns (such "
-    "as 'white cat' or 'feline creature' rather than generalizing to 'animal-like figure'). Merge "
-    "redundant 1-second duplicate angles of the same continuing action into one event with multiple "
-    "evidence_frames, while keeping distinct sequential micro-actions separate. Use the resample and "
-    "identity tools for consequential uncertainty within the existing budget. Revise earlier "
-    "observations only when supported. Cite actual frame numbers and matching scene timestamps, "
-    "set evidence_kind for every event, and call finish_video_analysis again."
+    "and unsupported interpretations. In source_text_context.dialogue_lines, speaker '{PlayerName}' "
+    "is Rover: ensure Rover is explicitly identified in identity_tracks and events.actors across all "
+    "shots where the dark-haired protagonist appears (such as arriving, clasping hands, embracing, "
+    "or supporting a companion at sunset), and never misattribute Rover's back/side shots to another "
+    "dark-clad character like Lily (Wartime). Do NOT compress distinct visual beats of a climax or "
+    "ending montage into one omnibus event: split multi-cut sequences so the final visual beats in "
+    "the last 20 seconds before fade-out (e.g., cosmic doorway/portal and characters walking/supporting "
+    "each other in the flower field at sunset) have their own chronological events. Persist confirmed "
+    "character identities across all shots of the same appearance, and preserve specific observable "
+    "visual nouns (such as 'white cat' or 'feline creature' rather than generalizing to 'animal-like "
+    "figure'). Merge redundant 1-second duplicate angles of the same continuing action into one event "
+    "with multiple evidence_frames, while keeping distinct sequential micro-actions and interactions "
+    "separate. Use the resample and identity tools for consequential uncertainty within the existing "
+    "budget. Revise earlier observations only when supported. Cite actual frame numbers and matching "
+    "scene timestamps, set evidence_kind for every event, and call finish_video_analysis again."
 )
 
 EVIDENCE_REVIEW_INSTRUCTION = (
@@ -923,7 +949,7 @@ async def run_video_analysis_agent(
                 run.raw_output = {**(run.raw_output or {}), "review_draft": saved}
 
         def review_errors(candidate: VideoAnalysisResult) -> list[str]:
-            errors = _temporal_evidence_errors(candidate, workspace) if review_required else []
+            errors = _temporal_evidence_errors(candidate, workspace, context) if review_required else []
             if evidence_review_required:
                 errors.extend(_review_evidence_errors(review_draft, candidate, workspace) if review_draft is not None
                               else ["A saved draft is required before final review"])
