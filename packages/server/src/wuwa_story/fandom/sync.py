@@ -140,7 +140,13 @@ async def sync_fandom_bundle(
                 if license_filter == LicenseFilter.CC_BY_SA_ONLY and not asset.license.is_cc_by_sa:
                     continue
                 try:
-                    resp = await http.get(asset.url, headers={"Referer": bundle.page_url})
+                    resp = await http.get(
+                        asset.url,
+                        headers={
+                            "User-Agent": "SolarisAtlasBot/1.0 (+https://solarisatlas.fun)",
+                            "Referer": bundle.page_url,
+                        },
+                    )
                     resp.raise_for_status()
                 except Exception:
                     continue
