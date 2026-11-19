@@ -195,7 +195,7 @@ async def test_new_runs_review_and_resample_before_publication_and_replay(runtim
     requests = []
 
     async def post(_, route, payload):
-        requests.append(payload)
+        requests.append(copy.deepcopy(payload))
         if len(requests) == 1:
             return response("finish_video_analysis", result())
         if len(requests) == 2:
@@ -876,3 +876,240 @@ async def test_limits_never_publish_partial_or_start_unbounded_requests(runtime,
             await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
         post.assert_not_awaited()
         assert run.tokens_input == agent.MAX_AGENT_TURNS * 100
+
+
+@pytest.mark.asyncio
+async def test_chunked_overview_atlases_and_view_atlases_tool(runtime, monkeypatch):
+    db, run, settings, storage, _, _, _ = runtime
+    settings.vision_atlas_frames = 2
+    settings.vision_frame_interval = 1.0
+    ws = await workspace(runtime)
+    requests = []
+
+    async def post(_, route, payload):
+        requests.append(copy.deepcopy(payload))
+        if len(requests) == 1:
+            return response("view_atlases", {"atlas_indices": [3, 4]})
+        if len(requests) == 2:
+            return response("view_atlases", {"atlas_indices": [3, 5]})
+        return response("finish_video_analysis", result())
+
+    monkeypatch.setattr(agent.Provider, "post", post)
+    await agent.run_video_analysis_agent(db, run, settings, ws, storage, {})
+
+    first_user_images = [
+        part for part in requests[0]["input"][1]["content"] if part.get("type") == "input_image"
+    ]
+    assert len(first_user_images) == agent.INITIAL_INLINE_OVERVIEW_ATLASES
+    view1_images = [
+        part for part in requests[1]["input"][-1]["content"] if part.get("type") == "input_image"
+    ]
+    assert len(view1_images) == 2
+    assert run.raw_output["tool_results"]["1:0"]["output"]["already_loaded"] == [3]
+    assert run.raw_output["tool_results"]["1:0"]["output"]["attached_atlas_indices"] == [5]
+
+
+@pytest.mark.asyncio
+async def test_reader_returns_draft_for_revision_and_replays(runtime, monkeypatch):
+    db, run, settings, storage, _, _, _ = runtime
+    run.metadata_json.update(temporal_review_version=1, review_evidence_version=1)
+    monkeypatch.setattr(agent, "_previous_scene_evidence", AsyncMock(return_value={"available": False}))
+    ws = await workspace(runtime)
+    calls = []
+
+    def _valid_payload(obs_text: str):
+        data = result()
+        for event in data["events"]:
+            event["observation"] = obs_text if event is data["events"][0] else event["observation"]
+            event["global_frame"] = next(i for i, time in ws.frame_times.items() if time == event["time"])
+            event["evidence_kind"] = "observed"
+        data["story_events"][0].update(
+            time_start=6,
+            time_end=10,
+            evidence_kind="observed",
+            evidence_frames=[data["events"][1]["global_frame"], data["events"][2]["global_frame"]],
+        )
+        return data
+
+    async def post(_, route, payload):
+        calls.append(payload)
+        step = len(calls)
+        if step == 1:
+            return response("finish_video_analysis", _valid_payload("Dry initial draft"))
+        if step == 2:
+            return response(
+                "return_draft_for_revision",
+                {
+                    "summary_feedback": "Opening observation lacks emotional cue and uniformed figure needs identity check.",
+                    "missing_identities": ["Check uniformed figure in A01 #001"],
+                    "target_windows": [{"start_seconds": 0.0, "end_seconds": 3.0, "reason": "Verify identity"}],
+                    "narrative_gaps": ["Connect emotional beat between opening and arrival"],
+                },
+            )
+        if step == 3:
+            assert "Reader/Editor returned your draft for revision" in json.dumps(payload)
+            return response("finish_video_analysis", _valid_payload("Vivid emotional opening with tearful gaze"))
+        final = _valid_payload("Vivid emotional opening with tearful gaze")
+        final["event_review"] = [
+            {"draft_index": index, "status": "retained", "final_indices": [index]}
+            for index in range(len(final["events"]))
+        ]
+        final["preview_candidates"] = []
+        return response("finish_video_analysis", final)
+
+    monkeypatch.setattr(agent.Provider, "post", post)
+    final_res = await agent.run_video_analysis_agent(db, run, settings, ws, storage, {})
+    assert len(calls) == 4
+    assert final_res.events[0].observation == "Vivid emotional opening with tearful gaze"
+    assert len(run.raw_output["revision_requests"]) == 1
+    assert run.raw_output["review_draft"]["events"][0]["observation"] == "Vivid emotional opening with tearful gaze"
+
+    monkeypatch.setattr(agent.Provider, "post", AsyncMock(side_effect=AssertionError("unexpected paid call")))
+    replayed = await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
+    assert replayed.events[0].observation == "Vivid emotional opening with tearful gaze"
+
+
+@pytest.mark.asyncio
+async def test_verifier_requires_reference_check_for_strong_unknown_candidate(runtime, monkeypatch):
+    db, run, settings, storage, _, _, _ = runtime
+    run.metadata_json["temporal_review_version"] = 1
+    ws = await workspace(runtime)
+    calls = []
+
+    def _generic_payload():
+        data = result()
+        for event in data["events"]:
+            event["global_frame"] = next(i for i, time in ws.frame_times.items() if time == event["time"])
+            event["evidence_kind"] = "observed"
+            event["actors"] = ["Unidentified uniformed adult"]
+        data["story_events"][0].update(
+            time_start=6,
+            time_end=10,
+            evidence_kind="observed",
+            evidence_frames=[data["events"][1]["global_frame"], data["events"][2]["global_frame"]],
+        )
+        data["preview_candidates"] = []
+        return data
+
+    monkeypatch.setattr(
+        agent,
+        "_identify_atlas_characters",
+        AsyncMock(
+            return_value={
+                "available": True,
+                "matches": [
+                    {
+                        "global_frame": 1,
+                        "time": 0.0,
+                        "detections": [
+                            {
+                                "identification": {
+                                    "status": "unknown",
+                                    "candidates": [
+                                        {
+                                            "identity_id": 91,
+                                            "name": "Cassandra",
+                                            "best_similarity": 0.7959,
+                                            "reference_ids": [1891],
+                                        }
+                                    ],
+                                }
+                            }
+                        ],
+                    }
+                ],
+            }
+        ),
+    )
+
+    async def fake_ref_img(_db, args):
+        return {"asset_id": None, "reference_id": args["reference_id"], "sha256": "abc", "mime_type": "image/jpeg"}, jpeg()
+
+    monkeypatch.setattr("wuwa_story_worker.video_identity.character_reference_image", fake_ref_img)
+
+    async def post(_, route, payload):
+        calls.append(payload)
+        step = len(calls)
+        if step == 1:
+            return response("identify_atlas_characters", {"global_frame_indices": [1]})
+        if step == 2:
+            return response("finish_video_analysis", _generic_payload())
+        if step == 3:
+            return response("finish_video_analysis", _generic_payload())
+        if step == 4:
+            assert "get_character_reference_image(reference_id=1891)" in json.dumps(payload)
+            return response("get_character_reference_image", {"reference_id": 1891})
+        resolved = _generic_payload()
+        for ev in resolved["events"]:
+            ev["actors"] = ["Cassandra"]
+        return response("finish_video_analysis", resolved)
+
+    monkeypatch.setattr(agent.Provider, "post", post)
+    final_res = await agent.run_video_analysis_agent(db, run, settings, ws, storage, {})
+    assert final_res.events[0].actors == ["Cassandra"]
+
+
+@pytest.mark.asyncio
+async def test_unified_search_entities_and_search_lore(runtime, monkeypatch):
+    from wuwa_story.agents import fact_board
+    from wuwa_story.agents.providers import ToolCall
+
+    db, _, _, _, _, _, _ = runtime
+    db.scalars_values = [1]  # latest_release check bypass via scalar
+    ws = await workspace(runtime)
+
+    async def fake_scalar(stmt):
+        if "game_release" in str(stmt):
+            return 22
+        if "locale" in str(stmt):
+            return 1
+        return None
+
+    monkeypatch.setattr(db, "scalar", fake_scalar)
+    captured_categories = {}
+
+    async def fake_lexical(_db, query, *, locale_id=1, categories=None, limit=10):
+        captured_categories["value"] = categories
+        return [{"id": 7872446, "node_type": "speaker", "canonical_key": "speaker:1696", "alias": query, "score": 1.0}]
+
+    monkeypatch.setattr(agent, "lexical_search", fake_lexical)
+    out, _ = await agent._execute_video_tool(
+        db,
+        ws,
+        ToolCall(id="c1", name="search_entities", arguments={"query": "Cassandra", "category": "character"}),
+    )
+    assert captured_categories["value"] == ["character", "speaker", "npc"]
+    assert out["results"][0]["canonical_key"] == "speaker:1696"
+
+    monkeypatch.setattr(
+        agent.LoreSearchService,
+        "hybrid_search",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        fact_board,
+        "search_facts",
+        AsyncMock(
+            return_value=[
+                {
+                    "id": 1,
+                    "source_kind": "fandom",
+                    "quest_node_id": None,
+                    "fact_type": "fandom_fact",
+                    "title": "Fandom: Cassandra",
+                    "description": "Cassandra was Liam's mother.",
+                    "subject_node_id": 7872446,
+                    "object_node_id": None,
+                    "relation_type": None,
+                }
+            ]
+        ),
+    )
+    lore_out, _ = await agent._execute_video_tool(
+        db,
+        ws,
+        ToolCall(id="c2", name="search_lore", arguments={"query": "Cassandra", "limit": 5}),
+    )
+    assert len(lore_out["results"]) == 1
+    assert lore_out["results"][0]["source_type"] == "fandom"
+    assert "Liam's mother" in lore_out["results"][0]["content"]

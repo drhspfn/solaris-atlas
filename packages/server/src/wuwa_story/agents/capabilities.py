@@ -37,10 +37,12 @@ INTERNAL_TOOLS = frozenset(
 WORKER_TOOLS = frozenset({"resolve_question", "update_relationship"})
 VIDEO_ANALYSIS_TOOLS = frozenset(
     {
+        "view_atlases",
         "resample_video_window",
         "identify_atlas_characters",
         "get_character_reference_image",
         "inspect_video_region",
+        "return_draft_for_revision",
         "search_entities",
         "search_dialogue",
         "search_lore",
@@ -89,18 +91,18 @@ Workspace & Global Numbering:
 - The original video and generated atlases remain in the local run workspace throughout your session.
 
 Staged Workflow & Active Inspection ("Take a Closer Look"):
-1. Coarse Temporal Map: First read the entire scene across the initial overview atlases (`0.0s` to `duration_seconds`), segmenting it into temporal blocks (opening, transitions, action peaks, quiet interpersonal moments, and the ending before fade-out). Never guess what happened in a sampling gap.
+1. Coarse Timeline Map & Chunked Viewing: The full video timeline (`0.0s` to `duration_seconds`) is pre-indexed across `timeline_chunks` / `atlases` (`A01..A0N`). For longer scenes, only the opening atlases are attached initially so you stay focused and avoid visual overload. Walk through remaining chunks sequentially using `view_atlases` (`up to 4` atlases per call) and record key timeline anchors and unresolved questions via `write_memory` before finalizing. Never guess what happened in a sampling gap.
 2. Targeted Inspection: Only after mapping the full scene, inspect short high-value windows where:
    - an interaction, physical contact, support, handover, or shared action occurs between characters;
-   - an abrupt cut, flash, posture collapse, or transition happens between overview frames;
+   - an abrupt cut, flash, digital glitch, posture collapse, or transition happens between overview frames;
    - a character's identity or emotional shift (tears, gaze change, smile, recoil) is ambiguous at coarse resolution;
    - the ending sequence before final fade-out needs verification so the final events are not truncated or misread.
    Before calling `resample_video_window`, define a concrete visual question, keep `[start_seconds, end_seconds]` narrow (typically 2–8s), and choose `interval_seconds` proportionally (`0.5s` for actions/gestures, `0.1–0.25s` for brief appearances or fast flashes). Respect the dynamic frame soft limit; only set `bypass_limit=true` with a concrete `bypass_justification` when a narrower window is genuinely insufficient.
    For distant, dark, or back-view figures (especially in establishing shots or the final 20–30 seconds before fade-out), use `inspect_video_region` or a narrow `resample_video_window` on the original frame before deciding how many figures are present or whether one figure is supporting/carrying another.
 
 Identity Persistence & Disambiguation:
-- Mandatory identity check for unresolved people: whenever any scene segment depicts an unnamed person (including supporting NPCs, uniformed adults, children, or background figures), call `identify_atlas_characters` on their `evidence_frames`, and run `search_lore`, `search_entities`, and `search_facts` using quest/dialogue keywords to verify character identities and sourced relationships (e.g., family or faction ties). Never guess relationships without a sourced match.
-- Use `identify_atlas_characters` on specific `atlas_indices` or `global_frame_indices` when character identity is uncertain. Similarities are rankings, not probabilities; `unknown` means the automatic threshold was not met, not that candidates are absent. Compare ranked candidates and their margins with scene frames, other views, and sourced context. Use `get_character_reference_image` with a candidate `reference_id` or published character `asset_id` to verify against the reference portrait.
+- Mandatory identity check for unresolved people: whenever any scene segment depicts an unnamed person (including supporting NPCs, speakers, uniformed adults, children, or background figures), call `identify_atlas_characters` on their `evidence_frames`, and run `search_entities`, `search_lore`, `search_dialogue`, and `search_facts` (which search characters, speakers, NPCs, Fandom bios/relations, and analyzed lore uniformly) to verify character identities and sourced relationships (e.g., family or faction ties). Never guess relationships without a sourced match.
+- Mandatory visual verification of candidates: use `identify_atlas_characters` on specific `atlas_indices` or `global_frame_indices` whenever character identity is uncertain. Similarities are rankings, not probabilities; `unknown` means the automatic threshold was not met, not that candidates are absent. Whenever top candidates appear with `reference_ids` (especially `verify_visually: true` or similarity `>= 0.72`), call `get_character_reference_image` with the candidate `reference_id` (or published `asset_id`) and visually compare portrait features, hair, eyes, and attire against the scene frame before leaving any person unidentified.
 - If identification is unavailable, say so in the analysis; do not imply the frames were checked. `unknown` and `unresolved` are not identifications. A `candidate` is uncalibrated evidence, not proof: verify with source context and cited frames before assigning a name.
 - Maintain a consistent scene-local identity registry in `identity_tracks`:
   - Separate each visual appearance from identity, including simultaneous manifestations or forms of the same character (e.g., a character and their past/wartime projection present in the same shot). Give each distinct manifestation its own `identity_tracks` entry, interval, and `evidence_frames`.
@@ -112,9 +114,9 @@ Identity Persistence & Disambiguation:
 
 Priority of Visual Analysis (Interactions, Actions & Emotional Trajectories):
 - Prioritize in this order: (1) Interactions between participants (who acts toward whom: touching a cheek, clasping outstretched hands, embracing or supporting a staggering companion, aiming weapons together, resting a head on another person's lap, handing over an object, turning away), (2) Action & physical state changes (falling, rising, reading, collapsing, walking together), (3) Emotional trajectories grounded in visible cues, (4) Temporal transitions/montage cuts, (5) Key props and environment.
-- Track emotional states as trajectories (before -> trigger -> after), never as ungrounded Mind-Reading:
-  - Ground every emotional characterization in observable facial, gaze, or posture cues (e.g., visible tears/wet eyes, lowered gaze, slight smile, tense defensive stance, limp posture) and state how the expression changes across consecutive frames.
-  - Distinguish `observed` visible cues from `inferred` emotional states and `contextual` dialogue-backed interpretation.
+- Track emotional states as living trajectories (before -> trigger -> after), never as ungrounded Mind-Reading or dry object lists:
+  - Ground every emotional characterization in observable facial, gaze, or posture cues (e.g., visible tears/wet eyes, lowered gaze, slight smile, tense defensive stance, limp posture) and explain how the emotion shifts across consecutive frames and why it matters to the scene.
+  - In `summary` and `story_events`, synthesize recurring visual motifs (e.g., flowers, caps, windows, starry doors), mood contrasts (e.g., bright daily warmth vs eerie glitches or sudden crimson visions), and causal continuity so a reader understands the scene's storytelling, while strictly distinguishing `observed` cues from `inferred` emotions and `contextual` interpretation.
 - Cite the actual frame: do not assert a person is present in a single-character close-up that does not show them. For medium/wide interior or exterior shots with multiple figures (such as a sofa or lounge), inspect who is actually seated vs lying down (e.g., a uniformed woman seated on a sofa with a child resting on her lap vs another character seated in the background) — use `inspect_video_region` or `resample_video_window` rather than guessing who is next to the sofa.
 
 Event Deduplication, Anti-Compression, Coverage & Provenance Rules:
@@ -446,6 +448,12 @@ def video_analysis_definitions() -> list[dict[str, Any]]:
     boolean = {"type": "boolean"}
     return [
         tool(
+            "view_atlases",
+            "Load pre-extracted timeline or resampled atlases by atlas_indices (up to 4 per call) so you can inspect the scene chunk by chunk without overwhelming context.",
+            {"atlas_indices": {"type": "array", "items": integer}},
+            ["atlas_indices"],
+        ),
+        tool(
             "resample_video_window",
             "Extract additional numbered atlas frames for a specific [start_seconds, end_seconds] window at a custom interval_seconds to inspect fast action or unclear characters.",
             {
@@ -479,8 +487,31 @@ def video_analysis_definitions() -> list[dict[str, Any]]:
             ["global_frame", "bbox"],
         ),
         tool(
+            "return_draft_for_revision",
+            "Reader/Verifier only: return the draft to the Writer with specific missing character checks, target time windows, and narrative/continuity gaps to fix before final acceptance.",
+            {
+                "summary_feedback": string,
+                "missing_identities": {"type": "array", "items": string},
+                "target_windows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "start_seconds": number,
+                            "end_seconds": number,
+                            "reason": string,
+                        },
+                        "required": ["start_seconds", "end_seconds", "reason"],
+                        "additionalProperties": False,
+                    },
+                },
+                "narrative_gaps": {"type": "array", "items": string},
+            },
+            ["summary_feedback"],
+        ),
+        tool(
             "search_entities",
-            "Search imported characters, items, locations, quests, and events by name or keyword.",
+            "Search characters, speakers, NPCs, items, locations, quests, and events uniformly by name or keyword, including linked visual identities and Fandom/fact-board summaries.",
             {"query": string, "category": string, "limit": integer},
             ["query"],
         ),
@@ -492,7 +523,7 @@ def video_analysis_definitions() -> list[dict[str, Any]]:
         ),
         tool(
             "search_lore",
-            "Search analyzed quest lore, events, and scene knowledge (including cutscenes) for concepts or entities.",
+            "Search analyzed lore chunks, Fandom summaries/relations, shared fact-board knowledge, and imported documents/dialogue for concepts or characters.",
             {"query": string, "limit": integer},
             ["query"],
         ),

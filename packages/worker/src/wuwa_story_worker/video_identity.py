@@ -5,6 +5,10 @@ import hashlib
 import io
 from typing import Any
 
+from sqlalchemy import or_, select
+from wuwa_story.db.models.agent_workspace import AgentFactBoard
+from wuwa_story.db.models.graph import Node, NodeType
+from wuwa_story.db.models.visual_memory import VisualIdentityNode
 from wuwa_story.visual_memory.images import load_image
 from wuwa_story.visual_memory.inference import VisualMemoryUnavailable
 from wuwa_story.visual_memory.service import VisualMemoryService
@@ -55,6 +59,90 @@ def _compact_detection(detection: dict[str, Any]) -> dict[str, Any]:
     return {"bbox": detection.get("bbox"), "detection": detection.get("detection"),
             "identification": {"status": identification.get("status"),
                                "score_type": identification.get("score_type"), "candidates": candidates}}
+
+
+async def _enrich_match_candidates(db: Any, matches: list[dict[str, Any]]) -> None:
+    """Attach linked graph nodes and fact-board summaries to visual candidates."""
+    identity_ids = sorted({
+        int(cand["identity_id"])
+        for match in matches
+        for det in match.get("detections", [])
+        for cand in (det.get("identification") or {}).get("candidates", [])
+        if isinstance(cand.get("identity_id"), int)
+    })
+    if not identity_ids or not hasattr(db, "execute"):
+        return
+    try:
+        node_rows = (
+            await db.execute(
+                select(
+                    VisualIdentityNode.identity_id,
+                    Node.id.label("node_id"),
+                    NodeType.key.label("node_type"),
+                    Node.canonical_key,
+                )
+                .join(Node, Node.id == VisualIdentityNode.node_id)
+                .join(NodeType, NodeType.id == Node.type_id)
+                .where(VisualIdentityNode.identity_id.in_(identity_ids))
+            )
+        ).mappings().all()
+    except Exception:
+        return
+    nodes_by_identity: dict[int, list[dict[str, Any]]] = {}
+    node_ids: set[int] = set()
+    for row in node_rows:
+        nid = int(row["node_id"])
+        node_ids.add(nid)
+        nodes_by_identity.setdefault(int(row["identity_id"]), []).append({
+            "node_id": nid,
+            "node_type": row["node_type"],
+            "canonical_key": row["canonical_key"],
+        })
+    facts_by_node: dict[int, list[str]] = {}
+    if node_ids:
+        try:
+            fact_rows = list(
+                await db.scalars(
+                    select(AgentFactBoard)
+                    .where(
+                        AgentFactBoard.status == "active",
+                        or_(
+                            AgentFactBoard.subject_node_id.in_(node_ids),
+                            AgentFactBoard.object_node_id.in_(node_ids),
+                        ),
+                    )
+                    .order_by(AgentFactBoard.importance.desc(), AgentFactBoard.updated_at.desc())
+                    .limit(40)
+                )
+            )
+        except Exception:
+            fact_rows = []
+        for fact in fact_rows:
+            snippet = f"{fact.title}: {fact.description[:180]}".strip()
+            for nid in (fact.subject_node_id, fact.object_node_id):
+                if nid in node_ids:
+                    bucket = facts_by_node.setdefault(nid, [])
+                    if snippet not in bucket and len(bucket) < 3:
+                        bucket.append(snippet)
+    for match in matches:
+        for det in match.get("detections", []):
+            ident = det.get("identification") or {}
+            status = ident.get("status")
+            for cand in ident.get("candidates", []):
+                iid = cand.get("identity_id")
+                linked = nodes_by_identity.get(iid, []) if isinstance(iid, int) else []
+                if linked:
+                    cand["linked_nodes"] = linked
+                facts: list[str] = []
+                for item in linked:
+                    for snippet in facts_by_node.get(item["node_id"], []):
+                        if snippet not in facts and len(facts) < 2:
+                            facts.append(snippet)
+                if facts:
+                    cand["summary_facts"] = facts
+                best_sim = cand.get("best_similarity") or cand.get("score") or 0.0
+                if status == "unknown" and best_sim >= 0.72 and cand.get("reference_ids"):
+                    cand["verify_visually"] = True
 
 
 def _spread(frames: list[int], count: int) -> list[int]:
@@ -110,4 +198,5 @@ async def identify_atlas_characters(
             "model_key": result.get("model_key"),
             "detections": [_compact_detection(item) for item in result.get("detections", [])],
         })
+    await _enrich_match_candidates(db, base["matches"])
     return {**base, "available": True}
