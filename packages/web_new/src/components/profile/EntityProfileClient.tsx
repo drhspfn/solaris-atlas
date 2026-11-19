@@ -9,6 +9,7 @@ import "@/styles/character-profile.css";
 import { CharacterProfileVisual } from "@/components/characters/CharacterProfileVisual";
 import { CharacterModelImport } from "@/components/characters/CharacterModelImport";
 import { FandomSyncAction } from "@/components/fandom/FandomSyncAction";
+import { FandomHeaderCard } from "@/components/fandom/FandomHeaderCard";
 import { NpcInteractions, NpcProfile } from "@/components/profile/NpcProfile";
 import {
   CharacterArchive,
@@ -385,6 +386,10 @@ export function EntityProfileClient({
           <p>
             <PlayerText value={introduction} display={playerDisplay} />
           </p>
+          <FandomHeaderCard
+            canonicalKey={entity?.canonical_key}
+            initialReference={data?.fandom_reference}
+          />
           {selectedVariant && (
             <div
               className="rover-variant-controls"

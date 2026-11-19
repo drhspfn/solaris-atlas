@@ -28,6 +28,38 @@ router = APIRouter(
     tags=["admin", "fandom"],
     dependencies=[Depends(require_admin)],
 )
+public_router = APIRouter(prefix="/fandom", tags=["fandom"])
+
+
+async def get_fandom_reference(session: AsyncSession, node_id: int) -> dict[str, Any] | None:
+    """Return the active Fandom summary & links for a node if synced."""
+    fact = await session.scalar(
+        select(AgentFactBoard)
+        .where(
+            AgentFactBoard.subject_node_id == node_id,
+            AgentFactBoard.source_kind == "fandom",
+            AgentFactBoard.fact_type == "fandom_fact",
+            AgentFactBoard.status == "active",
+        )
+        .order_by(AgentFactBoard.updated_at.desc())
+        .limit(1)
+    )
+    if fact is None:
+        return None
+    meta = fact.metadata_json or {}
+    page_url = meta.get("page_url")
+    if not page_url:
+        return None
+    citations = fact.citations or []
+    license_text = citations[0].get("license") if citations and isinstance(
+        citations[0], dict) else None
+    return {
+        "page_title": fact.title.removeprefix("Fandom: ").strip() or fact.title,
+        "page_url": page_url,
+        "gallery_url": meta.get("gallery_url"),
+        "summary": fact.description,
+        "license": license_text or "CC-BY-SA",
+    }
 
 
 class FandomSyncRequest(BaseModel):
@@ -119,7 +151,7 @@ async def _build_status_payload(
         "references_count": 0,
         "approved_count": 0,
         "preview_urls": [],
-        "admin_url": "/admin/visual-memory",
+        "admin_url": "/console/visual-memory",
     }
     if visual_identity is not None:
         ref_rows = (
@@ -195,6 +227,19 @@ async def _build_status_payload(
         "relations": relations_payload,
         "visual": visual_payload,
     }
+
+
+@public_router.get("/link")
+async def public_fandom_link(
+    node_id: int | None = Query(default=None, gt=0),
+    canonical_key: str | None = Query(
+        default=None, min_length=1, max_length=256),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    node, _ = await _resolve_target_node(
+        session, node_id=node_id, canonical_key=canonical_key
+    )
+    return {"fandom_reference": await get_fandom_reference(session, node.id)}
 
 
 @router.get("/status")

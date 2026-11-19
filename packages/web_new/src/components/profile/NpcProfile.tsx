@@ -5,6 +5,10 @@ import { Volume2, X } from "lucide-react";
 import { api } from "@/api/client";
 import { CharacterModelImport } from "@/components/characters/CharacterModelImport";
 import { FandomSyncAction } from "@/components/fandom/FandomSyncAction";
+import {
+  FandomHeaderCard,
+  type FandomReference,
+} from "@/components/fandom/FandomHeaderCard";
 import { CharacterProfileVisual } from "@/components/characters/CharacterProfileVisual";
 import { NpcFlowParticipants } from "@/components/profile/NpcFlowParticipants";
 import { NpcInstances } from "@/components/profile/NpcInstances";
@@ -385,7 +389,7 @@ export function NpcProfile({
   gameVersion,
   display = DEFAULT_DISPLAY,
 }: {
-  data: { character: any; npc: Npc };
+  data: { character: any; npc: Npc; fandom_reference?: FandomReference | null };
   initialModel?: CharacterModelData | null;
   gameVersion?: string;
   display?: PlayerDisplay;
@@ -485,6 +489,10 @@ export function NpcProfile({
               display={display}
             />
           </p>
+          <FandomHeaderCard
+            canonicalKey={character.canonical_key}
+            initialReference={data?.fandom_reference}
+          />
           {isSharedTemplate && templateVariants.length > 1 && (
             <p className="npc-shared-variants-note">
               Shared character configuration · Identical model also appears as:{" "}

@@ -13,6 +13,7 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "@/lib/router";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { FandomSyncAction } from "@/components/fandom/FandomSyncAction";
+import { FandomHeaderCard } from "@/components/fandom/FandomHeaderCard";
 
 import { api } from "@/api/client";
 import { PlayerText } from "@/components/dialogue/PlayerText";
@@ -195,6 +196,7 @@ export function NodeExplorerPage({
           {isSpeaker && (
             <span className="speaker-role-pill">Story Speaker &amp; Voice</span>
           )}
+          <FandomHeaderCard canonicalKey={node.canonical_key} />
           {narrative?.dialogue?.speaker && (
             <Link
               className="node-speaker-link"
