@@ -545,6 +545,38 @@ def test_order_evidence_frames_backfills_off_by_one_trailing_event_review():
     assert agent._review_evidence_errors(draft, final, ws) == []
 
 
+def test_order_evidence_frames_auto_upgrades_retained_reworded_events_and_unbacked_contextual():
+    ws = SimpleNamespace(frame_times={1: 10.0, 2: 20.0}, duration=30.0)
+    draft = VideoAnalysisResult.model_validate({
+        "summary": "scene",
+        "events": [
+            {"time": 10.0, "global_frame": 1, "observation": "Two figures stand in the field", "confidence": "observed", "evidence_kind": "observed"},
+        ],
+    })
+    raw_final = {
+        "summary": "scene",
+        "events": [
+            {"time": 10.0, "global_frame": 1, "evidence_frames": [1],
+             "observation": "Rover and Lily stand together in the flower field",
+             "confidence": "observed", "evidence_kind": "observed"},
+        ],
+        "story_events": [
+            {"title": "Reunion", "summary": "They meet", "time_start": 10.0, "time_end": 10.0,
+             "evidence_frames": [1], "evidence_kind": "contextual", "context_sources": []},
+        ],
+        "event_review": [
+            {"draft_index": 0, "status": "retained", "final_indices": [0]},
+        ],
+    }
+    ordered = agent._order_evidence_frames(raw_final, ws, order_events=True, normalize_intervals=True, draft=draft)
+    final = VideoAnalysisResult.model_validate(ordered)
+    assert final.event_review[0].status == "revised"
+    assert final.event_review[0].evidence_frames == [1]
+    assert final.story_events[0].evidence_kind == "inferred"
+    assert agent._review_evidence_errors(draft, final, ws) == []
+    assert agent._temporal_evidence_errors(final, ws) == []
+
+
 @pytest.mark.asyncio
 async def test_finish_errors_are_saved_and_retries_bounded(runtime, monkeypatch):
     db, run, settings, storage, _, _, _ = runtime

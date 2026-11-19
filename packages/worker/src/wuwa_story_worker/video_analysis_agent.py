@@ -90,6 +90,75 @@ def _order_evidence_frames(arguments: dict[str, Any], workspace: VideoWorkspace,
             after = result.get(after_key)
             if not isinstance(decisions, list) or not isinstance(after, list) or not before:
                 continue
+            if review_key == "event_review":
+                for d in decisions:
+                    if not isinstance(d, dict) or d.get("status") != "retained":
+                        continue
+                    d_idx = d.get("draft_index")
+                    f_indices = d.get("final_indices")
+                    if (
+                        type(d_idx) is int
+                        and 0 <= d_idx < len(before)
+                        and isinstance(f_indices, list)
+                        and f_indices
+                        and all(type(i) is int and 0 <= i < len(after) for i in f_indices)
+                    ):
+                        draft_obs = " ".join(before[d_idx].observation.split()).casefold()
+                        if not any(
+                            draft_obs in " ".join(str(after[i].get("observation", "")).split()).casefold()
+                            for i in f_indices
+                        ):
+                            frames = [
+                                frame
+                                for i in f_indices
+                                for frame in (after[i].get("evidence_frames") or [])
+                                if type(frame) is int
+                            ]
+                            if not frames:
+                                frames = [
+                                    after[i]["global_frame"]
+                                    for i in f_indices
+                                    if type(after[i].get("global_frame")) is int
+                                ]
+                            if frames:
+                                d["status"] = "revised"
+                                if not str(d.get("reason") or "").strip():
+                                    d["reason"] = "Refined observation wording while preserving cited visual evidence"
+                                if not d.get("evidence_frames"):
+                                    d["evidence_frames"] = frames
+            elif review_key == "identity_review":
+                for d in decisions:
+                    if not isinstance(d, dict) or d.get("status") != "retained":
+                        continue
+                    d_idx = d.get("draft_index")
+                    f_indices = d.get("final_indices")
+                    if (
+                        type(d_idx) is int
+                        and 0 <= d_idx < len(before)
+                        and isinstance(f_indices, list)
+                        and f_indices
+                        and all(type(i) is int and 0 <= i < len(after) for i in f_indices)
+                    ):
+                        draft_item = before[d_idx]
+                        if any(
+                            str(after[i].get("identity", "")).strip().casefold() != draft_item.identity.strip().casefold()
+                            or str(after[i].get("appearance", "")).strip().casefold() != draft_item.appearance.strip().casefold()
+                            or after[i].get("confidence") != draft_item.confidence
+                            or after[i].get("basis") != draft_item.basis
+                            for i in f_indices
+                        ):
+                            frames = [
+                                frame
+                                for i in f_indices
+                                for frame in (after[i].get("evidence_frames") or [])
+                                if type(frame) is int
+                            ]
+                            if frames:
+                                d["status"] = "revised"
+                                if not str(d.get("reason") or "").strip():
+                                    d["reason"] = "Updated identity track attributes while preserving cited evidence"
+                                if not d.get("evidence_frames"):
+                                    d["evidence_frames"] = frames
             present = {d.get("draft_index") for d in decisions if isinstance(d, dict)}
             missing = [idx for idx in range(len(before)) if idx not in present]
             if (
@@ -166,6 +235,12 @@ def _order_evidence_frames(arguments: dict[str, Any], workspace: VideoWorkspace,
         for item in items:
             if not isinstance(item, dict):
                 continue
+            if normalize_intervals:
+                kind_key = "basis" if collection == "identity_tracks" else "evidence_kind"
+                if item.get(kind_key) == "contextual":
+                    sources = item.get("context_sources")
+                    if not isinstance(sources, list) or not any(str(s).strip() for s in sources):
+                        item[kind_key] = "inferred"
             frames = item.get("evidence_frames")
             if isinstance(frames, list) and all(type(frame) is int and frame in workspace.frame_times for frame in frames):
                 item["evidence_frames"] = sorted(frames, key=lambda frame: (workspace.frame_times[frame], frame))
@@ -1105,10 +1180,11 @@ async def run_video_analysis_agent(
                                                    order_story_events=evidence_review_required and review_started,
                                                    normalize_intervals=review_started, draft=review_draft))
                     except (ValidationError, ValueError, TypeError) as exc:
-                        finish_corrections += 1
+                        if call is None:
+                            finish_corrections += 1
                         outcome = {"error": "invalid_finish_text", "details": str(exc)[:2000]}
                         await record_finish(f"{step}:text", outcome)
-                        if finish_corrections > MAX_FINISH_CORRECTIONS:
+                        if call is None and finish_corrections > MAX_FINISH_CORRECTIONS:
                             raise ProviderFailure("video_agent_finish_correction_limit") from exc
                         history.append(_multimodal_user_message(provider, json.dumps(outcome), []))
                         continue
@@ -1123,9 +1199,10 @@ async def run_video_analysis_agent(
                         continue
                     errors = review_errors(candidate)
                     if errors:
-                        finish_corrections += 1
+                        if call is None:
+                            finish_corrections += 1
                         await record_finish(f"{step}:text", {"error": "invalid_temporal_evidence", "details": errors})
-                        if finish_corrections > MAX_FINISH_CORRECTIONS:
+                        if call is None and finish_corrections > MAX_FINISH_CORRECTIONS:
                             raise ProviderFailure("video_agent_finish_correction_limit")
                         history.append(_multimodal_user_message(provider, "Correct the final evidence: " + "; ".join(errors), []))
                         continue
