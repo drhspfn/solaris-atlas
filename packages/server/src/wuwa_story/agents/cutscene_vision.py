@@ -32,7 +32,19 @@ class VideoEntityLink(BaseModel):
     canonical_key: str | None = Field(default=None, min_length=1, max_length=256)
     target_name: str = Field(min_length=1, max_length=200)
     kind: Literal["character", "item", "location", "event", "quest", "lore_topic"]
-    relation: Literal["appears_in", "uses_item", "located_at", "related_to_event", "mentions"]
+    relation: Literal[
+        "appears_in",
+        "uses_item",
+        "located_at",
+        "related_to_event",
+        "mentions",
+        "related_to_character",
+        "related_to_quest",
+        "parent_of",
+        "child_of",
+        "affiliated_with",
+        "character_arc_in",
+    ]
     confidence: Literal["observed", "dialogue_sourced", "inferred"]
     evidence: str = Field(min_length=1, max_length=500)
 

@@ -23,6 +23,10 @@ INTERNAL_TOOLS = frozenset(
         "read_workspace_memory",
         "write_memory",
         "find_work",
+        "post_fact",
+        "search_facts",
+        "search_notes",
+        "link_fact_to_question",
         "queue_analysis",
         "visual_create_identity",
         "visual_add_reference",
@@ -42,6 +46,13 @@ VIDEO_ANALYSIS_TOOLS = frozenset(
         "search_lore",
         "read_node",
         "graph_neighbors",
+        "read_workspace_memory",
+        "write_memory",
+        "find_work",
+        "post_fact",
+        "search_facts",
+        "search_notes",
+        "link_fact_to_question",
         "finish_video_analysis",
     }
 )
@@ -112,9 +123,12 @@ Event Deduplication, Anti-Compression, Coverage & Provenance Rules:
 - For each event set `evidence_kind` to `observed`, `inferred`, or `contextual`. Use `evidence_frames` for all supporting numbered frames, `time_end` for multi-frame intervals, and `context_sources` for supplied dialogue or source identifiers behind contextual claims.
 - For each `story_events` interval cite at least two chronological `evidence_frames` when the action spans more than one second, set `evidence_kind`, list `participants`, and state what visibly changes between start and end frames. Never claim continuous observation through a scene gap.
 
-Archive Search & Event/Entity Linking:
+Archive Search, Fact Board, Memory & Event/Entity Linking:
 - Source captions and in-scene dialogue lines (with speakers, when available) are reference context, not proof that an action is visible on screen. Never turn dialogue-only claims into `observed` visual facts.
 - Use `search_entities`, `search_dialogue`, `search_lore`, `read_node`, and `graph_neighbors` to resolve characters, items, locations, events, and lore concepts (such as Somnoire, Sentinels, Threnodians, factions, artifacts) mentioned in dialogue or visible on screen.
+- Use `search_facts`, `search_notes`, and `find_work` to inspect cross-agent findings, alerts, and open questions before finalizing conclusions.
+- For long videos, persist critical intermediate observations and confirmed frame anchors via `write_memory` (`scope="short"` or `"long"`) so context compaction never loses them.
+- Publish major narrative/emotional beats (e.g. a character arc turning point) and verified cross-entity links (character-character, character-cutscene, character-location, quest-quest) via `post_fact` and `entity_links` (linking `question_id` when answering an open question).
 - Record supported `entity_links`, `story_events`, and `lore_topics` so quest analysis can discover this video.
 
 Finish by calling `finish_video_analysis` with the complete structured result."""
@@ -148,6 +162,105 @@ def tool(
             "additionalProperties": False,
         },
     }
+
+
+def fact_board_tool_definitions() -> list[dict[str, Any]]:
+    """Shared schemas for the cross-agent fact board and agent_note search."""
+    string = {"type": "string"}
+    integer = {"type": "integer"}
+    return [
+        tool(
+            "post_fact",
+            "Publish or update a structured fact on the shared cross-agent fact board, optionally linking nodes in graph.edge or tying to an open question/note.",
+            {
+                "fact_type": string,
+                "title": string,
+                "description": string,
+                "importance": integer,
+                "confidence": string,
+                "subject_node_id": integer,
+                "object_node_id": integer,
+                "relation_type": string,
+                "quest_node_id": integer,
+                "cutscene_node_id": integer,
+                "question_id": integer,
+                "note_id": integer,
+                "tags": {"type": "array", "items": string},
+                "create_edge": {"type": "boolean"},
+            },
+            ["fact_type", "title", "description"],
+        ),
+        tool(
+            "search_facts",
+            "Search the shared cross-agent fact board by text, fact_type, entity/quest/cutscene/question IDs, or minimum importance (1..5).",
+            {
+                "query": string,
+                "fact_type": string,
+                "subject_node_id": integer,
+                "object_node_id": integer,
+                "quest_node_id": integer,
+                "cutscene_node_id": integer,
+                "question_id": integer,
+                "min_importance": integer,
+                "status": string,
+                "limit": integer,
+            },
+        ),
+        tool(
+            "search_notes",
+            "Search ops.agent_note (missing_data, contradiction, bug, note) for a node or text query.",
+            {"query": string, "node_id": integer, "kind": string, "status": string, "limit": integer},
+        ),
+        tool(
+            "link_fact_to_question",
+            "Link an existing fact on the shared fact board to an open question in ops.agent_work_item.",
+            {"fact_id": integer, "question_id": integer},
+            ["fact_id", "question_id"],
+        ),
+    ]
+
+
+async def execute_fact_board_tool(
+    session: AsyncSession,
+    name: str,
+    arguments: dict[str, Any],
+    *,
+    run_id: int | None = None,
+    source_kind: str = "quest_analysis",
+) -> dict[str, Any] | None:
+    from wuwa_story.agents import fact_board
+
+    if name == "post_fact":
+        return await fact_board.post_fact(
+            session,
+            fact_type=arguments["fact_type"],
+            title=arguments["title"],
+            description=arguments["description"],
+            importance=int(arguments.get("importance") or 3),
+            confidence=str(arguments.get("confidence") or "observed"),
+            source_kind=source_kind,
+            subject_node_id=arguments.get("subject_node_id"),
+            object_node_id=arguments.get("object_node_id"),
+            relation_type=arguments.get("relation_type"),
+            quest_node_id=arguments.get("quest_node_id"),
+            cutscene_node_id=arguments.get("cutscene_node_id"),
+            question_id=arguments.get("question_id"),
+            note_id=arguments.get("note_id"),
+            run_id=run_id,
+            tags=arguments.get("tags"),
+            create_edge=bool(arguments.get("create_edge", True)),
+        )
+    if name == "search_facts":
+        return {"facts": await fact_board.search_facts(session, **arguments)}
+    if name == "search_notes":
+        return {"notes": await fact_board.search_notes(session, **arguments)}
+    if name == "link_fact_to_question":
+        return await fact_board.link_fact_to_question(
+            session,
+            fact_id=int(arguments["fact_id"]),
+            question_id=int(arguments["question_id"]),
+        )
+    return None
 
 
 def internal_definitions(*, worker: bool = False) -> list[dict[str, Any]]:
@@ -215,6 +328,7 @@ def internal_definitions(*, worker: bool = False) -> list[dict[str, Any]]:
             {"quest_id": integer, "game_version": string},
             ["quest_id"],
         ),
+        *fact_board_tool_definitions(),
     ]
     if worker:
         from wuwa_story.agents.contracts import InferredLink
@@ -273,6 +387,11 @@ async def execute_internal(
         )
     if name == "find_work":
         return await workspace.find_work(session, **arguments)
+    fact_result = await execute_fact_board_tool(
+        session, name, arguments, run_id=run_id, source_kind="quest_analysis"
+    )
+    if fact_result is not None:
+        return fact_result
     if name == "queue_analysis":
         from wuwa_story.agents.contracts import AnalysisRequest
         from wuwa_story.agents.jobs import enqueue_analysis
@@ -354,7 +473,8 @@ def video_analysis_definitions() -> list[dict[str, Any]]:
         tool(
             "inspect_video_region",
             "Inspect a crop of an already sampled frame at higher spatial detail from the original video. bbox is [left, top, right, bottom] in normalized 0..1 coordinates.",
-            {"global_frame": integer, "bbox": {"type": "array", "items": number, "minItems": 4, "maxItems": 4}},
+            {"global_frame": integer, "bbox": {"type": "array",
+                                               "items": number, "minItems": 4, "maxItems": 4}},
             ["global_frame", "bbox"],
         ),
         tool(
@@ -387,6 +507,24 @@ def video_analysis_definitions() -> list[dict[str, Any]]:
             {"node_id": integer, "limit": integer},
             ["node_id"],
         ),
+        tool(
+            "read_workspace_memory",
+            "Search relevant versioned short/long-term memory; not primary evidence.",
+            {"query": string, "node_id": integer, "limit": integer},
+        ),
+        {
+            "type": "function",
+            "name": "write_memory",
+            "description": "Save or revise a small memory entry so important visual details survive context compaction.",
+            "parameters": MemoryWrite.model_json_schema(),
+            "strict": False,
+        },
+        tool(
+            "find_work",
+            "Find unresolved questions and queued work, highest priority first.",
+            {"query": string, "status": string, "limit": integer},
+        ),
+        *fact_board_tool_definitions(),
         {
             "type": "function",
             "name": "finish_video_analysis",

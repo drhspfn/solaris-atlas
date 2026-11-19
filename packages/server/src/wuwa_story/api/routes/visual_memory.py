@@ -166,7 +166,7 @@ async def game_entities(q: str = Query("", max_length=128),
     from wuwa_story.api.routes.story.catalog import browse_catalog
 
     if q.strip():
-        result = await search(q=q.strip(), category=["character"], scope="entities", locale=locale,
+        result = await search(q=q.strip(), category=["character", "speaker"], scope="entities", locale=locale,
                               game_version=None, locale_id=None, sort_by="relevance", sort_order="desc",
                               limit=limit + 1, offset=offset, character=None, character_kind="all",
                               quest_id=None, session=session)
@@ -192,7 +192,8 @@ async def game_entities(q: str = Query("", max_length=128),
         )
     )) if rows else set()
     items = [{"node_id": row["id"], "name": row.get("title") or row.get("alias"),
-              "kind": row.get("character_kind") or "character", "image_url": row.get("image_url"),
+              "kind": row.get("character_kind") or row.get("node_type") or "character",
+              "image_url": row.get("image_url"),
               "canonical_key": row.get("canonical_key")} for row in rows]
     for item in items:
         if item["node_id"] in rover_ids:
@@ -214,11 +215,17 @@ async def identity_from_game(body: GameEntityInput, locale: str = Query("en", mi
     character = await session.scalar(select(Character).join(Node, Node.id == Character.node_id)
                                      .join(NodeType, NodeType.id == Node.type_id)
                                      .where(Character.node_id == body.node_id, NodeType.key == "character"))
+    speaker_node = None
     if character is None:
-        raise HTTPException(404, "Game character not found")
+        speaker_node = await session.scalar(
+            select(Node).join(NodeType, NodeType.id == Node.type_id)
+            .where(Node.id == body.node_id, NodeType.key == "speaker")
+        )
+        if speaker_node is None:
+            raise HTTPException(404, "Game character not found")
     from wuwa_story.visual_memory.game_identity import is_rover, rover_identity
 
-    if is_rover(character):
+    if character is not None and is_rover(character):
         try:
             result = await rover_identity(session, character, service_for(session))
             await session.commit()
@@ -237,10 +244,12 @@ async def identity_from_game(body: GameEntityInput, locale: str = Query("en", mi
     if ids:
         return await service._identity_dict(await service._identity(ids[0]))
     label = await _node_label(session, body.node_id, locale)
-    name = label.get("label") or character.canonical_name
+    name = label.get("label") or (
+        character.canonical_name if character is not None else speaker_node.slug or speaker_node.canonical_key)
     if not name:
         raise HTTPException(422, "Game entity has no localized display name")
-    kind = character_kind((character.metadata_json or {}).get("role_type"))
+    kind = character_kind((character.metadata_json or {}).get(
+        "role_type")) if character is not None else "npc"
     try:
         identity = await service.create_identity(name=name, kind=kind, node_ids=[body.node_id])
         await session.commit()
