@@ -724,6 +724,34 @@ async def _execute_video_tool(
             ]
         }, []
 
+    if call.name in {
+        "read_workspace_memory",
+        "write_memory",
+        "find_work",
+        "post_fact",
+        "search_facts",
+        "search_notes",
+        "link_fact_to_question",
+    }:
+        from wuwa_story.agents import workspace as agent_workspace
+        from wuwa_story.agents.capabilities import execute_fact_board_tool
+        from wuwa_story.agents.contracts import MemoryWrite
+
+        run_id = getattr(workspace, "run_id", None)
+        if call.name == "read_workspace_memory":
+            return await agent_workspace.read_memory(db, AgentSettings(), run_id=run_id, **args), []
+        if call.name == "write_memory":
+            return await agent_workspace.save_memory(
+                db, AgentSettings(), MemoryWrite.model_validate(args), run_id=run_id
+            ), []
+        if call.name == "find_work":
+            return await agent_workspace.find_work(db, **args), []
+        fact_res = await execute_fact_board_tool(
+            db, call.name, args, run_id=run_id, source_kind="video_analysis"
+        )
+        if fact_res is not None:
+            return fact_res, []
+
     return {"error": f"Unknown tool: {call.name}"}, []
 
 
@@ -791,6 +819,12 @@ async def _publish_cutscene_knowledge(
         "located_at": "LOCATED_AT",
         "related_to_event": "RELATED_TO",
         "mentions": "MENTIONS",
+        "related_to_character": "RELATED_TO",
+        "related_to_quest": "RELATED_TO",
+        "parent_of": "PARENT_OF",
+        "child_of": "CHILD_OF",
+        "affiliated_with": "AFFILIATED_WITH",
+        "character_arc_in": "CHARACTER_ARC_IN",
     }
     seen_edges: set[tuple[int, int]] = set()
     for link in result.entity_links:
