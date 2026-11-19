@@ -13,9 +13,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-os.environ.setdefault("WUWA_WORKER_DB_POOL_SIZE", "4")
-os.environ.setdefault("WUWA_WORKER_DB_MAX_OVERFLOW", "4")
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
@@ -61,6 +58,9 @@ from wuwa_story_worker.story_agent import (
     process_story_analysis,
 )
 from wuwa_story_worker.voice_packages import discover_voice_plan, download_voice_plan
+
+os.environ.setdefault("WUWA_WORKER_DB_POOL_SIZE", "4")
+os.environ.setdefault("WUWA_WORKER_DB_MAX_OVERFLOW", "4")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -198,7 +198,8 @@ def _parser() -> argparse.ArgumentParser:
     sim_video = commands.add_parser(
         "simulate-video", help="Locally simulate video atlas numbering and window resampling on an MP4")
     sim_video.add_argument("video", type=Path)
-    sim_video.add_argument("--output-dir", type=Path, default=Path("video-sim-out"))
+    sim_video.add_argument("--output-dir", type=Path,
+                           default=Path("video-sim-out"))
     sim_video.add_argument("--interval", type=float, default=None)
     sim_video.add_argument("--window-start", type=float, default=None)
     sim_video.add_argument("--window-end", type=float, default=None)
@@ -412,7 +413,11 @@ def main() -> None:
                         )
                     )
                 else:
-                    settings = get_agent_settings()
+                    from wuwa_story.agents.settings import load_effective_agent_settings
+
+                    settings = await load_effective_agent_settings(
+                        session, get_agent_settings(), scope="cutscene"
+                    )
                     if not settings.vision_enabled or not 1 <= args.limit <= 1000 or args.offset < 0:
                         raise ValueError(
                             "Enable AGENT_VISION_ENABLED and use a limit between 1 and 1000"
@@ -472,7 +477,12 @@ def main() -> None:
         from wuwa_story.db.session import SessionFactory
 
         async def enqueue():
+            from wuwa_story.agents.settings import load_effective_agent_settings
+
             async with SessionFactory() as session:
+                effective = await load_effective_agent_settings(
+                    session, get_agent_settings(), scope="story"
+                )
                 run = await enqueue_analysis(
                     session,
                     AnalysisRequest(
@@ -481,7 +491,7 @@ def main() -> None:
                         locale=args.locale,
                         generation=args.generation,
                     ),
-                    get_agent_settings(),
+                    effective,
                 )
                 print(json.dumps({"id": run.id, "status": run.status}))
 

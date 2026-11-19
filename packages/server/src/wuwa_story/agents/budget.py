@@ -18,6 +18,12 @@ class BudgetExceeded(ValueError):
     pass
 
 
+class ContextLimitExceeded(BudgetExceeded):
+    """Raised when a single request's estimated context exceeds max_input_tokens."""
+
+    pass
+
+
 def price(
     input_tokens: int,
     output_tokens: int,
@@ -28,7 +34,8 @@ def price(
     if min(input_tokens, output_tokens) < 0 or min(input_rate, output_rate) < 0:
         raise ValueError("Token counts and prices cannot be negative")
     return (
-        (input_tokens * input_rate + output_tokens * output_rate) * multiplier / Decimal(1_000_000)
+        (input_tokens * input_rate + output_tokens *
+         output_rate) * multiplier / Decimal(1_000_000)
     ).quantize(Decimal("0.00000001"), rounding=ROUND_CEILING)
 
 
@@ -57,10 +64,12 @@ def reported_price(
         usage = response.get("usage", {})
         if not isinstance(usage, dict):
             raise ValueError("Invalid cache usage")
-        details = usage.get("input_tokens_details", usage.get("prompt_tokens_details", {})) or {}
+        details = usage.get("input_tokens_details", usage.get(
+            "prompt_tokens_details", {})) or {}
         if not isinstance(details, dict):
             raise ValueError("Invalid cache usage")
-        cached, written = details.get("cached_tokens", 0), details.get("cache_write_tokens", 0)
+        cached, written = details.get(
+            "cached_tokens", 0), details.get("cache_write_tokens", 0)
     if (
         type(cached) is not int
         or type(written) is not int
@@ -72,8 +81,10 @@ def reported_price(
     write_rate = settings.cache_write_usd_per_million
     input_cost = (
         (input_tokens - cached - written) * settings.input_usd_per_million
-        + cached * (cached_rate if cached_rate is not None else settings.input_usd_per_million)
-        + written * (write_rate if write_rate is not None else settings.input_usd_per_million)
+        + cached *
+        (cached_rate if cached_rate is not None else settings.input_usd_per_million)
+        + written *
+        (write_rate if write_rate is not None else settings.input_usd_per_million)
     )
     return (
         (input_cost + output_tokens * settings.output_usd_per_million)
@@ -95,12 +106,17 @@ async def reserve(
     from urllib.parse import urlparse
     if kind == "embedding" and not settings.api_key.get_secret_value() and urlparse(settings.base_url).hostname in {"localhost", "127.0.0.1", "::1"}:
         if settings.daily_budget_usd <= 0:
-            raise ValueError("A positive shared budget is required even for local embeddings")
+            raise ValueError(
+                "A positive shared budget is required even for local embeddings")
     else:
         settings.require_enabled()
     if input_bound > settings.max_input_tokens:
-        raise BudgetExceeded("Input context exceeds the configured token bound")
-    day = datetime.now(UTC).astimezone(ZoneInfo(settings.budget_timezone)).date()
+        raise ContextLimitExceeded(
+            f"Input context exceeds the configured token bound: "
+            f"estimated={input_bound}, limit={settings.max_input_tokens}"
+        )
+    day = datetime.now(UTC).astimezone(
+        ZoneInfo(settings.budget_timezone)).date()
     await session.execute(insert(AgentDailyUsage).values(day=day).on_conflict_do_nothing())
     usage = await session.scalar(
         select(AgentDailyUsage)
@@ -185,14 +201,16 @@ async def settle(
         return call.status == "completed"
     if min(input_tokens, output_tokens) < 0:
         raise ValueError("Invalid provider usage")
-    cost = reported_price(settings, input_tokens, output_tokens, response, call.kind)
+    cost = reported_price(settings, input_tokens,
+                          output_tokens, response, call.kind)
     usage.reserved_usd -= call.reserved_usd
     usage.reserved_tokens -= call.reserved_tokens
     usage.spent_usd += cost
     usage.spent_tokens += input_tokens + output_tokens
     call.input_tokens, call.output_tokens, call.cost_usd = input_tokens, output_tokens, cost
     call.response = response
-    bounded = cost <= call.reserved_usd and input_tokens + output_tokens <= call.reserved_tokens
+    bounded = cost <= call.reserved_usd and input_tokens + \
+        output_tokens <= call.reserved_tokens
     call.status = "completed" if bounded else "usage_exceeded"
     return bounded
 
@@ -274,7 +292,8 @@ async def rebuild_daily_usage(session: AsyncSession) -> list[dict[str, Any]]:
                     func.coalesce(func.sum(AgentCall.cost_usd), 0),
                     func.coalesce(
                         func.sum(
-                            case((AgentCall.cost_usd.is_(None), AgentCall.reserved_usd), else_=0)
+                            case((AgentCall.cost_usd.is_(None),
+                                 AgentCall.reserved_usd), else_=0)
                         ),
                         0,
                     ),
@@ -293,7 +312,8 @@ async def rebuild_daily_usage(session: AsyncSession) -> list[dict[str, Any]]:
                     ),
                     func.coalesce(
                         func.sum(
-                            case((AgentCall.cost_usd.is_(None), AgentCall.reserved_tokens), else_=0)
+                            case((AgentCall.cost_usd.is_(None),
+                                 AgentCall.reserved_tokens), else_=0)
                         ),
                         0,
                     ),
@@ -308,7 +328,8 @@ async def rebuild_daily_usage(session: AsyncSession) -> list[dict[str, Any]]:
                 "reserved_usd": str(totals[1]),
             }
         )
-        spent, held, spent_tokens, held_tokens = cast(tuple[Decimal, Decimal, int, int], totals)
+        spent, held, spent_tokens, held_tokens = cast(
+            tuple[Decimal, Decimal, int, int], totals)
         usage.spent_usd, usage.reserved_usd = spent, held
         usage.spent_tokens, usage.reserved_tokens = spent_tokens, held_tokens
     return results

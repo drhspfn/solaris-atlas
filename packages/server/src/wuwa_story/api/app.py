@@ -13,6 +13,7 @@ from wuwa_story.api.errors import install_error_handlers
 from wuwa_story.api.observability import ObservabilityMiddleware, metrics_router
 from wuwa_story.api.routes import (
     admin_data,
+    admin_settings,
     character_models,
     cutscenes,
     fandom,
@@ -123,6 +124,7 @@ app.include_router(seo.router)
 app.include_router(story.router)
 app.include_router(story_agent.router)
 app.include_router(story_agent.admin)
+app.include_router(admin_settings.router)
 app.include_router(visual_memory.router)
 app.include_router(visual_memory_video.router)
 app.include_router(fandom.router)

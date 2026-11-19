@@ -76,6 +76,7 @@ from wuwa_story.db.models.ontology import (
 )
 from wuwa_story.db.models.ops import (
     AIModel,
+    AppSetting,
     Dependency,
     GameRelease,
     ImportRun,
@@ -233,5 +234,5 @@ from wuwa_story.db.models.browse import (  # noqa: E402
 __all__ += [
     "CharacterRead", "CutsceneRead", "DialogueRead", "EntityReadRelation", "GameEventRead",
     "GameNoticeRead", "ItemRead", "LocationRead", "QuestRead", "SpeakerRead", "StoryMapRead",
-    "ReadProjectionDirty", "ReadProjectionScope",
+    "ReadProjectionDirty", "ReadProjectionScope", "AppSetting",
 ]

@@ -21,7 +21,11 @@ from wuwa_story.agents.retrieval import (
     scope,
     search_explanations,
 )
-from wuwa_story.agents.settings import AgentSettings, get_agent_settings
+from wuwa_story.agents.settings import (
+    AgentSettings,
+    get_agent_settings,
+    load_effective_agent_settings,
+)
 from wuwa_story.agents.trace import legacy_trace
 from wuwa_story.api.public_addresses import public_addresses
 from wuwa_story.api.routes.cutscene_analysis import router as cutscene_admin
@@ -49,7 +53,7 @@ admin.include_router(cutscene_admin)
 class ResumeRequest(StrictModel):
     finalize: bool = False
     extra_steps: int = Field(default=0, ge=0, le=100)
-    context_tokens: int | None = Field(default=None, ge=1000, le=250000)
+    context_tokens: int | None = Field(default=None, ge=1000, le=1_000_000)
     tool_calls_per_step: int | None = Field(default=None, ge=1, le=20)
     compact_context: bool = False
     output_tokens: int | None = Field(default=None, ge=128, le=32000)
@@ -92,7 +96,10 @@ async def work_queue(query: str = Query("", max_length=512), status: str = "open
 async def dispatch_one_work_item(session: AsyncSession = Depends(get_session)):
     from wuwa_story.agents.work import dispatch_work
     try:
-        run_id = await dispatch_work(session, get_agent_settings().model_copy(update={"autonomous_enabled": True}))
+        effective = await load_effective_agent_settings(
+            session, get_agent_settings(), scope="story"
+        )
+        run_id = await dispatch_work(session, effective.model_copy(update={"autonomous_enabled": True}))
         return {"run_id": run_id, "queued": run_id is not None}
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
@@ -143,11 +150,15 @@ async def create_job(
     request: AdminAnalysisRequest, session: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
     try:
-        run = await enqueue_analysis(session, request, get_agent_settings())
+        effective = await load_effective_agent_settings(
+            session, get_agent_settings(), scope="story"
+        )
+        run = await enqueue_analysis(session, request, effective)
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
     except Exception as error:
-        raise HTTPException(503, "Story queue unavailable; repeat the same request") from error
+        raise HTTPException(
+            503, "Story queue unavailable; repeat the same request") from error
     return {"id": run.id, "status": run.status}
 
 
@@ -159,7 +170,8 @@ async def jobs(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     statement = (
-        select(ProcessingRun, AgentJob.config, AgentJob.checkpoint["step"].as_integer())
+        select(ProcessingRun, AgentJob.config,
+               AgentJob.checkpoint["step"].as_integer())
         .join(AgentJob, AgentJob.run_id == ProcessingRun.id)
         .order_by(ProcessingRun.id.desc())
         .limit(limit)
@@ -200,16 +212,19 @@ async def job_status(run_id: int, session: AsyncSession = Depends(get_session)) 
         raise HTTPException(404, "Story analysis job not found")
     calls = list(
         await session.scalars(
-            select(AgentCall).where(AgentCall.run_id == run_id).order_by(AgentCall.step)
+            select(AgentCall).where(AgentCall.run_id ==
+                                    run_id).order_by(AgentCall.step)
         )
     )
     recovery = None
     if run.status == "failed" and run.error == "Malformed provider turn; recorded usage is retained":
-        recorded = next((call for call in calls if call.step == job.checkpoint.get("step", 0) and call.status == "completed" and call.kind == "analysis"), None)
+        recorded = next((call for call in calls if call.step == job.checkpoint.get(
+            "step", 0) and call.status == "completed" and call.kind == "analysis"), None)
         if recorded and recorded.response:
             try:
                 async with httpx.AsyncClient() as client:
-                    parsed = Provider(AgentSettings(_env_file=None, **job.config), client).parse(recorded.response, enforce_tool_limit=False)
+                    parsed = Provider(AgentSettings(_env_file=None, **job.config),
+                                      client).parse(recorded.response, enforce_tool_limit=False)
                 if parsed.complete and parsed.calls:
                     recovery = "recorded_tools"
             except (ValueError, KeyError, TypeError, IndexError):
@@ -337,7 +352,8 @@ async def reconcile(
                 "Billing reconciled; remote result unavailable. Start an explicit new generation to analyze again.",
             )
             run.tokens_input = (run.tokens_input or 0) + request.input_tokens
-            run.tokens_output = (run.tokens_output or 0) + request.output_tokens
+            run.tokens_output = (run.tokens_output or 0) + \
+                request.output_tokens
             run.cost = (run.cost or 0) + float(call.cost_usd or 0)
     await session.commit()
     return {"id": call.id, "status": call.status}
@@ -347,20 +363,22 @@ async def reconcile(
 async def usage(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     days = list(
         await session.scalars(
-            select(AgentDailyUsage).order_by(AgentDailyUsage.day.desc()).limit(31)
+            select(AgentDailyUsage).order_by(
+                AgentDailyUsage.day.desc()).limit(31)
         )
     )
-    settings = get_agent_settings()
+    settings = await load_effective_agent_settings(session, get_agent_settings())
     return {
         "daily_budget_usd": str(settings.daily_budget_usd),
         "daily_token_limit": settings.daily_token_limit,
+        "max_input_tokens": settings.max_input_tokens,
         "timezone": settings.budget_timezone,
         "today": str(datetime.now(UTC).astimezone(ZoneInfo(settings.budget_timezone)).date()),
         "days": [
             {
                 "day": str(day.day),
-                "spent_usd": str(day.spent_usd),
-                "reserved_usd": str(day.reserved_usd),
+                "spent_usd": f"{day.spent_usd:.8f}",
+                "reserved_usd": f"{day.reserved_usd:.8f}",
                 "spent_tokens": day.spent_tokens,
                 "reserved_tokens": day.reserved_tokens,
             }
@@ -494,9 +512,11 @@ async def generated_event(
         or event.semantic_status != "generated"
         or event.metadata_json.get("release_id") != release.id
     ):
-        raise HTTPException(404, "Generated event not found in this version/language")
+        raise HTTPException(
+            404, "Generated event not found in this version/language")
     run = await session.get(ProcessingRun, event.processor_run_id)
-    quest_id = run.metadata_json.get("request", {}).get("quest_id") if run else None
+    quest_id = run.metadata_json.get(
+        "request", {}).get("quest_id") if run else None
     current = await get_explanation(session, quest_id, game_version, locale) if quest_id else None
     if (
         not current

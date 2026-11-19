@@ -3,6 +3,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     ForeignKey,
     Identity,
@@ -31,14 +32,17 @@ class GameRelease(MetadataMixin, Base):
         ),
         {"schema": "ops"},
     )
-    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger, Identity(always=True), primary_key=True)
     sequence: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
-    game_version: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    game_version: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True)
     resource_version: Mapped[str | None] = mapped_column(String(64))
     changelist: Mapped[int | None] = mapped_column(BigInteger)
     upstream_name: Mapped[str] = mapped_column(String(256), nullable=False)
     upstream_commit: Mapped[str | None] = mapped_column(String(128))
-    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    released_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True))
     imported_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -47,7 +51,8 @@ class GameRelease(MetadataMixin, Base):
 class ImportRun(MetadataMixin, Base):
     __tablename__ = "import_run"
     __table_args__ = ({"schema": "ops"},)
-    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger, Identity(always=True), primary_key=True)
     release_id: Mapped[int] = mapped_column(
         ForeignKey("ops.game_release.id", ondelete="RESTRICT"), nullable=False, index=True
     )
@@ -56,7 +61,8 @@ class ImportRun(MetadataMixin, Base):
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True))
     status: Mapped[str] = mapped_column(
         String(24), nullable=False, default="pending", server_default="pending"
     )
@@ -78,7 +84,8 @@ class ImportRun(MetadataMixin, Base):
 class Processor(MetadataMixin, Base):
     __tablename__ = "processor"
     __table_args__ = ({"schema": "ops"},)
-    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger, Identity(always=True), primary_key=True)
     key: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     version: Mapped[str] = mapped_column(String(64), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
@@ -87,7 +94,8 @@ class Processor(MetadataMixin, Base):
 class AIModel(MetadataMixin, Base):
     __tablename__ = "ai_model"
     __table_args__ = ({"schema": "ops"},)
-    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger, Identity(always=True), primary_key=True)
     provider: Mapped[str] = mapped_column(String(128), nullable=False)
     model_name: Mapped[str] = mapped_column(String(256), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -98,11 +106,13 @@ class AIModel(MetadataMixin, Base):
 class ProcessingRun(MetadataMixin, Base):
     __tablename__ = "processing_run"
     __table_args__ = ({"schema": "ops"},)
-    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger, Identity(always=True), primary_key=True)
     processor_id: Mapped[int] = mapped_column(
         ForeignKey("ops.processor.id", ondelete="RESTRICT"), nullable=False
     )
-    model_id: Mapped[int | None] = mapped_column(ForeignKey("ops.ai_model.id", ondelete="SET NULL"))
+    model_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ops.ai_model.id", ondelete="SET NULL"))
     target_node_id: Mapped[int | None] = mapped_column(
         ForeignKey("graph.node.id", ondelete="SET NULL")
     )
@@ -118,7 +128,8 @@ class ProcessingRun(MetadataMixin, Base):
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
 
 
@@ -134,4 +145,31 @@ class Dependency(Base):
     dependency_type: Mapped[str] = mapped_column(String(64), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AppSetting(Base):
+    """Generic runtime key-value setting; metadata is synced from code specs."""
+
+    __tablename__ = "app_setting"
+    __table_args__ = ({"schema": "ops"},)
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    category: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    value_type: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="string")
+    value: Mapped[str | None] = mapped_column(Text)
+    validation: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict)
+    choices: Mapped[list[str] | None] = mapped_column(JSONB)
+    multi: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_secret: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False)
+    updated_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("auth.user.id", ondelete="SET NULL")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )

@@ -113,7 +113,8 @@ def runtime(monkeypatch, tmp_path):
     monkeypatch.setattr(agent, "FileRegistrationService", Files)
 
     async def reserve(_, settings, *, step, **kwargs):
-        call = SimpleNamespace(id=step + 1, status="reserved", response=None, cost_usd=0)
+        call = SimpleNamespace(
+            id=step + 1, status="reserved", response=None, cost_usd=0)
         db.calls[step] = call
         return call
 
@@ -155,10 +156,12 @@ async def test_three_parts_one_report_global_pool_exact_source_variants(runtime,
 
     async def post(_, route, payload):
         calls.append(payload)
-        user = next(item for item in payload["input"] if item["role"] == "user")
+        user = next(
+            item for item in payload["input"] if item["role"] == "user")
         intro = json.loads(user["content"][0]["text"].split("\n", 1)[1])
         assert len(intro["analysis_plan"]["segments"]) == 3
-        assert {m["source_segment"]["asset_node_id"] for m in intro["atlases"]} == {10, 11, 12}
+        assert {m["source_segment"]["asset_node_id"]
+                for m in intro["atlases"]} == {10, 11, 12}
         return response("finish_video_analysis", result())
 
     async def preview_tool(args, *_):
@@ -169,7 +172,8 @@ async def test_three_parts_one_report_global_pool_exact_source_variants(runtime,
     monkeypatch.setattr(agent.Provider, "post", post)
     monkeypatch.setattr(agent, "run_tool", preview_tool)
     await agent.run_video_analysis_agent(db, run, settings, ws, storage, {})
-    reports = [r for r in db.refs if r.reference_type == "cutscene_visual_description"]
+    reports = [r for r in db.refs if r.reference_type ==
+               "cutscene_visual_description"]
     assert len(reports) == len(calls) == len(db.calls) == 1
     assert storage.downloads == ["movie0", "movie1", "movie2"]
     assert all(r.owner_node_id == 15537 for r in db.refs)
@@ -177,12 +181,16 @@ async def test_three_parts_one_report_global_pool_exact_source_variants(runtime,
     assert report["analysis_plan"] == scene_plan()
     assert report["gaps"] == [{"scene_start": 4, "scene_end": 6}]
     assert report["cost_usd"] == 0.001 and report["tokens_input"] == 100
-    assert [ev["source"]["source_time"] for ev in report["events"]] == [2, 0, 5]
-    assert [ev["source"]["scene_offset"] for ev in report["events"]] == [-2, 6, 4]
+    assert [ev["source"]["source_time"]
+            for ev in report["events"]] == [2, 0, 5]
+    assert [ev["source"]["scene_offset"]
+            for ev in report["events"]] == [-2, 6, 4]
     assert len(report["story_events"][0]["source_spans"]) == 3
-    assert {parent for parent, kind, _ in files.variants if kind == "video_frame_atlas"} == {20, 21, 22}
+    assert {parent for parent, kind, _ in files.variants if kind ==
+            "video_frame_atlas"} == {20, 21, 22}
     assert (21, "cutscene_preview", 701) in files.variants
-    numbers = [tile["global_frame"] for atlas in report["atlases"] for tile in atlas["tiles"]]
+    numbers = [tile["global_frame"]
+               for atlas in report["atlases"] for tile in atlas["tiles"]]
     assert numbers == list(range(1, len(numbers) + 1))
     assert all(not 4 <= time < 6 for time in ws.frame_times.values())
 
@@ -201,10 +209,11 @@ async def test_new_runs_review_and_resample_before_publication_and_replay(runtim
         if len(requests) == 2:
             assert "Draft received" in json.dumps(payload)
             return response("resample_video_window", {"start_seconds": 6, "end_seconds": 7,
-                                                       "interval_seconds": 0.5, "reason": "inspect contact"})
+                                                      "interval_seconds": 0.5, "reason": "inspect contact"})
         final = result()
         for event in final["events"]:
-            event["global_frame"] = next(i for i, time in ws.frame_times.items() if time == event["time"])
+            event["global_frame"] = next(
+                i for i, time in ws.frame_times.items() if time == event["time"])
             event["evidence_kind"] = "observed"
         final["story_events"][0].update(time_start=6, time_end=10, evidence_kind="observed",
                                         evidence_frames=[final["events"][1]["global_frame"],
@@ -220,18 +229,21 @@ async def test_new_runs_review_and_resample_before_publication_and_replay(runtim
     monkeypatch.setattr(agent.Provider, "post", post)
     monkeypatch.setattr(agent, "run_tool", preview_tool)
     await agent.run_video_analysis_agent(db, run, settings, ws, storage, {})
-    report = next(ref.metadata_json for ref in db.refs if ref.reference_type == "cutscene_visual_description")
+    report = next(ref.metadata_json for ref in db.refs if ref.reference_type ==
+                  "cutscene_visual_description")
     assert len(requests) == 3
     assert report["temporal_review_version"] == 1 and report["reviewed_atlases"]
     assert report["analysis_metrics"]["resample_requests"] == 1
     assert report["analysis_metrics"]["finish_attempts"] == 2
     assert len(report["analysis_metrics"]["usage_steps"]) == 3
-    assert all(event["evidence_kind"] == "observed" for event in report["events"])
+    assert all(event["evidence_kind"] ==
+               "observed" for event in report["events"])
     assert report["identity_tracks"][0]["confidence"] == "uncertain"
     assert "1:0" in run.raw_output["tool_results"]
 
     fresh = await workspace(runtime)
-    monkeypatch.setattr(agent.Provider, "post", AsyncMock(side_effect=AssertionError("unexpected paid call")))
+    monkeypatch.setattr(agent.Provider, "post", AsyncMock(
+        side_effect=AssertionError("unexpected paid call")))
     await agent.run_video_analysis_agent(db, run, settings, fresh, storage, {})
     assert run.tokens_input == 300
 
@@ -239,8 +251,10 @@ async def test_new_runs_review_and_resample_before_publication_and_replay(runtim
 @pytest.mark.asyncio
 async def test_review_ledger_persists_draft_and_replays_without_provider(runtime, monkeypatch):
     db, run, settings, storage, _, _, _ = runtime
-    run.metadata_json.update(temporal_review_version=1, review_evidence_version=1)
-    monkeypatch.setattr(agent, "_previous_scene_evidence", AsyncMock(return_value={"available": False}))
+    run.metadata_json.update(temporal_review_version=1,
+                             review_evidence_version=1)
+    monkeypatch.setattr(agent, "_previous_scene_evidence",
+                        AsyncMock(return_value={"available": False}))
     ws = await workspace(runtime)
     calls = []
 
@@ -250,7 +264,8 @@ async def test_review_ledger_persists_draft_and_replays_without_provider(runtime
         if len(calls) == 1:
             return response("finish_video_analysis", initial)
         for event in initial["events"]:
-            event["global_frame"] = next(i for i, time in ws.frame_times.items() if time == event["time"])
+            event["global_frame"] = next(
+                i for i, time in ws.frame_times.items() if time == event["time"])
             event["evidence_kind"] = "observed"
         initial["story_events"][0].update(time_start=6, time_end=10, evidence_kind="observed",
                                           evidence_frames=[initial["events"][1]["global_frame"],
@@ -262,10 +277,13 @@ async def test_review_ledger_persists_draft_and_replays_without_provider(runtime
 
     monkeypatch.setattr(agent.Provider, "post", post)
     await agent.run_video_analysis_agent(db, run, settings, ws, storage, {})
-    report = next(ref.metadata_json for ref in db.refs if ref.reference_type == "cutscene_visual_description")
-    assert len(report["review_draft"]["events"]) == len(report["event_review"]) == 3
+    report = next(ref.metadata_json for ref in db.refs if ref.reference_type ==
+                  "cutscene_visual_description")
+    assert len(report["review_draft"]["events"]) == len(
+        report["event_review"]) == 3
     assert run.raw_output["review_draft"]["events"] == report["review_draft"]["events"]
-    monkeypatch.setattr(agent.Provider, "post", AsyncMock(side_effect=AssertionError("unexpected paid call")))
+    monkeypatch.setattr(agent.Provider, "post", AsyncMock(
+        side_effect=AssertionError("unexpected paid call")))
     await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
     assert run.tokens_input == 200
 
@@ -277,9 +295,9 @@ async def test_previous_evidence_requires_exact_source_plan_and_context(monkeypa
     plan = scene_plan()
     context = {"release": {"id": 22}, "rows": [{"text": "Together?"}]}
     run = SimpleNamespace(id=2, target_node_id=15537, metadata_json={"analysis_plan": plan,
-        "asset_version": "3.8.0", "source_sha256": "same", "file_id": 20, "text_context": context})
+                                                                     "asset_version": "3.8.0", "source_sha256": "same", "file_id": 20, "text_context": context})
     report = SimpleNamespace(id=5, metadata_json={"run_id": 1, "source_sha256": "same", "source_file_id": 20,
-        "events": [{"time": index} for index in range(40)], "identity_tracks": [{"identity": "Lily"}]})
+                                                  "events": [{"time": index} for index in range(40)], "identity_tracks": [{"identity": "Lily"}]})
     previous = SimpleNamespace(status="completed", raw_output={"report_reference_id": 5},
                                metadata_json={"text_context": context})
     db = SimpleNamespace(get=AsyncMock(return_value=previous))
@@ -303,8 +321,10 @@ async def test_temporal_review_rejects_missing_or_mismatched_evidence(runtime):
     payload = result()
     payload["events"][0].update(global_frame=999, evidence_kind="contextual")
     payload["events"][1].update(global_frame=1, evidence_kind="observed")
-    payload["events"][2].update(global_frame=1, evidence_kind="inferred", evidence_frames=[999])
-    errors = agent._temporal_evidence_errors(VideoAnalysisResult.model_validate(payload), ws)
+    payload["events"][2].update(
+        global_frame=1, evidence_kind="inferred", evidence_frames=[999])
+    errors = agent._temporal_evidence_errors(
+        VideoAnalysisResult.model_validate(payload), ws)
     assert any("unknown global_frame" in error for error in errors)
     assert any("contextual source" in error for error in errors)
     assert any("time does not match" in error for error in errors)
@@ -316,8 +336,10 @@ async def test_observed_action_cannot_claim_continuity_across_scene_gap(runtime)
     ws = await workspace(runtime)
     await ws.build_atlases(ws.overview_times(), reason="overview")
     payload = result()
-    payload["story_events"][0].update(evidence_kind="observed", evidence_frames=[1, len(ws.frame_times)])
-    errors = agent._temporal_evidence_errors(VideoAnalysisResult.model_validate(payload), ws)
+    payload["story_events"][0].update(
+        evidence_kind="observed", evidence_frames=[1, len(ws.frame_times)])
+    errors = agent._temporal_evidence_errors(
+        VideoAnalysisResult.model_validate(payload), ws)
     assert any("crosses a scene gap" in error for error in errors)
 
 
@@ -332,7 +354,8 @@ async def test_story_events_must_follow_timeline(runtime):
         {"title": "Earlier", "summary": "Earlier action", "time_start": 2, "time_end": 2,
          "evidence_kind": "observed", "evidence_frames": [1]},
     ]
-    errors = agent._temporal_evidence_errors(VideoAnalysisResult.model_validate(payload), ws)
+    errors = agent._temporal_evidence_errors(
+        VideoAnalysisResult.model_validate(payload), ws)
     assert "story events must be chronological" in errors
 
 
@@ -349,7 +372,8 @@ def test_evidence_frames_are_ordered_by_time_not_frame_number():
 
 
 def test_order_evidence_frames_expands_intervals_to_cover_known_evidence_frames():
-    ws = SimpleNamespace(frame_times={76: 149.958, 77: 151.958, 78: 153.957, 79: 155.957, 80: 157.957}, duration=180.0)
+    ws = SimpleNamespace(frame_times={
+                         76: 149.958, 77: 151.958, 78: 153.957, 79: 155.957, 80: 157.957}, duration=180.0)
     payload = {
         "summary": "scene",
         "events": [{
@@ -379,13 +403,16 @@ def test_order_evidence_frames_expands_intervals_to_cover_known_evidence_frames(
             "evidence_frames": [76, 80],
         }],
     }
-    ordered = agent._order_evidence_frames(payload, ws, normalize_intervals=True)
+    ordered = agent._order_evidence_frames(
+        payload, ws, normalize_intervals=True)
     assert ordered["events"][0]["time_end"] == pytest.approx(157.957)
     assert ordered["story_events"][0]["time_start"] == pytest.approx(149.958)
     assert ordered["story_events"][0]["time_end"] == pytest.approx(157.957)
-    assert ordered["identity_tracks"][0]["time_start"] == pytest.approx(149.958)
+    assert ordered["identity_tracks"][0]["time_start"] == pytest.approx(
+        149.958)
     assert ordered["identity_tracks"][0]["time_end"] == pytest.approx(157.957)
-    assert agent._temporal_evidence_errors(VideoAnalysisResult.model_validate(ordered), ws) == []
+    assert agent._temporal_evidence_errors(
+        VideoAnalysisResult.model_validate(ordered), ws) == []
 
 
 def test_chronological_sort_remaps_review_indices():
@@ -393,10 +420,12 @@ def test_chronological_sort_remaps_review_indices():
     original = {"events": [{"time": 20}, {"time": 10}],
                 "story_events": [{"time_start": 20}, {"time_start": 10}],
                 "event_review": [{"draft_index": 0, "final_indices": [0, 1]}]}
-    result = agent._order_evidence_frames(original, ws, order_events=True, order_story_events=True)
+    result = agent._order_evidence_frames(
+        original, ws, order_events=True, order_story_events=True)
     assert [event["time"] for event in result["events"]] == [10, 20]
     assert result["event_review"][0]["final_indices"] == [1, 0]
-    assert [event["time_start"] for event in result["story_events"]] == [10, 20]
+    assert [event["time_start"]
+            for event in result["story_events"]] == [10, 20]
     assert original["event_review"][0]["final_indices"] == [0, 1]
 
 
@@ -410,22 +439,25 @@ def test_review_requires_each_draft_event_and_identity_to_be_accounted_for():
     final = VideoAnalysisResult.model_validate(payload)
     assert len(agent._review_evidence_errors(draft, final, ws)) == 2
     final = VideoAnalysisResult.model_validate({**payload,
-        "event_review": [{"draft_index": 0, "status": "retained", "final_indices": [0]}],
-        "identity_review": [{"draft_index": 0, "status": "retained", "final_indices": [0]}]})
+                                                "event_review": [{"draft_index": 0, "status": "retained", "final_indices": [0]}],
+                                                "identity_review": [{"draft_index": 0, "status": "retained", "final_indices": [0]}]})
     assert agent._review_evidence_errors(draft, final, ws) == []
     final.events[0].observation = "One person stands"
-    assert any("changed wording" in error for error in agent._review_evidence_errors(draft, final, ws))
+    assert any("changed wording" in error for error in agent._review_evidence_errors(
+        draft, final, ws))
     final.event_review[0].status = "revised"
     final.event_review[0].reason = "The second figure was background"
     final.event_review[0].evidence_frames = [2]
     assert agent._review_evidence_errors(draft, final, ws) == []
     final.identity_tracks[0].identity = "Another person"
-    assert any("changed identity" in error for error in agent._review_evidence_errors(draft, final, ws))
+    assert any("changed identity" in error for error in agent._review_evidence_errors(
+        draft, final, ws))
     final.identity_review[0].status = "disputed"
     final.identity_review[0].final_indices = []
     final.identity_review[0].reason = "Different appearance"
     final.identity_review[0].evidence_frames = [3]
-    assert any("nearby frames" in error for error in agent._review_evidence_errors(draft, final, ws))
+    assert any("nearby frames" in error for error in agent._review_evidence_errors(
+        draft, final, ws))
     final.identity_review[0].evidence_frames = [2]
     assert agent._review_evidence_errors(draft, final, ws) == []
 
@@ -454,7 +486,8 @@ def test_review_revised_falls_back_to_target_evidence_and_allows_distant_confirm
 
 
 def test_temporal_evidence_rejects_adjacent_duplicate_observations():
-    ws = SimpleNamespace(frame_times={1: 38.0, 2: 39.0, 3: 45.0}, duration=60.0)
+    ws = SimpleNamespace(
+        frame_times={1: 38.0, 2: 39.0, 3: 45.0}, duration=60.0)
     dup = VideoAnalysisResult.model_validate({
         "summary": "scene",
         "events": [
@@ -482,7 +515,8 @@ def test_temporal_evidence_rejects_adjacent_duplicate_observations():
 
 def test_temporal_evidence_enforces_ending_coverage_and_rover_dialogue_identity():
     ws = SimpleNamespace(frame_times={1: 153.957, 2: 168.0}, duration=180.0)
-    context = {"dialogue_lines": [{"speaker": "{PlayerName}", "text": "Sorry. The Tacet Discords held me up.", "node_id": 7987613}]}
+    context = {"dialogue_lines": [
+        {"speaker": "{PlayerName}", "text": "Sorry. The Tacet Discords held me up.", "node_id": 7987613}]}
     truncated = VideoAnalysisResult.model_validate({
         "summary": "scene",
         "events": [
@@ -523,21 +557,26 @@ def test_order_evidence_frames_backfills_off_by_one_trailing_event_review():
     draft = VideoAnalysisResult.model_validate({
         "summary": "scene",
         "events": [
-            {"time": 10.0, "global_frame": 1, "observation": "First action", "confidence": "observed", "evidence_kind": "observed"},
-            {"time": 20.0, "global_frame": 2, "observation": "The image fades to black and remains black.", "confidence": "observed", "evidence_kind": "observed"},
+            {"time": 10.0, "global_frame": 1, "observation": "First action",
+                "confidence": "observed", "evidence_kind": "observed"},
+            {"time": 20.0, "global_frame": 2, "observation": "The image fades to black and remains black.",
+                "confidence": "observed", "evidence_kind": "observed"},
         ],
     })
     raw_final = {
         "summary": "scene",
         "events": [
-            {"time": 10.0, "global_frame": 1, "observation": "First action", "confidence": "observed", "evidence_kind": "observed"},
-            {"time": 20.0, "global_frame": 2, "evidence_frames": [2], "observation": "The image fades to black; no further action.", "confidence": "observed", "evidence_kind": "observed"},
+            {"time": 10.0, "global_frame": 1, "observation": "First action",
+                "confidence": "observed", "evidence_kind": "observed"},
+            {"time": 20.0, "global_frame": 2, "evidence_frames": [
+                2], "observation": "The image fades to black; no further action.", "confidence": "observed", "evidence_kind": "observed"},
         ],
         "event_review": [
             {"draft_index": 0, "status": "retained", "final_indices": [0]},
         ],
     }
-    ordered = agent._order_evidence_frames(raw_final, ws, order_events=True, normalize_intervals=True, draft=draft)
+    ordered = agent._order_evidence_frames(
+        raw_final, ws, order_events=True, normalize_intervals=True, draft=draft)
     final = VideoAnalysisResult.model_validate(ordered)
     assert len(final.event_review) == 2
     assert final.event_review[1].draft_index == 1
@@ -550,7 +589,8 @@ def test_order_evidence_frames_auto_upgrades_retained_reworded_events_and_unback
     draft = VideoAnalysisResult.model_validate({
         "summary": "scene",
         "events": [
-            {"time": 10.0, "global_frame": 1, "observation": "Two figures stand in the field", "confidence": "observed", "evidence_kind": "observed"},
+            {"time": 10.0, "global_frame": 1, "observation": "Two figures stand in the field",
+                "confidence": "observed", "evidence_kind": "observed"},
         ],
     })
     raw_final = {
@@ -568,7 +608,8 @@ def test_order_evidence_frames_auto_upgrades_retained_reworded_events_and_unback
             {"draft_index": 0, "status": "retained", "final_indices": [0]},
         ],
     }
-    ordered = agent._order_evidence_frames(raw_final, ws, order_events=True, normalize_intervals=True, draft=draft)
+    ordered = agent._order_evidence_frames(
+        raw_final, ws, order_events=True, normalize_intervals=True, draft=draft)
     final = VideoAnalysisResult.model_validate(ordered)
     assert final.event_review[0].status == "revised"
     assert final.event_review[0].evidence_frames == [1]
@@ -589,7 +630,8 @@ async def test_finish_errors_are_saved_and_retries_bounded(runtime, monkeypatch)
         await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
     assert post.await_count == agent.MAX_FINISH_CORRECTIONS + 1
     assert run.raw_output["finish_diagnostics"]["0:0"]["error"] == "invalid_finish_arguments"
-    assert run.raw_output["finish_diagnostics"]["0:0"]["details"][0]["field"] == ["identity_tracks", 0, "basis"]
+    assert run.raw_output["finish_diagnostics"]["0:0"]["details"][0]["field"] == [
+        "identity_tracks", 0, "basis"]
     assert run.raw_output["finish_diagnostics"]["1:0"]["duplicate_payload"] is True
 
     valid = result()
@@ -606,13 +648,15 @@ async def test_character_reference_is_sent_to_model_and_replayed(runtime, monkey
     from wuwa_story_worker import video_identity
 
     db, run, settings, storage, _, _, _ = runtime
-    reference = AsyncMock(return_value=({"reference_id": 7, "sha256": "stable"}, jpeg()))
+    reference = AsyncMock(return_value=(
+        {"reference_id": 7, "sha256": "stable"}, jpeg()))
     monkeypatch.setattr(video_identity, "character_reference_image", reference)
     post = AsyncMock(side_effect=[response("get_character_reference_image", {"reference_id": 7}),
                                   response("finish_video_analysis", {**result(), "preview_candidates": []})])
     monkeypatch.setattr(agent.Provider, "post", post)
     await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
-    assert "Requested character reference images" in json.dumps(post.await_args_list[1].args[-1])
+    assert "Requested character reference images" in json.dumps(
+        post.await_args_list[1].args[-1])
     assert run.raw_output["tool_results"]["0:0"]["output"]["reference_id"] == 7
     post.reset_mock()
     await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
@@ -646,14 +690,16 @@ async def test_region_inspection_uses_original_video_and_rejects_invalid_crop(tm
 @pytest.mark.asyncio
 async def test_region_inspection_is_sent_to_model_and_replayed(runtime, monkeypatch):
     db, run, settings, storage, _, _, _ = runtime
-    crop = AsyncMock(return_value=({"global_frame": 1, "sha256": "stable"}, jpeg()))
+    crop = AsyncMock(return_value=(
+        {"global_frame": 1, "sha256": "stable"}, jpeg()))
     monkeypatch.setattr(agent.VideoWorkspace, "inspect_region", crop)
     post = AsyncMock(side_effect=[response("inspect_video_region", {"global_frame": 1, "bbox": [0, 0, 1, 1]}),
                                   response("finish_video_analysis", {**result(), "preview_candidates": []})])
     monkeypatch.setattr(agent.Provider, "post", post)
     await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
     assert "video region crops" in json.dumps(post.await_args_list[1].args[-1])
-    report = next(ref.metadata_json for ref in db.refs if ref.reference_type == "cutscene_visual_description")
+    report = next(ref.metadata_json for ref in db.refs if ref.reference_type ==
+                  "cutscene_visual_description")
     assert report["analysis_metrics"]["spatial_inspections"] == 1
     post.reset_mock()
     await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
@@ -667,7 +713,8 @@ async def test_overview_keeps_short_unique_parts_and_never_samples_gap(runtime):
     ws = await workspace(runtime)
     times = ws.overview_times()
     assert len(times) == 6
-    assert [ws.source_at(t)[3]["segment_index"] for t in times] == [0, 0, 1, 1, 2, 2]
+    assert [ws.source_at(t)[3]["segment_index"]
+            for t in times] == [0, 0, 1, 1, 2, 2]
     for index in range(3):
         segment = ws.sources[index].segment
         assert times[index * 2] == segment["scene_start"]
@@ -680,6 +727,7 @@ async def test_overview_keeps_short_unique_parts_and_never_samples_gap(runtime):
 async def test_source_seek_uses_source_local_time(runtime, monkeypatch):
     ws = await workspace(runtime)
     # Exercise the real decoder command builder independently of the fixture decoder.
+
     async def tool(args, *_):
         assert float(args[args.index("-ss") + 1]) == 6.0
         assert args[args.index("-i") + 1].endswith("source_2.mp4")
@@ -759,6 +807,7 @@ async def test_eof_margin_never_seeks_before_a_short_selected_tail(runtime, monk
     ws = await workspace(runtime)
     _, _, _, source = ws.source_at(9.02)
     assert source["decode_source_time"] == 9.96
+
     async def tool(args, *_):
         assert float(args[args.index("-ss") + 1]) >= segment["source_start"]
         Path(args[-1]).write_bytes(jpeg())
@@ -771,7 +820,8 @@ async def test_recorded_call_replays_after_crash_without_recharge_and_rebuilds_z
     db, run, settings, storage, _, _, _ = runtime
     zoom = response("resample_video_window", {"start_seconds": 6, "end_seconds": 8,
                                               "interval_seconds": 1, "reason": "detail"})
-    db.calls[0] = SimpleNamespace(id=1, status="completed", response=zoom, cost_usd=0.001)
+    db.calls[0] = SimpleNamespace(
+        id=1, status="completed", response=zoom, cost_usd=0.001)
     post = AsyncMock(side_effect=ProviderFailure("simulated_crash"))
     monkeypatch.setattr(agent.Provider, "post", post)
     ws = await workspace(runtime)
@@ -791,17 +841,20 @@ async def test_recorded_call_replays_after_crash_without_recharge_and_rebuilds_z
     assert run.cost == 0.001 and run.tokens_input == 100
     # A response committed before the run checkpoint is accounted once on replay.
     db.calls[1].status = "completed"
-    db.calls[1].response = response("finish_video_analysis", {**result(), "preview_candidates": []})
+    db.calls[1].response = response("finish_video_analysis", {
+                                    **result(), "preview_candidates": []})
     db.calls[1].cost_usd = 0.002
     fresh = await workspace(runtime)
     await agent.run_video_analysis_agent(db, run, settings, fresh, storage, {})
     assert run.status == "completed" and run.cost == pytest.approx(0.003)
     assert run.tokens_input == 200
     post.assert_not_awaited()
-    report_count = len([r for r in db.refs if r.reference_type == "cutscene_visual_description"])
+    report_count = len(
+        [r for r in db.refs if r.reference_type == "cutscene_visual_description"])
     fresh = await workspace(runtime)
     await agent.run_video_analysis_agent(db, run, settings, fresh, storage, {})
-    assert len([r for r in db.refs if r.reference_type == "cutscene_visual_description"]) == report_count == 1
+    assert len([r for r in db.refs if r.reference_type ==
+               "cutscene_visual_description"]) == report_count == 1
     assert run.cost == pytest.approx(0.003) and run.tokens_input == 200
 
 
@@ -815,7 +868,8 @@ async def test_analyze_run_routes_scene_plan_without_single_asset_download(runti
     monkeypatch.setattr(vision, "run_video_analysis_agent", analyze)
     await vision.analyze_run(db, run, settings)
     assert storage.downloads == ["movie0", "movie1", "movie2"]
-    assert isinstance(analyze.await_args.args[3], logical.LogicalVideoWorkspace)
+    assert isinstance(
+        analyze.await_args.args[3], logical.LogicalVideoWorkspace)
 
 
 @pytest.mark.asyncio
@@ -831,22 +885,27 @@ async def test_three_real_videos_keep_distinct_frames_in_one_scene_pool(runtime,
                         f"color={color}:size=160x90:rate=10:duration=8", "-c:v", "libx264",
                         "-pix_fmt", "yuv420p", str(path)], check=True, capture_output=True)
         movies[f"movie{index}"] = path.read_bytes()
-        run.metadata_json["analysis_plan"]["segments"][index]["source_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        run.metadata_json["analysis_plan"]["segments"][index]["source_sha256"] = hashlib.sha256(
+            path.read_bytes()).hexdigest()
 
     class Storage:
         async def get(self, key):
             yield movies[key]
 
     monkeypatch.setattr(logical, "video_duration", ORIGINAL_DURATION)
-    monkeypatch.setattr(agent.VideoWorkspace, "extract_frame", ORIGINAL_EXTRACT)
+    monkeypatch.setattr(agent.VideoWorkspace,
+                        "extract_frame", ORIGINAL_EXTRACT)
     ws = await logical.load_logical_workspace(db, run, settings, Storage(), config, root, Path(ffmpeg))
     entries = await ws.build_atlases(ws.overview_times())
-    assert {entry.layout["source_segment"]["asset_node_id"] for entry in entries} == {10, 11, 12}
+    assert {entry.layout["source_segment"]["asset_node_id"]
+            for entry in entries} == {10, 11, 12}
     for index, scene_time in enumerate((0, 6, 9)):
-        frame_index = next(i for i, time in ws.frame_times.items() if time == scene_time)
+        frame_index = next(
+            i for i, time in ws.frame_times.items() if time == scene_time)
         with Image.open(io.BytesIO(ws.frame_paths[frame_index].read_bytes())) as image:
             pixel = image.getpixel((20, 20))
-        assert pixel[index] > max(pixel[channel] for channel in range(3) if channel != index) + 80
+        assert pixel[index] > max(pixel[channel]
+                                  for channel in range(3) if channel != index) + 80
 
 
 @pytest.mark.asyncio
@@ -857,19 +916,24 @@ async def test_limits_never_publish_partial_or_start_unbounded_requests(runtime,
     post = AsyncMock(return_value=response("identify_atlas_characters", {}))
     monkeypatch.setattr(agent.Provider, "post", post)
     if failure == "budget":
-        monkeypatch.setattr(agent, "reserve", AsyncMock(side_effect=BudgetExceeded("bounded")))
+        monkeypatch.setattr(agent, "reserve", AsyncMock(
+            side_effect=BudgetExceeded("bounded")))
     elif failure == "usage":
         monkeypatch.setattr(agent, "settle", AsyncMock(return_value=False))
     elif failure == "output":
         raw = response("finish_video_analysis", result())
-        raw.update(status="incomplete", incomplete_details={"reason": "max_output_tokens"})
+        raw.update(status="incomplete", incomplete_details={
+                   "reason": "max_output_tokens"})
         post.return_value = raw
     else:
-        monkeypatch.setattr(agent, "_identify_atlas_characters", AsyncMock(return_value={"matches": []}))
+        monkeypatch.setattr(agent, "_identify_atlas_characters",
+                            AsyncMock(return_value={"matches": []}))
     with pytest.raises(ValueError):
         await agent.run_video_analysis_agent(db, run, settings, ws, storage, {})
-    assert not [r for r in db.refs if r.reference_type == "cutscene_visual_description"]
-    assert post.await_count == (0 if failure == "budget" else agent.MAX_AGENT_TURNS if failure == "turns" else 1)
+    assert not [r for r in db.refs if r.reference_type ==
+                "cutscene_visual_description"]
+    assert post.await_count == (
+        0 if failure == "budget" else agent.MAX_AGENT_TURNS if failure == "turns" else 1)
     if failure == "turns":
         post.reset_mock()
         with pytest.raises(ProviderFailure, match="max_turns"):
@@ -905,15 +969,19 @@ async def test_chunked_overview_atlases_and_view_atlases_tool(runtime, monkeypat
         part for part in requests[1]["input"][-1]["content"] if part.get("type") == "input_image"
     ]
     assert len(view1_images) == 2
-    assert run.raw_output["tool_results"]["1:0"]["output"]["already_loaded"] == [3]
-    assert run.raw_output["tool_results"]["1:0"]["output"]["attached_atlas_indices"] == [5]
+    assert run.raw_output["tool_results"]["1:0"]["output"]["already_loaded"] == [
+        3]
+    assert run.raw_output["tool_results"]["1:0"]["output"]["attached_atlas_indices"] == [
+        5]
 
 
 @pytest.mark.asyncio
 async def test_reader_returns_draft_for_revision_and_replays(runtime, monkeypatch):
     db, run, settings, storage, _, _, _ = runtime
-    run.metadata_json.update(temporal_review_version=1, review_evidence_version=1)
-    monkeypatch.setattr(agent, "_previous_scene_evidence", AsyncMock(return_value={"available": False}))
+    run.metadata_json.update(temporal_review_version=1,
+                             review_evidence_version=1)
+    monkeypatch.setattr(agent, "_previous_scene_evidence",
+                        AsyncMock(return_value={"available": False}))
     ws = await workspace(runtime)
     calls = []
 
@@ -921,13 +989,15 @@ async def test_reader_returns_draft_for_revision_and_replays(runtime, monkeypatc
         data = result()
         for event in data["events"]:
             event["observation"] = obs_text if event is data["events"][0] else event["observation"]
-            event["global_frame"] = next(i for i, time in ws.frame_times.items() if time == event["time"])
+            event["global_frame"] = next(
+                i for i, time in ws.frame_times.items() if time == event["time"])
             event["evidence_kind"] = "observed"
         data["story_events"][0].update(
             time_start=6,
             time_end=10,
             evidence_kind="observed",
-            evidence_frames=[data["events"][1]["global_frame"], data["events"][2]["global_frame"]],
+            evidence_frames=[data["events"][1]["global_frame"],
+                             data["events"][2]["global_frame"]],
         )
         return data
 
@@ -947,11 +1017,13 @@ async def test_reader_returns_draft_for_revision_and_replays(runtime, monkeypatc
                 },
             )
         if step == 3:
-            assert "Reader/Editor returned your draft for revision" in json.dumps(payload)
+            assert "Reader/Editor returned your draft for revision" in json.dumps(
+                payload)
             return response("finish_video_analysis", _valid_payload("Vivid emotional opening with tearful gaze"))
         final = _valid_payload("Vivid emotional opening with tearful gaze")
         final["event_review"] = [
-            {"draft_index": index, "status": "retained", "final_indices": [index]}
+            {"draft_index": index, "status": "retained",
+                "final_indices": [index]}
             for index in range(len(final["events"]))
         ]
         final["preview_candidates"] = []
@@ -964,7 +1036,8 @@ async def test_reader_returns_draft_for_revision_and_replays(runtime, monkeypatc
     assert len(run.raw_output["revision_requests"]) == 1
     assert run.raw_output["review_draft"]["events"][0]["observation"] == "Vivid emotional opening with tearful gaze"
 
-    monkeypatch.setattr(agent.Provider, "post", AsyncMock(side_effect=AssertionError("unexpected paid call")))
+    monkeypatch.setattr(agent.Provider, "post", AsyncMock(
+        side_effect=AssertionError("unexpected paid call")))
     replayed = await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
     assert replayed.events[0].observation == "Vivid emotional opening with tearful gaze"
 
@@ -979,14 +1052,16 @@ async def test_verifier_requires_reference_check_for_strong_unknown_candidate(ru
     def _generic_payload():
         data = result()
         for event in data["events"]:
-            event["global_frame"] = next(i for i, time in ws.frame_times.items() if time == event["time"])
+            event["global_frame"] = next(
+                i for i, time in ws.frame_times.items() if time == event["time"])
             event["evidence_kind"] = "observed"
             event["actors"] = ["Unidentified uniformed adult"]
         data["story_events"][0].update(
             time_start=6,
             time_end=10,
             evidence_kind="observed",
-            evidence_frames=[data["events"][1]["global_frame"], data["events"][2]["global_frame"]],
+            evidence_frames=[data["events"][1]["global_frame"],
+                             data["events"][2]["global_frame"]],
         )
         data["preview_candidates"] = []
         return data
@@ -1025,7 +1100,8 @@ async def test_verifier_requires_reference_check_for_strong_unknown_candidate(ru
     async def fake_ref_img(_db, args):
         return {"asset_id": None, "reference_id": args["reference_id"], "sha256": "abc", "mime_type": "image/jpeg"}, jpeg()
 
-    monkeypatch.setattr("wuwa_story_worker.video_identity.character_reference_image", fake_ref_img)
+    monkeypatch.setattr(
+        "wuwa_story_worker.video_identity.character_reference_image", fake_ref_img)
 
     async def post(_, route, payload):
         calls.append(payload)
@@ -1037,7 +1113,8 @@ async def test_verifier_requires_reference_check_for_strong_unknown_candidate(ru
         if step == 3:
             return response("finish_video_analysis", _generic_payload())
         if step == 4:
-            assert "get_character_reference_image(reference_id=1891)" in json.dumps(payload)
+            assert "get_character_reference_image(reference_id=1891)" in json.dumps(
+                payload)
             return response("get_character_reference_image", {"reference_id": 1891})
         resolved = _generic_payload()
         for ev in resolved["events"]:
@@ -1076,7 +1153,8 @@ async def test_unified_search_entities_and_search_lore(runtime, monkeypatch):
     out, _ = await agent._execute_video_tool(
         db,
         ws,
-        ToolCall(id="c1", name="search_entities", arguments={"query": "Cassandra", "category": "character"}),
+        ToolCall(id="c1", name="search_entities", arguments={
+                 "query": "Cassandra", "category": "character"}),
     )
     assert captured_categories["value"] == ["character", "speaker", "npc"]
     assert out["results"][0]["canonical_key"] == "speaker:1696"
@@ -1108,7 +1186,8 @@ async def test_unified_search_entities_and_search_lore(runtime, monkeypatch):
     lore_out, _ = await agent._execute_video_tool(
         db,
         ws,
-        ToolCall(id="c2", name="search_lore", arguments={"query": "Cassandra", "limit": 5}),
+        ToolCall(id="c2", name="search_lore", arguments={
+                 "query": "Cassandra", "limit": 5}),
     )
     assert len(lore_out["results"]) == 1
     assert lore_out["results"][0]["source_type"] == "fandom"
@@ -1127,7 +1206,8 @@ async def test_write_memory_uses_run_id_and_handles_validation_errors(runtime, m
         captured["run_id"] = run_id
         captured["node_id"] = req.node_id
         if req.expected_revision > 0:
-            raise ValueError("Memory revision conflict; read the current entry before updating")
+            raise ValueError(
+                "Memory revision conflict; read the current entry before updating")
         return {"key": f"run:{run_id}:{req.key}", "revision": 1}
 
     monkeypatch.setattr(agent_workspace, "save_memory", fake_save_memory)
@@ -1138,12 +1218,14 @@ async def test_write_memory_uses_run_id_and_handles_validation_errors(runtime, m
         if len(calls) == 1:
             return response(
                 "write_memory",
-                {"key": "timeline_anchor", "scope": "short", "text": "Opening note", "node_id": 0},
+                {"key": "timeline_anchor", "scope": "short",
+                    "text": "Opening note", "node_id": 0},
             )
         if len(calls) == 2:
             return response(
                 "write_memory",
-                {"key": "timeline_anchor", "scope": "short", "text": "Bad rev", "expected_revision": 9},
+                {"key": "timeline_anchor", "scope": "short",
+                    "text": "Bad rev", "expected_revision": 9},
             )
         return response("finish_video_analysis", result())
 
@@ -1153,3 +1235,133 @@ async def test_write_memory_uses_run_id_and_handles_validation_errors(runtime, m
     assert captured["node_id"] is None
     assert run.raw_output["tool_results"]["0:0"]["output"]["revision"] == 1
     assert "conflict" in run.raw_output["tool_results"]["1:0"]["output"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_estimate_input_tokens_excludes_unattached_phase_images(runtime):
+    ws = await workspace(runtime)
+    await ws.build_atlases(ws.overview_times(), reason="overview")
+    assert len(ws.atlases) >= 1
+    base_text = "Review draft " * 1500
+    text_only_payload = [{"role": "user", "content": [
+        {"type": "input_text", "text": base_text}]}]
+    # Even when workspace has atlases and prior extra_images, an empty-image turn must not bill them.
+    est_empty = agent._estimate_input_tokens(
+        text_only_payload, ws.atlases, extra_images=12)
+    assert est_empty < 8192
+
+    import base64
+    b64 = base64.b64encode(ws.atlases[0].image_bytes).decode("ascii")
+    with_atlas = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": base_text},
+                {"type": "input_image", "image_url": f"data:image/jpeg;base64,{b64}"},
+            ],
+        }
+    ]
+    est_with_atlas = agent._estimate_input_tokens(
+        with_atlas, ws.atlases, extra_images=12)
+    assert est_with_atlas > est_empty
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("exc_factory", "expected_status", "expected_sub"),
+    [
+        (
+            lambda: __import__("wuwa_story.agents.budget", fromlist=["ContextLimitExceeded"]).ContextLimitExceeded(
+                "Input context exceeds the configured token bound: estimated=260000, limit=250000"
+            ),
+            "paused_context",
+            "estimated=260000",
+        ),
+        (
+            lambda: __import__("wuwa_story.agents.budget", fromlist=["BudgetExceeded"]).BudgetExceeded(
+                "Daily USD budget cannot cover next request: spent=0.99, held=0, requested=0.05, limit=1"
+            ),
+            "paused_budget",
+            "Daily USD budget cannot cover next request",
+        ),
+    ],
+)
+async def test_process_cutscene_vision_distinguishes_context_and_budget_pauses(
+    monkeypatch, exc_factory, expected_status, expected_sub
+):
+    from contextlib import asynccontextmanager
+
+    from wuwa_story.agents.settings import AgentSettings
+
+    from wuwa_story_worker import cutscene_vision as cv
+
+    run = SimpleNamespace(
+        id=999,
+        processor_id=1,
+        target_node_id=10,
+        status="pending",
+        error=None,
+        metadata_json={
+            "settings": AgentSettings(_env_file=None, api_key="k", daily_budget_usd=1).public_config()
+        },
+    )
+    proc = SimpleNamespace(id=1, key="cutscene_vision")
+
+    class _FakeConn:
+        async def scalar(self, *args, **kwargs):
+            return True
+
+        async def execute(self, *args, **kwargs):
+            return None
+
+        async def commit(self):
+            return None
+
+    class _FakeSession:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def get(self, model, key):
+            return proc if getattr(model, "__name__", "") == "Processor" else run
+
+        async def commit(self):
+            return None
+
+    @asynccontextmanager
+    async def _connect():
+        yield _FakeConn()
+
+    monkeypatch.setattr(cv, "engine", SimpleNamespace(connect=_connect))
+    monkeypatch.setattr(cv, "AsyncSession", _FakeSession)
+    monkeypatch.setattr(
+        cv,
+        "get_agent_settings",
+        lambda: AgentSettings(
+            _env_file=None, api_key="k", daily_budget_usd=1, vision_enabled=True
+        ),
+    )
+    monkeypatch.setattr(
+        cv,
+        "load_effective_agent_settings",
+        AsyncMock(
+            return_value=AgentSettings(
+                _env_file=None, api_key="k", daily_budget_usd=1, vision_enabled=True
+            )
+        ),
+    )
+    monkeypatch.setattr(cv, "agent_db_override_fields",
+                        AsyncMock(return_value={}))
+
+    async def _raise_exc(*_args, **_kwargs):
+        raise exc_factory()
+
+    monkeypatch.setattr(cv, "analyze_run", _raise_exc)
+    await cv.process_cutscene_vision({"run_id": 999})
+    assert run.status == expected_status
+    assert expected_sub in run.error

@@ -1080,33 +1080,47 @@ async def _publish_cutscene_knowledge(
             )
 
 
+def _atlas_image_tokens(entry: AtlasEntry) -> int:
+    return max(
+        2048,
+        math.ceil(int(entry.layout.get("width", 1280)) / 16)
+        * math.ceil(int(entry.layout.get("height", 720)) / 16)
+        * 2,
+    )
+
+
 def _estimate_input_tokens(payload: Any, atlases: list[AtlasEntry], *, extra_images: int = 0) -> int:
-    """Estimate text tokens without counting raw base64 image bytes, plus per-atlas image tokens."""
+    """Estimate text tokens without counting raw base64 bytes, plus tokens for images in payload."""
+    atlas_tokens_by_b64: dict[str, int] = {}
+    for entry in atlases:
+        if getattr(entry, "image_bytes", None):
+            b64 = base64.b64encode(entry.image_bytes).decode("ascii")
+            atlas_tokens_by_b64[b64] = _atlas_image_tokens(entry)
+
+    image_tokens = 0
+
     def _strip_images(obj: Any) -> Any:
+        nonlocal image_tokens
         if isinstance(obj, str):
             if obj.startswith("data:image/"):
+                _, _, encoded = obj.partition("base64,")
+                image_tokens += atlas_tokens_by_b64.get(encoded, 8192)
                 return "<image>"
             return obj
         if isinstance(obj, list):
             return [_strip_images(item) for item in obj]
         if isinstance(obj, dict):
             if obj.get("type") == "image" and "source" in obj:
+                source = obj.get("source")
+                encoded = source.get("data", "") if isinstance(source, dict) else ""
+                image_tokens += atlas_tokens_by_b64.get(str(encoded), 8192)
                 return {"type": "image", "source": "<image>"}
             return {k: _strip_images(v) for k, v in obj.items()}
         return obj
 
     text_len = len(json.dumps(_strip_images(payload), ensure_ascii=False, default=str))
-    image_tokens = sum(
-        max(
-            2048,
-            math.ceil(int(entry.layout.get("width", 1280)) / 16)
-            * math.ceil(int(entry.layout.get("height", 720)) / 16)
-            * 2,
-        )
-        for entry in atlases
-    )
-    # Reference and region images are bounded to 1024x1024 pixels.
-    return max(4096, text_len // 4 + image_tokens + extra_images * 8192 + 1024)
+    _ = extra_images
+    return max(4096, text_len // 4 + image_tokens + 1024)
 
 
 def _temporal_evidence_errors(result: VideoAnalysisResult, workspace: VideoWorkspace,

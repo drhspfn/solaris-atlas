@@ -18,6 +18,7 @@ from wuwa_story.admin.cutscene_analysis import CutsceneAnalysisView
 from wuwa_story.admin.cutscenes import CutsceneData
 from wuwa_story.admin.event_periods import EventPeriods
 from wuwa_story.admin.operations import DataOperationsView
+from wuwa_story.admin.settings_view import SettingsView
 from wuwa_story.admin.story_agent import StoryAgentView
 from wuwa_story.admin.views import (
     Alerts,
@@ -85,6 +86,7 @@ def install_admin(app: Starlette, engine: AsyncEngine, settings: Settings | None
         DataOperationsView(),
         StoryAgentView(),
         CutsceneAnalysisView(),
+        SettingsView(),
     ]))
     admin.add_view(VisualMemory())
     admin.add_view(DropDown("Agent", views=[
@@ -137,7 +139,8 @@ def install_admin(app: Starlette, engine: AsyncEngine, settings: Settings | None
                  "id node_id document_type title revision plain_text", "documents", ["title"]),
         readonly(GameEvent, "Events", "id title source event_kind",
                  "events", ["title"]),
-        EventPeriods(GameEventOccurrence, label="Event periods", identity="event-periods"),
+        EventPeriods(GameEventOccurrence, label="Event periods",
+                     identity="event-periods"),
         readonly(GameNotice, "Notices",
                  "id title feed locale category", "notices", ["title"]),
         readonly(Locale, "Locales", "id code name",

@@ -1,7 +1,8 @@
 """Direct SQLAlchemy ModelViews. The library supplies all CRUD, forms and tables."""
 
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -26,11 +27,11 @@ from wuwa_story.admin.services import prepare_user, record
 from wuwa_story.agents.audit import redacted
 from wuwa_story.agents.contracts import AnalysisRequest
 from wuwa_story.agents.jobs import enqueue_analysis, resume_analysis
-from wuwa_story.agents.settings import get_agent_settings
+from wuwa_story.agents.settings import get_agent_settings, load_effective_agent_settings
 from wuwa_story.agents.workspace import MemoryWrite, save_memory
 from wuwa_story.auth.services import now_utc
 from wuwa_story.db.models.agent_workspace import AgentMemory, AgentWorkItem
-from wuwa_story.db.models.agents import AgentJob, AgentNote
+from wuwa_story.db.models.agents import AgentDailyUsage, AgentJob, AgentNote
 from wuwa_story.db.models.auth import AuthSession
 from wuwa_story.db.models.content import DocumentHead
 from wuwa_story.db.models.core import Quest
@@ -97,17 +98,74 @@ class ReadOnly(ModelView):
         return super().handle_exception(exc)
 
 
+def _parse_usage_day(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        pass
+    for fmt in ("%B %d, %Y", "%b %d, %Y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 class BudgetUsage(ReadOnly):
     fields = ["day", "spent_usd", "reserved_usd",
               "spent_tokens", "reserved_tokens"]
     fields_default_sort = [("day", True)]
     list_template = "budget_usage.html"
 
-    def budget_info(self) -> dict[str, Any]:
-        settings = get_agent_settings()
+    async def get_all_actions(self, request: Request) -> Sequence[str]:
+        session = getattr(request.state, "session", None)
+        if session is not None:
+            request.state.budget_settings = await load_effective_agent_settings(
+                session, get_agent_settings()
+            )
+        return await super().get_all_actions(request)
+
+    async def find_by_pk(self, request: Request, pk: Any) -> Any:
+        parsed_day = _parse_usage_day(pk)
+        if parsed_day is None:
+            return None
+        session = request.state.session
+        stmt = self.get_details_query(request).where(
+            AgentDailyUsage.day == parsed_day)
+        return (await session.execute(stmt)).scalars().unique().one_or_none()
+
+    async def find_by_pks(self, request: Request, pks: list[Any]) -> Sequence[Any]:
+        if len(pks) > 100:
+            raise HTTPException(422, "Select at most 100 records.")
+        days = [day for pk in pks if (day := _parse_usage_day(pk)) is not None]
+        if not days:
+            return []
+        session = request.state.session
+        stmt = self.get_details_query(request).where(
+            AgentDailyUsage.day.in_(days))
+        return list((await session.execute(stmt)).scalars().unique().all())
+
+    async def serialize_field_value(
+        self, value: Any, field: BaseField, action: RequestAction, request: Request
+    ) -> Any:
+        if isinstance(value, Decimal):
+            return f"{value:.8f}"
+        return await super().serialize_field_value(value, field, action, request)
+
+    def budget_info(self, request: Request | None = None) -> dict[str, Any]:
+        settings = getattr(getattr(request, "state", None),
+                           "budget_settings", None) or get_agent_settings()
         return {
             "daily_budget_usd": settings.daily_budget_usd,
             "daily_token_limit": settings.daily_token_limit,
+            "max_input_tokens": settings.max_input_tokens,
             "timezone": settings.budget_timezone,
             "today": datetime.now(UTC).astimezone(ZoneInfo(settings.budget_timezone)).date(),
         }

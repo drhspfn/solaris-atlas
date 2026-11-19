@@ -1,11 +1,21 @@
 {% extends "list.html" %} {% import "components.html" as ui %} {% block content
-%} {% set budget = model.budget_info() %}
+%} {% set budget = model.budget_info(request) if request is defined else
+model.budget_info() %}
 <div class="container-fluid">
   <section class="sa-budget" aria-labelledby="budget-overview-title">
-    <span class="sa-budget__eyebrow">Agent operations / Accounting</span>
-    <h2 class="sa-budget__title" id="budget-overview-title">
-      Daily budget overview
-    </h2>
+    <div
+      class="d-flex flex-wrap justify-content-between align-items-start gap-2"
+    >
+      <div>
+        <span class="sa-budget__eyebrow">Agent operations / Accounting</span>
+        <h2 class="sa-budget__title" id="budget-overview-title">
+          Daily budget overview
+        </h2>
+      </div>
+      <a href="/console/settings" class="btn btn-sm btn-outline-primary">
+        Configure limits in Settings
+      </a>
+    </div>
     <p class="sa-budget__intro">
       Monitor the daily limit and the ledger of provider charges and outstanding
       reservations.
@@ -14,8 +24,9 @@
       {{ ui.metric("Daily budget", "$" ~ budget.daily_budget_usd, "Maximum per
       budget day") }} {{ ui.metric("Token limit",
       "{:,}".format(budget.daily_token_limit) if budget.daily_token_limit else
-      "No separate cap", "Per budget day") }} {{ ui.metric("Budget day",
-      budget.today, budget.timezone) }}
+      "No separate cap", "Per budget day") }} {{ ui.metric("Max input tokens",
+      "{:,}".format(budget.max_input_tokens), "Per request ceiling") }} {{
+      ui.metric("Budget day", budget.today, budget.timezone) }}
     </div>
     <p class="sa-budget__note">
       Costs include the safety margin. Reservations remain held until billing is

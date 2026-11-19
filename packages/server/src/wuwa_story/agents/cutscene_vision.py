@@ -29,9 +29,11 @@ MIN_VISUAL_SECONDS = 5.0
 class VideoEntityLink(BaseModel):
     model_config = ConfigDict(extra="forbid")
     target_node_id: int | None = Field(default=None, gt=0)
-    canonical_key: str | None = Field(default=None, min_length=1, max_length=256)
+    canonical_key: str | None = Field(
+        default=None, min_length=1, max_length=256)
     target_name: str = Field(min_length=1, max_length=200)
-    kind: Literal["character", "item", "location", "event", "quest", "lore_topic"]
+    kind: Literal["character", "item", "location",
+                  "event", "quest", "lore_topic"]
     relation: Literal[
         "appears_in",
         "uses_item",
@@ -115,16 +117,23 @@ class VideoReviewDecision(BaseModel):
 
 class VideoAnalysisResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    title: str | None = Field(default=None, min_length=1, max_length=120, pattern=r"^[^\r\n]+$")
+    title: str | None = Field(
+        default=None, min_length=1, max_length=120, pattern=r"^[^\r\n]+$")
     summary: str = Field(min_length=1, max_length=1600)
     events: list[VideoAnalysisEvent] = Field(min_length=1, max_length=200)
-    story_events: list[VideoStoryEvent] = Field(default_factory=list, max_length=32)
-    entity_links: list[VideoEntityLink] = Field(default_factory=list, max_length=64)
+    story_events: list[VideoStoryEvent] = Field(
+        default_factory=list, max_length=32)
+    entity_links: list[VideoEntityLink] = Field(
+        default_factory=list, max_length=64)
     lore_topics: list[str] = Field(default_factory=list, max_length=32)
-    preview_candidates: list[VideoPreviewCandidate] = Field(default_factory=list, max_length=5)
-    identity_tracks: list[VideoIdentityTrack] = Field(default_factory=list, max_length=64)
-    event_review: list[VideoReviewDecision] = Field(default_factory=list, max_length=200)
-    identity_review: list[VideoReviewDecision] = Field(default_factory=list, max_length=64)
+    preview_candidates: list[VideoPreviewCandidate] = Field(
+        default_factory=list, max_length=5)
+    identity_tracks: list[VideoIdentityTrack] = Field(
+        default_factory=list, max_length=64)
+    event_review: list[VideoReviewDecision] = Field(
+        default_factory=list, max_length=200)
+    identity_review: list[VideoReviewDecision] = Field(
+        default_factory=list, max_length=64)
 
     @field_validator("title", mode="before")
     @classmethod
@@ -154,8 +163,10 @@ def dynamic_sampling_plan(duration: float, settings: AgentSettings) -> dict[str,
     elif duration <= 300.0:
         overview_interval = base_interval
     else:
-        overview_interval = max(base_interval, round(duration / max(24, settings.vision_max_frames // 2), 2))
-    max_overview_frames = min(settings.vision_max_frames, max(12, math.ceil(duration / overview_interval) + 1))
+        overview_interval = max(base_interval, round(
+            duration / max(24, settings.vision_max_frames // 2), 2))
+    max_overview_frames = min(settings.vision_max_frames, max(
+        12, math.ceil(duration / overview_interval) + 1))
     soft_zoom_frames = min(48, max(16, round(min(duration, 120.0) * 0.4)))
     return {
         "overview_interval": overview_interval,
@@ -180,7 +191,8 @@ def validate_resample_request(
     if not (math.isfinite(start_seconds) and math.isfinite(end_seconds) and math.isfinite(interval_seconds)):
         raise ValueError("Sampling bounds and interval must be finite")
     if start_seconds < 0 or end_seconds <= start_seconds or start_seconds >= duration:
-        raise ValueError(f"Invalid time window [{start_seconds}, {end_seconds}] for duration {duration:.2f}s")
+        raise ValueError(
+            f"Invalid time window [{start_seconds}, {end_seconds}] for duration {duration:.2f}s")
     if not 0.1 <= interval_seconds <= 30.0:
         raise ValueError("interval_seconds must be between 0.1 and 30.0")
     clamped_end = min(duration, end_seconds)
@@ -243,8 +255,10 @@ class VisualBatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     summary: str = Field(min_length=1, max_length=800)
     events: list[VisualEvent] = Field(min_length=1, max_length=64)
-    preview_candidates: list[PreviewCandidate] = Field(default_factory=list, max_length=3)
-    title: str | None = Field(default=None, min_length=1, max_length=120, pattern=r"^[^\r\n]+$")
+    preview_candidates: list[PreviewCandidate] = Field(
+        default_factory=list, max_length=3)
+    title: str | None = Field(
+        default=None, min_length=1, max_length=120, pattern=r"^[^\r\n]+$")
 
     @field_validator("title", mode="before")
     @classmethod
@@ -300,7 +314,8 @@ def validate_description(
     description: CutsceneDescription, metadata: dict, read_indices: list[int], source_context: dict | None = None
 ) -> None:
     if set(read_indices) != set(range(len(metadata["events"]))):
-        raise ValueError("Read every visual page before describing the whole cutscene")
+        raise ValueError(
+            "Read every visual page before describing the whole cutscene")
     indices = [
         *description.observation_indices,
         *[i for chapter in description.chapters for i in chapter.observation_indices],
@@ -314,13 +329,15 @@ def validate_description(
             or chapter.end <= chapter.start
             or chapter.end > metadata["duration"]
         ):
-            raise ValueError("Cutscene chapters must have ordered, nonoverlapping valid times")
+            raise ValueError(
+                "Cutscene chapters must have ordered, nonoverlapping valid times")
         previous_end = chapter.end
         if any(
             not chapter.start <= metadata["events"][i]["time"] <= chapter.end
             for i in chapter.observation_indices
         ):
-            raise ValueError("Chapter observations must fall inside its time range")
+            raise ValueError(
+                "Chapter observations must fall inside its time range")
     previous_start = 0.0
     for event in description.narrative_events:
         if event.start < previous_start or event.end <= event.start or event.end > metadata["duration"]:
@@ -328,18 +345,22 @@ def validate_description(
         previous_start = event.start
         if any(i not in read_indices or not event.start <= metadata["events"][i]["time"] <= event.end
                for i in event.observation_indices):
-            raise ValueError("Narrative event must cite read visual observations within its interval")
+            raise ValueError(
+                "Narrative event must cite read visual observations within its interval")
         for citation in event.citations:
-            sources = (source_context or {}).get("captions" if citation.source_kind == "caption" else "dialogue_lines", [])
+            sources = (source_context or {}).get(
+                "captions" if citation.source_kind == "caption" else "dialogue_lines", [])
             matches = [row for row in sources if row.get("node_id") == citation.node_id
                        and citation.quote in (row.get("text") or "")]
             if not matches:
-                raise ValueError("Narrative citation must quote the pinned scene source exactly")
+                raise ValueError(
+                    "Narrative citation must quote the pinned scene source exactly")
             if citation.source_kind == "caption" and not any(
                 row.get("timing_basis") == "source_caption"
                 and row["start_seconds"] < event.end and row["end_seconds"] > event.start for row in matches
             ):
-                raise ValueError("Narrative caption must overlap the event in scene time")
+                raise ValueError(
+                    "Narrative caption must overlap the event in scene time")
 
 
 async def enqueue_visual_job(
@@ -360,10 +381,12 @@ async def enqueue_visual_job(
                 ProcessingRun.metadata_json["ignored_alternative_asset_node_ids"].contains([reference.owner_node_id])),
         ).limit(1))
         if logical:
-            raise ValueError("A logical scene analysis already exists for this video; reconcile it first")
+            raise ValueError(
+                "A logical scene analysis already exists for this video; reconcile it first")
     file = await session.get(FileObject, reference.file_id)
     if file is None or file.sha256 is None:
-        raise ValueError("Visual analysis needs a content-addressed published video")
+        raise ValueError(
+            "Visual analysis needs a content-addressed published video")
     text_context = await video_context_snapshot(session, reference, context=context)
     config = settings.public_config()
     report = None
@@ -389,7 +412,8 @@ async def enqueue_visual_job(
         ).encode()
     ).digest()
     await session.execute(
-        text("SELECT pg_advisory_xact_lock(:key)"), {"key": int.from_bytes(identity[:7], "big")}
+        text("SELECT pg_advisory_xact_lock(:key)"), {
+            "key": int.from_bytes(identity[:7], "big")}
     )
     await session.execute(
         insert(Processor)
@@ -434,8 +458,10 @@ async def visual_reference(session: AsyncSession, asset_id: int, version: str | 
         select(FileReference)
         .where(
             FileReference.owner_node_id == asset_id,
-            FileReference.reference_type.in_(publication_types("cutscene_video")),
-            *([FileReference.metadata_json["asset_version"].astext == version] if version else []),
+            FileReference.reference_type.in_(
+                publication_types("cutscene_video")),
+            *([FileReference.metadata_json["asset_version"].astext ==
+              version] if version else []),
         )
         .order_by(publication_order(FileReference.reference_type), FileReference.id.desc())
         .limit(1)
@@ -450,7 +476,8 @@ async def visual_reference(session: AsyncSession, asset_id: int, version: str | 
         .where(
             FileReference.owner_node_id == asset_id,
             FileReference.reference_type == "cutscene_visual_description",
-            FileReference.metadata_json["source_sha256"].astext == file.sha256.hex(),
+            FileReference.metadata_json["source_sha256"].astext == file.sha256.hex(
+            ),
             FileReference.metadata_json["asset_version"].astext
             == video.metadata_json["asset_version"],
             FileReference.metadata_json["complete"].as_boolean().is_(True),
@@ -472,6 +499,7 @@ async def resume_visual_job(session: AsyncSession, run_id: int, output_tokens: i
         or run.status
         not in (
             "paused_budget",
+            "paused_context",
             "paused_output",
             "paused_validation",
             "paused_provider",
@@ -492,11 +520,13 @@ async def resume_visual_job(session: AsyncSession, run_id: int, output_tokens: i
     if run.status == "paused_output" and (
         output_tokens is None or output_tokens <= config["vision_output_tokens"]
     ):
-        raise ValueError("Increase output tokens to resume a truncated single frame")
+        raise ValueError(
+            "Increase output tokens to resume a truncated single frame")
     if output_tokens is not None:
         config["vision_output_tokens"] = output_tokens
     AgentSettings(_env_file=None, **config)
-    run.metadata_json = {**run.metadata_json, "settings": config, "last_dispatched": 0}
+    run.metadata_json = {**run.metadata_json,
+                         "settings": config, "last_dispatched": 0}
     run.status, run.error = "pending", None
     return run
 
@@ -517,10 +547,12 @@ async def wipe_cutscene_analysis(
 ) -> dict[str, int | str | None]:
     """Remove analysis records while retaining content-addressed storage objects."""
     if not game_version:
-        raise ValueError("Select a specific asset version before deleting analysis")
+        raise ValueError(
+            "Select a specific asset version before deleting analysis")
     await lock_visual_sources(session, [asset_id], game_version)
     locked = await session.scalar(
-        text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": -asset_id - 1_000_000}
+        text("SELECT pg_try_advisory_xact_lock(:key)"), {
+            "key": -asset_id - 1_000_000}
     )
     if not locked:
         raise ValueError("Cutscene analysis cleanup is already in progress")
@@ -539,7 +571,8 @@ async def wipe_cutscene_analysis(
         run_ids = sorted(await session.scalars(run_stmt))
         for run_id in run_ids:
             if not await session.scalar(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": -run_id}):
-                raise ValueError("Cutscene analysis is currently running; retry after it finishes")
+                raise ValueError(
+                    "Cutscene analysis is currently running; retry after it finishes")
 
     ref_stmt = select(FileReference).where(
         FileReference.owner_node_id == asset_id,
@@ -550,7 +583,8 @@ async def wipe_cutscene_analysis(
             await session.scalars(
                 select(FileReference.file_id).where(
                     FileReference.owner_node_id == asset_id,
-                    FileReference.reference_type.in_(publication_types("cutscene_video")),
+                    FileReference.reference_type.in_(
+                        publication_types("cutscene_video")),
                     FileReference.metadata_json["asset_version"].astext == game_version,
                 )
             )
@@ -560,7 +594,8 @@ async def wipe_cutscene_analysis(
         ]
         if source_video_ids:
             version_clauses.append(
-                FileReference.metadata_json["source_file_id"].as_integer().in_(source_video_ids)
+                FileReference.metadata_json["source_file_id"].as_integer().in_(
+                    source_video_ids)
             )
         ref_stmt = ref_stmt.where(or_(*version_clauses))
     refs = list(await session.scalars(ref_stmt))
@@ -573,7 +608,8 @@ async def wipe_cutscene_analysis(
             await session.scalars(
                 select(FileVariant.child_file_id).where(
                     FileVariant.processor_run_id.in_(run_ids),
-                    FileVariant.variant_type.in_(("cutscene_preview", "video_frame_atlas")),
+                    FileVariant.variant_type.in_(
+                        ("cutscene_preview", "video_frame_atlas")),
                 )
             )
         )
@@ -596,7 +632,8 @@ async def wipe_cutscene_analysis(
         LoreChunk.source_id == str(asset_id),
     )
     if game_version:
-        lore_stmt = lore_stmt.where(LoreChunk.game_version == str(game_version)[:20])
+        lore_stmt = lore_stmt.where(
+            LoreChunk.game_version == str(game_version)[:20])
     lore_res = await session.execute(lore_stmt)
     await session.flush()
 

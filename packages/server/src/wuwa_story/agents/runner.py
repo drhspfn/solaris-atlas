@@ -474,9 +474,16 @@ async def run_locked(
         raise ValueError("Unknown story analysis job")
     if run.status not in ("queued", "running", "enqueue_failed"):
         return
+    from wuwa_story.agents.settings import agent_db_override_fields, load_effective_agent_settings
+
+    live = await load_effective_agent_settings(session, live, scope="story")
+    db_overrides = await agent_db_override_fields(session, scope="story")
+    merged_config = {**job.config, **db_overrides}
+    for key in ("api_key", "embedding_api_key", "read_database_url", "daily_budget_usd", "daily_token_limit"):
+        merged_config.pop(key, None)
     settings = AgentSettings(
         _env_file=None,
-        **job.config,
+        **merged_config,
         api_key=live.api_key,
         embedding_api_key=live.embedding_api_key,
         read_database_url=live.read_database_url,

@@ -1,0 +1,42 @@
+{% extends "layout.html" %} {% block content %}
+<div class="sa-page" id="sa-app-settings">
+  <div class="sa-header">
+    <div>
+      <h1>Settings</h1>
+      <p class="sa-subtitle">
+        Code-declared runtime settings stored in <code>ops.app_setting</code>.
+        Edit values here without rebuilding or redeploying services.
+      </p>
+    </div>
+    <div class="sa-toolbar">
+      <input
+        type="search"
+        class="form-control"
+        id="as-filter-input"
+        placeholder="Filter key, name, description..."
+        style="width: 16rem"
+      />
+      <button
+        type="button"
+        class="btn btn-outline-secondary"
+        id="as-refresh-btn"
+      >
+        Refresh
+      </button>
+    </div>
+  </div>
+
+  <div id="as-banner" class="alert d-none" role="alert"></div>
+  {% if load_error %}
+  <div class="alert alert-danger">{{ load_error }}</div>
+  {% endif %}
+
+  <div class="d-flex flex-wrap gap-2 mb-3" id="as-category-tabs"></div>
+  <div id="as-categories-root"></div>
+</div>
+
+<script id="as-initial-data" type="application/json">
+  {{ settings_data | tojson }}
+</script>
+<script src="{{ url_for('console:statics', path='settings.js') }}"></script>
+{% endblock %}

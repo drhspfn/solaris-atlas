@@ -16,7 +16,7 @@ from wuwa_story.agents.cutscene_vision import (
     visual_reference,
     wipe_cutscene_analysis,
 )
-from wuwa_story.agents.settings import get_agent_settings
+from wuwa_story.agents.settings import get_agent_settings, load_effective_agent_settings
 from wuwa_story.agents.visual_enqueue_lock import lock_visual_sources
 from wuwa_story.api.routes.story.cutscene_audio import audio_bundles
 from wuwa_story.api.routes.story.media import cutscene_videos
@@ -67,11 +67,27 @@ async def playback(asset_id: int, game_version: str = Query(min_length=1, max_le
 def public_job(run: ProcessingRun) -> dict[str, Any]:
     checkpoint = run.raw_output or {}
     batches = checkpoint.get("batches", [])
+    mode = checkpoint.get("mode")
+    draft_events = (checkpoint.get("review_draft") or {}).get("events") or []
+    final_events = checkpoint.get("events") or []
+    events_done = len(final_events) if final_events else len(draft_events)
+    atlases = int(checkpoint.get("atlases") or 0)
+    phase = None
+    if mode == "video_agent":
+        phase = (
+            "completed"
+            if final_events
+            else ("review" if draft_events else "scanning")
+        )
     return {
         "id": run.id,
         "asset_node_id": run.target_node_id,
         "game_version": run.metadata_json.get("asset_version"),
         "status": run.status,
+        "mode": mode,
+        "phase": phase,
+        "atlases": atlases,
+        "events_done": events_done,
         "title_only": bool(run.metadata_json.get("title_only_report_id")),
         "title_generated": bool(checkpoint.get("title")) if run.metadata_json.get("title_only_report_id") else None,
         "step": checkpoint.get("step", 0),
@@ -127,7 +143,8 @@ async def _asset_analysis_summaries(
         ver = meta.get("asset_version")
         if not ver and meta.get("source_file_id") is not None:
             try:
-                ver = video_file_to_version.get((item.owner_node_id, int(meta["source_file_id"])))
+                ver = video_file_to_version.get(
+                    (item.owner_node_id, int(meta["source_file_id"])))
             except (TypeError, ValueError):
                 ver = None
         summary = summaries.get((item.owner_node_id, str(ver or "")))
@@ -233,13 +250,16 @@ async def _logical_plan(session: AsyncSession, scene_id: int, version: str):
     flow_ref = await session.scalar(
         select(FileReference).where(
             FileReference.owner_node_id == scene_id,
-            FileReference.reference_type.in_(publication_types("cutscene_flow")),
+            FileReference.reference_type.in_(
+                publication_types("cutscene_flow")),
             FileReference.metadata_json["asset_version"].astext == version,
-            FileReference.metadata_json["publication_complete"].as_boolean().is_(True),
+            FileReference.metadata_json["publication_complete"].as_boolean().is_(
+                True),
         ).order_by(publication_order(FileReference.reference_type), FileReference.id.desc()).limit(1)
     )
     if flow_ref is None:
-        raise ValueError("A complete published playback flow is required for this cutscene")
+        raise ValueError(
+            "A complete published playback flow is required for this cutscene")
     flow = PlaybackFlow.model_validate(flow_ref.metadata_json["flow"])
     keys = {node.asset for node in flow.nodes if isinstance(node, Clip)}
     publication = flow_ref.metadata_json.get("publication_references") or []
@@ -247,25 +267,29 @@ async def _logical_plan(session: AsyncSession, scene_id: int, version: str):
                        and isinstance(item.get("id"), int) and isinstance(item.get("file_id"), int)}
     reference_ids = list(reference_files)
     if not reference_ids:
-        raise ValueError("Playback publication does not identify its video references")
+        raise ValueError(
+            "Playback publication does not identify its video references")
     rows = await session.execute(
         select(Node.canonical_key, Node.id, FileReference, FileObject.sha256)
         .join(FileReference, FileReference.owner_node_id == Node.id)
         .join(FileObject, FileObject.id == FileReference.file_id)
         .where(Node.canonical_key.in_(keys), FileReference.id.in_(reference_ids),
-               FileReference.reference_type.in_(publication_types("cutscene_video")),
+               FileReference.reference_type.in_(
+                   publication_types("cutscene_video")),
                FileReference.metadata_json["asset_version"].astext == version)
     )
     sources, references = {}, {}
     for key, node_id, ref, digest in rows:
         if key in sources or not digest or reference_files.get(ref.id) != ref.file_id:
-            raise ValueError("Ambiguous or unverified video in playback publication")
+            raise ValueError(
+                "Ambiguous or unverified video in playback publication")
         sources[key] = {"asset_node_id": node_id, "file_id": ref.file_id,
                         "source_sha256": digest.hex(),
                         "duration_seconds": ref.metadata_json.get("duration_seconds")}
         references[node_id] = ref
     if set(sources) != keys:
-        raise ValueError("Playback publication is missing one or more source videos")
+        raise ValueError(
+            "Playback publication is missing one or more source videos")
     plan = build_analysis_plan(scene_id, version, flow.model_dump(), sources,
                                flow_reference_id=flow_ref.id)
     return plan, references[plan["segments"][0]["asset_node_id"]], references
@@ -283,10 +307,12 @@ async def _existing_whole_scene_job(session, plan, references):
             previous = await session.scalar(select(ProcessingRun.id).join(Processor).where(
                 Processor.key == "cutscene_vision", ProcessingRun.target_node_id == asset_id,
                 ProcessingRun.metadata_json["asset_version"].astext == ref.metadata_json["asset_version"],
-                ProcessingRun.metadata_json["source_sha256"].astext == source.sha256.hex(),
+                ProcessingRun.metadata_json["source_sha256"].astext == source.sha256.hex(
+                ),
             ).limit(1))
             if previous:
-                raise ValueError("A legacy analysis of this whole-scene alternative already exists; reconcile it first")
+                raise ValueError(
+                    "A legacy analysis of this whole-scene alternative already exists; reconcile it first")
             continue
         digest = report.metadata_json.get("source_sha256")
         run = await session.scalar(select(ProcessingRun).join(Processor).where(
@@ -297,7 +323,8 @@ async def _existing_whole_scene_job(session, plan, references):
         ).order_by(ProcessingRun.id.desc()).limit(1))
         if run:
             return run, report
-        raise ValueError("A complete report exists without a matching completed run; reconcile before reanalysis")
+        raise ValueError(
+            "A complete report exists without a matching completed run; reconcile before reanalysis")
     return None
 
 
@@ -307,14 +334,17 @@ async def _guard_partial_legacy_jobs(session, version, references):
     for asset_id, ref in references.items():
         source = await session.get(FileObject, ref.file_id)
         if source is None or source.sha256 is None:
-            raise ValueError("A playback source is no longer content-addressed")
+            raise ValueError(
+                "A playback source is no longer content-addressed")
         previous = await session.scalar(select(ProcessingRun.id).join(Processor).where(
             Processor.key == "cutscene_vision", ProcessingRun.target_node_id == asset_id,
             ProcessingRun.metadata_json["asset_version"].astext == version,
-            ProcessingRun.metadata_json["source_sha256"].astext == source.sha256.hex(),
+            ProcessingRun.metadata_json["source_sha256"].astext == source.sha256.hex(
+            ),
         ).limit(1))
         if previous:
-            raise ValueError("A legacy analysis of a scene part already exists; reconcile it first")
+            raise ValueError(
+                "A legacy analysis of a scene part already exists; reconcile it first")
 
 
 @router.get("/assets")
@@ -415,7 +445,8 @@ async def assets(
                 analysis_ref.reference_type.in_(_ANALYSIS_REF_TYPES),
                 or_(
                     analysis_ref.metadata_json["asset_version"].astext == version,
-                    analysis_ref.metadata_json["source_file_id"].as_integer() == FileReference.file_id,
+                    analysis_ref.metadata_json["source_file_id"].as_integer(
+                    ) == FileReference.file_id,
                 ),
             )
             .exists()
@@ -436,8 +467,11 @@ async def assets(
     cutscenes_by_asset = await _asset_cutscenes(
         session, {ref.owner_node_id for ref, _ in rows}
     )
+    effective = await load_effective_agent_settings(
+        session, get_agent_settings(), scope="cutscene"
+    )
     return {
-        "enabled": get_agent_settings().vision_enabled,
+        "enabled": effective.vision_enabled,
         "assets": [
             {
                 "id": ref.owner_node_id,
@@ -445,7 +479,8 @@ async def assets(
                 "game_version": ref.metadata_json["asset_version"],
                 "cutscenes": cutscenes_by_asset.get(ref.owner_node_id, []),
                 **summaries.get(
-                    (ref.owner_node_id, str(ref.metadata_json["asset_version"] or "")),
+                    (ref.owner_node_id, str(
+                        ref.metadata_json["asset_version"] or "")),
                     {
                         "reports_count": 0,
                         "previews_count": 0,
@@ -465,7 +500,9 @@ async def assets(
 
 @router.post("/jobs", status_code=202, dependencies=[Depends(require_csrf)])
 async def create_visual_jobs(request: VisualRequest, session: AsyncSession = Depends(get_session)):
-    settings = get_agent_settings()
+    settings = await load_effective_agent_settings(
+        session, get_agent_settings(), scope="cutscene"
+    )
     if not settings.vision_enabled:
         raise HTTPException(
             409, "Enable AGENT_VISION_ENABLED on the API and visual worker")
@@ -495,16 +532,19 @@ async def create_visual_jobs(request: VisualRequest, session: AsyncSession = Dep
         for ref in references:
             scenes = associations.get(ref.owner_node_id, [])
             if len(scenes) > 1:
-                raise ValueError("Asset belongs to multiple cutscenes; select a specific cutscene")
+                raise ValueError(
+                    "Asset belongs to multiple cutscenes; select a specific cutscene")
             if scenes:
                 scene_ids.add(scenes[0]["node_id"])
             else:
                 legacy.append(ref)
         prepared = [await _logical_plan(session, scene_id, request.game_version)
                     for scene_id in sorted(scene_ids)]
-        covered = set().union(*(refs.keys() for _, _, refs in prepared)) if prepared else set()
+        covered = set().union(*(refs.keys()
+                                for _, _, refs in prepared)) if prepared else set()
         if any(ref.owner_node_id not in covered for ref in references if associations.get(ref.owner_node_id)):
-            raise ValueError("Selected asset does not belong to its published playback flow")
+            raise ValueError(
+                "Selected asset does not belong to its published playback flow")
         await lock_visual_sources(session, covered | scene_ids, request.game_version)
         jobs = []
         for plan, ref, source_refs in prepared:
@@ -556,7 +596,10 @@ async def visual_jobs(
 async def resume_visual(
     run_id: int, request: VisualResumeRequest, session: AsyncSession = Depends(get_session)
 ):
-    if not get_agent_settings().vision_enabled:
+    effective = await load_effective_agent_settings(
+        session, get_agent_settings(), scope="cutscene"
+    )
+    if not effective.vision_enabled:
         raise HTTPException(
             409, "Enable AGENT_VISION_ENABLED on the API and visual worker")
     try:

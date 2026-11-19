@@ -9,7 +9,7 @@ from starlette_admin import CustomView
 
 from wuwa_story.agents.cutscene_vision import visual_reference
 from wuwa_story.agents.scene_analysis_reader import current_scene_report
-from wuwa_story.agents.settings import get_agent_settings
+from wuwa_story.agents.settings import get_agent_settings, load_effective_agent_settings
 from wuwa_story.api.routes.cutscene_analysis import _logical_plan
 from wuwa_story.api.routes.cutscenes import detail, release
 from wuwa_story.db.models.core import Cutscene
@@ -103,7 +103,8 @@ class CutsceneData(CustomView):
         scene_runs = []
         if current_plan:
             scene_runs = [run for run in await db.scalars(
-                select(ProcessingRun).join(Processor, Processor.id == ProcessingRun.processor_id)
+                select(ProcessingRun).join(
+                    Processor, Processor.id == ProcessingRun.processor_id)
                 .where(Processor.key == "cutscene_vision", ProcessingRun.target_node_id == scene.node_id,
                        ProcessingRun.metadata_json["asset_version"].astext == asset_version)
                 .order_by(ProcessingRun.id.desc())
@@ -112,12 +113,14 @@ class CutsceneData(CustomView):
             runs_count += len(scene_runs)
             latest_run_status = scene_runs[0].status
         if scene_report:
-            atlases_count += len((scene_report.metadata_json or {}).get("atlas_references") or [])
+            atlases_count += len((scene_report.metadata_json or {}
+                                  ).get("atlas_references") or [])
 
         previews_count = len(result["previews"])
         has_analysis = bool(reports or runs_count > 0 or atlases_count > 0)
         # A scene-owned analysis may share its source assets with other scenes.
-        cleanup_owner_ids = [scene.node_id] if scene_report or scene_runs else list(asset_ids)
+        cleanup_owner_ids = [
+            scene.node_id] if scene_report or scene_runs else list(asset_ids)
         has_artifacts = bool(cleanup_owner_ids and asset_version
                              and (runs_count > 0 or previews_count > 0 or reports or atlases_count))
         result["analysis"] = {
@@ -126,7 +129,9 @@ class CutsceneData(CustomView):
             "asset_node_ids": asset_ids,
             "cleanup_owner_ids": cleanup_owner_ids,
             "asset_version": asset_version,
-            "vision_enabled": get_agent_settings().vision_enabled,
+            "vision_enabled": (
+                await load_effective_agent_settings(db, get_agent_settings(), scope="cutscene")
+            ).vision_enabled,
             "has_analysis": has_analysis,
             "has_artifacts": has_artifacts,
             "reports_count": len(reports),

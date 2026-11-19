@@ -144,12 +144,17 @@
                 {% if asset.cutscenes %}
                 <div class="fw-semibold d-flex flex-wrap gap-2">
                   {% for scene in asset.cutscenes %}
-                  <a href="/console/cutscenes/detail/{{ scene.node_id }}" class="link-light text-decoration-underline">
+                  <a
+                    href="/console/cutscenes/detail/{{ scene.node_id }}"
+                    class="link-light text-decoration-underline"
+                  >
                     {{ scene.cg_name or ('Cutscene #' ~ scene.node_id) }}
                   </a>
                   {% endfor %}
                 </div>
-                <div class="text-secondary small sa-mono">{{ asset.reference }} · Node #{{ asset.id }}</div>
+                <div class="text-secondary small sa-mono">
+                  {{ asset.reference }} · Node #{{ asset.id }}
+                </div>
                 {% else %}
                 <div class="fw-semibold">{{ asset.reference }}</div>
                 <div class="text-secondary small">Node #{{ asset.id }}</div>
@@ -291,8 +296,12 @@
                 >
               </td>
               <td class="small">
-                Step {{ job.step }} · {{ job.frames_done }} done / {{
-                job.frames_remaining }} left
+                {% if job.mode == "video_agent" or job.atlases or
+                job.events_done %} Step {{ job.step }} · {{ job.events_done or 0
+                }} events · {{ job.atlases or 0 }} atlases{% if job.phase %} ({{
+                job.phase }}){% endif %} {% else %} Step {{ job.step }} · {{
+                job.frames_done }} done / {{ job.frames_remaining }} left {%
+                endif %}
               </td>
               <td class="small">
                 ${{ "%.4f"|format(job.cost_usd or 0) }}

@@ -17,7 +17,12 @@ import httpx
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from wuwa_story.agents.budget import BudgetExceeded, reserve, settle
+from wuwa_story.agents.budget import (
+    BudgetExceeded,
+    ContextLimitExceeded,
+    reserve,
+    settle,
+)
 from wuwa_story.agents.cutscene_vision import (
     MIN_VISUAL_SECONDS,
     VISION_VERSION,
@@ -26,7 +31,12 @@ from wuwa_story.agents.cutscene_vision import (
     validate_batch,
 )
 from wuwa_story.agents.providers import Provider, ProviderRejected, token_usage
-from wuwa_story.agents.settings import AgentSettings, get_agent_settings
+from wuwa_story.agents.settings import (
+    AgentSettings,
+    agent_db_override_fields,
+    get_agent_settings,
+    load_effective_agent_settings,
+)
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.agents import AgentCall
 from wuwa_story.db.models.ops import ProcessingRun, Processor
@@ -84,7 +94,8 @@ def vision_request(provider: Provider, times: list[float], images: list[bytes], 
     if choose_title:
         labels += TITLE_PROMPT
     if context:
-        labels += "\nSource text context (reference data): " + json.dumps(context, ensure_ascii=False)
+        labels += "\nSource text context (reference data): " + \
+            json.dumps(context, ensure_ascii=False)
     if atlases is not None:
         labels += "\nAtlas manifest: " + json.dumps(atlases)
     labels += "\nFrame timestamps: " + json.dumps(times)
@@ -180,7 +191,8 @@ async def publish_preview(db, run, storage, ffmpeg, movie, root, batches):
     for batch in batches:
         for candidate in batch.get("preview_candidates", []):
             timestamp = batch["sample_times"][candidate["index"]]
-            scores[timestamp] = max(scores.get(timestamp, 0), candidate["score"])
+            scores[timestamp] = max(scores.get(
+                timestamp, 0), candidate["score"])
     candidates = sorted(((score, timestamp) for timestamp, score in scores.items()),
                         reverse=True)[:MAX_PREVIEWS]
     if not candidates:
@@ -219,12 +231,13 @@ async def prepare_atlases(db, run, storage, ffmpeg, movie, times, root, settings
         frames = [await sample_frame(ffmpeg, movie, t, root / "frame.jpg") for t in selected]
         path = root / "atlas.jpg"
         layout = await asyncio.to_thread(write_atlas, frames, selected, path,
-                                        tile_width=settings.vision_atlas_tile_width,
-                                        quality=settings.vision_atlas_quality)
+                                         tile_width=settings.vision_atlas_tile_width,
+                                         quality=settings.vision_atlas_quality)
         manifest = {"protocol": getattr(run, "prompt_version", None) or VISION_VERSION,
                     "source_file_id": run.metadata_json["file_id"],
                     "source_sha256": run.metadata_json["source_sha256"], **layout}
-        identity = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
+        identity = hashlib.sha256(json.dumps(
+            manifest, sort_keys=True).encode()).hexdigest()
         source_path = f"video:{run.metadata_json['file_id']}:atlas:{identity}"
         await db.execute(text("SELECT pg_advisory_xact_lock(:key)"),
                          {"key": int(identity[:14], 16)})
@@ -268,18 +281,31 @@ async def process_cutscene_vision(payload: dict) -> None:
                     raise ValueError("Not a visual processing run")
                 if run.status not in ("pending", "running"):
                     return
-                current = get_agent_settings()
+                current = await load_effective_agent_settings(
+                    db, get_agent_settings(), scope="cutscene"
+                )
                 if not current.vision_enabled:
                     return
+                db_overrides = await agent_db_override_fields(db, scope="cutscene")
+                merged_config = {
+                    **run.metadata_json["settings"], **db_overrides}
+                for key in (
+                    "api_key",
+                    "embedding_api_key",
+                    "read_database_url",
+                    "daily_budget_usd",
+                    "daily_token_limit",
+                ):
+                    merged_config.pop(key, None)
                 settings = AgentSettings(
                     _env_file=None,
-                    **run.metadata_json["settings"],
+                    **merged_config,
                     api_key=current.api_key,
                     daily_budget_usd=current.daily_budget_usd,
                     daily_token_limit=current.daily_token_limit,
                 )
                 settings.max_output_tokens = settings.vision_output_tokens
-                settings.reasoning_effort = "low"
+                settings.reasoning_effort = current.reasoning_effort
                 try:
                     settings.require_enabled()
                 except ValueError:
@@ -298,10 +324,12 @@ async def process_cutscene_vision(payload: dict) -> None:
                     return
                 try:
                     await analyze_run(db, run, settings)
-                except BudgetExceeded:
+                except ContextLimitExceeded as exc:
+                    run.status, run.error = "paused_context", str(exc)
+                except BudgetExceeded as exc:
                     run.status, run.error = (
                         "paused_budget",
-                        "Shared daily budget cannot cover visual batch",
+                        str(exc) or "Shared daily budget cannot cover visual batch",
                     )
                 except Exception as exc:
                     # No provider body, prompt, image or credential goes into operational logs.
@@ -342,7 +370,8 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
         from wuwa_story_worker.logical_video_workspace import load_logical_workspace
 
         if run.prompt_version != VISION_VERSION:
-            raise ValueError("Logical scene plans require the video analysis protocol")
+            raise ValueError(
+                "Logical scene plans require the video analysis protocol")
         ffmpeg_name = os.getenv("WUWA_FFMPEG_BIN") or shutil.which("ffmpeg")
         if not ffmpeg_name:
             raise ValueError("Configure WUWA_FFMPEG_BIN")
@@ -374,7 +403,8 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
     ffmpeg = Path(ffmpeg_name).resolve()
     checkpoint = dict(run.raw_output or {"batches": [], "step": 0})
     protocol = getattr(run, "prompt_version", None) or VISION_VERSION
-    use_atlases = protocol in ("cutscene-visual-v2", "cutscene-visual-v3", "cutscene-visual-v4", VISION_VERSION)
+    use_atlases = protocol in (
+        "cutscene-visual-v2", "cutscene-visual-v3", "cutscene-visual-v4", VISION_VERSION)
     context = run.metadata_json.get("text_context") if use_atlases else None
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -388,8 +418,10 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
             raise ValueError("Source content changed")
         duration, _ = await asyncio.to_thread(video_duration, ffmpeg, movie)
         if protocol in ("cutscene-visual-v3", "cutscene-visual-v4", VISION_VERSION) and duration < MIN_VISUAL_SECONDS:
-            run.status, run.error, run.finished_at = "skipped", "Video is shorter than 5 seconds", datetime.now(UTC)
-            run.raw_output = {**checkpoint, "skip_reason": "short_video", "duration": duration}
+            run.status, run.error, run.finished_at = "skipped", "Video is shorter than 5 seconds", datetime.now(
+                UTC)
+            run.raw_output = {
+                **checkpoint, "skip_reason": "short_video", "duration": duration}
             await db.commit()
             return
         if protocol == VISION_VERSION:
@@ -407,11 +439,12 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
             run.finished_at = datetime.now(UTC)
             await db.commit()
             return
-        times = sample_times(duration, settings.vision_frame_interval, settings.vision_max_frames)
+        times = sample_times(
+            duration, settings.vision_frame_interval, settings.vision_max_frames)
         pending = checkpoint.get("pending")
         if pending is None:
             pending = [
-                times[i : i + settings.vision_batch_frames]
+                times[i: i + settings.vision_batch_frames]
                 for i in range(0, len(times), settings.vision_batch_frames)
             ]
         run.status = "running"
@@ -423,10 +456,12 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
                 run.raw_output = dict(checkpoint)
                 await db.commit()
                 call = await db.scalar(
-                    select(AgentCall).where(AgentCall.run_id == run.id, AgentCall.step == step)
+                    select(AgentCall).where(AgentCall.run_id ==
+                                            run.id, AgentCall.step == step)
                 )
                 if call and (call.status != "completed" or not call.response):
-                    raise ValueError("Uncertain prior call; automatic retry prohibited")
+                    raise ValueError(
+                        "Uncertain prior call; automatic retry prohibited")
                 if call:
                     raw = call.response
                 else:
@@ -434,7 +469,8 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
                         images, manifests, references = await prepare_atlases(
                             db, run, storage, ffmpeg, movie, batch_times, root, settings)
                         existing = {a["reference_id"]: a for a in checkpoint.get("atlases", [])}
-                        existing.update({a["reference_id"]: a for a in references})
+                        existing.update(
+                            {a["reference_id"]: a for a in references})
                         checkpoint["atlases"] = list(existing.values())
                         run.raw_output = dict(checkpoint)
                         await db.commit()
@@ -444,7 +480,8 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
                         manifests = None
                     route, request = vision_request(provider, batch_times, images,
                                                     atlases=manifests, context=context,
-                                                    choose_preview=protocol in ("cutscene-visual-v3", "cutscene-visual-v4", VISION_VERSION),
+                                                    choose_preview=protocol in (
+                                                        "cutscene-visual-v3", "cutscene-visual-v4", VISION_VERSION),
                                                     choose_title=protocol in ("cutscene-visual-v4", VISION_VERSION))
                     # A deliberately conservative image bound, independent of base64 byte size.
                     image_bound = (sum(max(8192, math.ceil(m["width"] / 16)
@@ -455,7 +492,8 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
                          "atlases": manifests, "context": context}, ensure_ascii=False).encode()) + 1024
                     if bound > settings.max_input_tokens and len(batch_times) > 1:
                         middle = len(batch_times) // 2
-                        pending = [batch_times[:middle], batch_times[middle:], *pending[1:]]
+                        pending = [batch_times[:middle],
+                                   batch_times[middle:], *pending[1:]]
                         continue
                     call = await reserve(
                         db,
@@ -481,8 +519,10 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
                     await db.commit()
                     if not within:
                         raise ValueError("Visual usage exceeded reservation")
-                run.tokens_input = (run.tokens_input or 0) + (call.input_tokens or 0)
-                run.tokens_output = (run.tokens_output or 0) + (call.output_tokens or 0)
+                run.tokens_input = (run.tokens_input or 0) + \
+                    (call.input_tokens or 0)
+                run.tokens_output = (run.tokens_output or 0) + \
+                    (call.output_tokens or 0)
                 run.cost = (run.cost or 0) + float(call.cost_usd or 0)
                 if provider.output_limited(raw):
                     if len(batch_times) == 1:
@@ -494,7 +534,8 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
                         )
                         return
                     middle = len(batch_times) // 2
-                    pending = [batch_times[:middle], batch_times[middle:], *pending[1:]]
+                    pending = [batch_times[:middle],
+                               batch_times[middle:], *pending[1:]]
                 else:
                     try:
                         turn = provider.parse(raw)
@@ -530,8 +571,10 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
                 async with db.begin_nested():
                     preview_file_ids = await publish_preview(db, run, storage, ffmpeg, movie, root, checkpoint["batches"])
             except Exception as error:
-                logger.warning("cutscene.preview_failed run_id=%s error_type=%s", run.id, type(error).__name__)
-        titled = [batch for batch in checkpoint["batches"] if batch.get("title")]
+                logger.warning(
+                    "cutscene.preview_failed run_id=%s error_type=%s", run.id, type(error).__name__)
+        titled = [batch for batch in checkpoint["batches"]
+                  if batch.get("title")]
         chosen = max(titled, key=lambda batch: max(
             (candidate["score"] for candidate in batch.get("preview_candidates", [])), default=-1), default=None)
         report = {
@@ -561,14 +604,20 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
                 metadata_json=report,
             )
         )
-        run.status, run.error, run.finished_at = "completed", None, datetime.now(UTC)
+        run.status, run.error, run.finished_at = "completed", None, datetime.now(
+            UTC)
         await db.commit()
 
 
 async def dispatch_visual_jobs() -> None:
     while True:
         try:
+            vision_enabled = False
             async with AsyncSession(engine) as db:
+                current = await load_effective_agent_settings(
+                    db, get_agent_settings(), scope="cutscene"
+                )
+                vision_enabled = bool(current.vision_enabled)
                 # Durable dispatch leases bound redelivery after lost broker confirmation.
                 ids = (
                     list(
@@ -582,7 +631,7 @@ async def dispatch_visual_jobs() -> None:
                             {"expiry": time.time() - 600},
                         )
                     )
-                    if get_agent_settings().vision_enabled
+                    if vision_enabled
                     else []
                 )
                 for run_id in ids:
@@ -593,10 +642,11 @@ async def dispatch_visual_jobs() -> None:
                         {"id": run_id, "now": time.time()},
                     )
                 await db.commit()
-            if get_agent_settings().vision_enabled:
+            if vision_enabled:
                 for run_id in ids:
                     await publish_job(
-                        "cutscene_vision", {"run_id": run_id}, f"cutscene-vision:{run_id}"
+                        "cutscene_vision", {
+                            "run_id": run_id}, f"cutscene-vision:{run_id}"
                     )
         except Exception:
             logger.warning("Visual job dispatcher unavailable; retrying")

@@ -212,7 +212,11 @@
  ${j.error ? `<div class="text-danger small">${esc(j.error)}</div>` : ""}
  </td>
  <td><span class="sa-badge ${badgeClass(j.status)}">${esc(j.status)}</span></td>
- <td class="small">Step ${j.step ?? 0} · ${j.frames_done ?? 0} done / ${j.frames_remaining ?? 0} left</td>
+ <td class="small">${
+   j.mode === "video_agent" || j.atlases || j.events_done
+     ? `Step ${j.step ?? 0} · ${j.events_done ?? 0} events · ${j.atlases ?? 0} atlases${j.phase ? ` (${esc(j.phase)})` : ""}`
+     : `Step ${j.step ?? 0} · ${j.frames_done ?? 0} done / ${j.frames_remaining ?? 0} left`
+ }</td>
  <td class="small">
  $${Number(j.cost_usd || 0).toFixed(4)}
  <div class="text-secondary">${Number(j.tokens_input || 0).toLocaleString()} / ${Number(j.tokens_output || 0).toLocaleString()}</div>
