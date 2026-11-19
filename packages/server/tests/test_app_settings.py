@@ -329,3 +329,19 @@ def test_public_job_and_context_limit_subclass():
     assert payload["atlases"] == 13
     assert payload["events_done"] == 2
     assert payload["phase"] == "review"
+
+    legacy_list_atlases = SimpleNamespace(
+        id=40974,
+        target_node_id=100,
+        status="completed",
+        metadata_json={"asset_version": "3.8.0", "settings": {"vision_output_tokens": 8192}},
+        raw_output={"mode": "video_agent", "step": 8, "atlases": [{"id": 1}, {"id": 2}], "events": [{"t": 0}]},
+        error=None,
+        tokens_input=10,
+        tokens_output=5,
+        cost=0.01,
+    )
+    legacy_payload = public_job(legacy_list_atlases)
+    assert legacy_payload["atlases"] == 2
+    assert legacy_payload["events_done"] == 1
+    assert legacy_payload["phase"] == "completed"

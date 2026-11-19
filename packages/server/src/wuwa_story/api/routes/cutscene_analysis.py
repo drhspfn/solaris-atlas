@@ -66,12 +66,20 @@ async def playback(asset_id: int, game_version: str = Query(min_length=1, max_le
 
 def public_job(run: ProcessingRun) -> dict[str, Any]:
     checkpoint = run.raw_output or {}
-    batches = checkpoint.get("batches", [])
+    batches = checkpoint.get("batches")
+    if not isinstance(batches, list):
+        batches = []
     mode = checkpoint.get("mode")
-    draft_events = (checkpoint.get("review_draft") or {}).get("events") or []
-    final_events = checkpoint.get("events") or []
+    review_draft = checkpoint.get("review_draft")
+    draft_events = review_draft.get("events") if isinstance(review_draft, dict) else None
+    if not isinstance(draft_events, list):
+        draft_events = []
+    final_events = checkpoint.get("events")
+    if not isinstance(final_events, list):
+        final_events = []
     events_done = len(final_events) if final_events else len(draft_events)
-    atlases = int(checkpoint.get("atlases") or 0)
+    raw_atlases = checkpoint.get("atlases")
+    atlases = len(raw_atlases) if isinstance(raw_atlases, list) else (int(raw_atlases) if isinstance(raw_atlases, int) else 0)
     phase = None
     if mode == "video_agent":
         phase = (
