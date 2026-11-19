@@ -69,7 +69,7 @@ MAX_REFERENCE_IMAGES = 10
 MAX_SPATIAL_INSPECTIONS = 6
 MAX_ATLAS_VIEW_PER_CALL = 4
 INITIAL_INLINE_OVERVIEW_ATLASES = 2
-MAX_REVISION_ROUNDS = 2
+MAX_REVISION_ROUNDS = 1
 
 
 def _order_evidence_frames(arguments: dict[str, Any], workspace: VideoWorkspace, *, order_events: bool = False,
@@ -1390,8 +1390,8 @@ VERIFIER_SYSTEM_PROMPT = (
     "Think like a careful reader and lore editor paired with the Writer: you receive the provisional draft analysis, "
     "the scene's `source_text_context`, the `timeline_chunks` index of all sampled atlases, and `visual_candidate_audit`. "
     "You can load any atlas chunk directly with `view_atlases` (without re-sampling), inspect close-ups with `inspect_video_region`, "
-    "verify candidate portraits with `get_character_reference_image`, and search speakers/NPCs/characters/Fandom facts via "
-    "`search_entities`, `search_lore`, `search_dialogue`, and `search_facts`. "
+    "verify candidate portraits with `get_character_reference_image`, and batch parallel searches via "
+    "`search_entities`, `search_lore`, `search_dialogue`, and `search_facts` in a single turn rather than one call per turn. "
     "Reject dry object lists, unexplained plot holes, and arbitrary unnamed characters: if the Writer missed visual reference checks, "
     "windows, or emotional/story continuity, call `return_draft_for_revision` with an actionable checklist; when everything is verified "
     "and vivid, submit the final result via `finish_video_analysis`."
