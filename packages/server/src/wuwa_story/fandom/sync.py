@@ -1,10 +1,28 @@
 """Bridge Fandom entity bundles into the shared fact board, graph edges, and visual memory."""
 
+import asyncio
+import logging
+import urllib.request
 from typing import Any
 
-import httpx
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
+
+
+def _fetch_image_bytes(url: str, referer: str) -> bytes:
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": referer,
+        },
+    )
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        return resp.read()
 
 from wuwa_story.agents.fact_board import post_fact
 from wuwa_story.db.models.graph import Node, NodeType
@@ -133,27 +151,21 @@ async def sync_fandom_bundle(
     imported_references: list[int] = []
     if import_images and memory_service is not None and bundle.images:
         identity_id = await ensure_visual_identity_for_node(session, subject_node_id, bundle.page_title)
-        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as http:
-            for asset in bundle.images:
-                if len(imported_references) >= max_images:
-                    break
-                if license_filter == LicenseFilter.CC_BY_SA_ONLY and not asset.license.is_cc_by_sa:
-                    continue
-                try:
-                    resp = await http.get(
-                        asset.url,
-                        headers={
-                            "User-Agent": "SolarisAtlasBot/1.0 (+https://solarisatlas.fun)",
-                            "Referer": bundle.page_url,
-                        },
-                    )
-                    resp.raise_for_status()
-                except Exception:
-                    continue
-                if validate_image_bytes(resp.content) is None:
-                    continue
+        for asset in bundle.images:
+            if len(imported_references) >= max_images:
+                break
+            if license_filter == LicenseFilter.CC_BY_SA_ONLY and not asset.license.is_cc_by_sa:
+                continue
+            try:
+                content = await asyncio.to_thread(_fetch_image_bytes, asset.url, bundle.page_url)
+            except Exception as exc:
+                logger.warning("fandom.image_fetch_failed url=%s error=%s", asset.url, type(exc).__name__)
+                continue
+            if validate_image_bytes(content) is None:
+                continue
+            try:
                 ref = await memory_service.add_reference(
-                    resp.content,
+                    content,
                     identity_ids=[identity_id],
                     source_type="fandom",
                     source_url=asset.url,
@@ -162,8 +174,11 @@ async def sync_fandom_bundle(
                     status="pending",
                     store_image=True,
                 )
-                if isinstance(ref, dict) and ref.get("id"):
-                    imported_references.append(int(ref["id"]))
+            except Exception as exc:
+                logger.warning("fandom.add_reference_failed url=%s error=%s", asset.url, type(exc).__name__)
+                continue
+            if isinstance(ref, dict) and ref.get("id"):
+                imported_references.append(int(ref["id"]))
 
     return {
         "page_url": bundle.page_url,
