@@ -469,11 +469,13 @@ export function NpcProfile({
               characterKey={character.canonical_key}
               variant="actions"
               onComplete={() => setRevision((value) => value + 1)}
-            />
-            <FandomSyncAction
-              canonicalKey={character.canonical_key}
-              entityKind="npc"
-              menuLabel="NPC Fandom actions"
+              extraActions={
+                <FandomSyncAction
+                  standalone={false}
+                  canonicalKey={character.canonical_key}
+                  entityKind="npc"
+                />
+              }
             />
           </div>
           <p>

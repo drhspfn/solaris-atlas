@@ -4,6 +4,9 @@ import { useEffect, useId, useRef, useState } from "react";
 import { api, ApiError } from "@/api/client";
 import { useAuth } from "@/auth/AuthProvider";
 import { ActionMenu } from "@/components/ui/ActionMenu";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Select, type SelectOption } from "@/components/ui/Select";
 import { ExternalLink, Globe, RefreshCw, X } from "lucide-react";
 
 type SyncAction =
@@ -149,14 +152,6 @@ function FandomSyncControls({
     void loadStatus();
   }
 
-  function toggleAction(action: SyncAction) {
-    setSelectedActions((prev) =>
-      prev.includes(action)
-        ? prev.filter((item) => item !== action)
-        : [...prev, action],
-    );
-  }
-
   async function runSync() {
     if (!selectedActions.length) {
       setError("Select at least one sync action.");
@@ -200,6 +195,21 @@ function FandomSyncControls({
       setSyncing(false);
     }
   }
+
+  const isCutscene =
+    entityKind === "cutscene" || status?.entity.node_type === "cutscene";
+  const actionOptions: SelectOption[] = [
+    { value: "sync_facts", label: "Sync Fandom page & facts (default)" },
+    { value: "sync_relations", label: "Update graph relations (infobox -> DB edges)" },
+    { value: "import_images", label: "Import gallery images into Visual Memory" },
+    ...(isCutscene
+      ? [{ value: "run_visual_analysis", label: "Queue cutscene visual analysis" }]
+      : []),
+  ];
+  const licenseOptions: SelectOption[] = [
+    { value: "ignore", label: "Ignore license filter (save metadata)" },
+    { value: "cc_by_sa_only", label: "Only CC-BY-SA compatible" },
+  ];
 
   const triggerButton = (
     <button type="button" aria-haspopup="dialog" onClick={openModal}>
@@ -398,76 +408,39 @@ function FandomSyncControls({
               borderRadius: "8px",
               padding: "0.75rem",
               display: "grid",
-              gap: "0.45rem",
+              gap: "0.75rem",
             }}
           >
-            <legend>Actions to run</legend>
-            <label
-              style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}
-            >
-              <input
-                type="checkbox"
-                checked={selectedActions.includes("sync_facts")}
-                onChange={() => toggleAction("sync_facts")}
+            <legend>Sync options</legend>
+            <div style={{ display: "grid", gap: "0.3rem" }}>
+              <span>Actions to run</span>
+              <Select
+                label="Actions to run"
+                multiple
+                values={selectedActions}
+                onValuesChange={(vals) =>
+                  setSelectedActions(vals as SyncAction[])
+                }
+                options={actionOptions}
+                placeholder="Select sync actions"
               />
-              Sync Fandom page &amp; facts (default)
-            </label>
-            <label
-              style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}
-            >
-              <input
-                type="checkbox"
-                checked={selectedActions.includes("sync_relations")}
-                onChange={() => toggleAction("sync_relations")}
-              />
-              Update graph relations (infobox → DB edges)
-            </label>
-            <label
-              style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}
-            >
-              <input
-                type="checkbox"
-                checked={selectedActions.includes("import_images")}
-                onChange={() => toggleAction("import_images")}
-              />
-              Import gallery images into Visual Memory
-            </label>
-            {(entityKind === "cutscene" ||
-              status?.entity.node_type === "cutscene") && (
-              <label
-                style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedActions.includes("run_visual_analysis")}
-                  onChange={() => toggleAction("run_visual_analysis")}
-                />
-                Queue cutscene visual analysis
-              </label>
-            )}
-            <label
-              style={{ display: "grid", gap: "0.25rem", marginTop: "0.25rem" }}
-            >
+            </div>
+            <div style={{ display: "grid", gap: "0.3rem" }}>
               <span>License filter</span>
-              <select
+              <Select
+                label="License filter"
                 value={licenseFilter}
-                onChange={(e) =>
+                onChange={(val) =>
                   setLicenseFilter(
-                    e.target.value === "cc_by_sa_only"
-                      ? "cc_by_sa_only"
-                      : "ignore",
+                    val === "cc_by_sa_only" ? "cc_by_sa_only" : "ignore",
                   )
                 }
-              >
-                <option value="ignore">
-                  Ignore license filter (save metadata)
-                </option>
-                <option value="cc_by_sa_only">Only CC-BY-SA compatible</option>
-              </select>
-            </label>
-            <label style={{ display: "grid", gap: "0.25rem" }}>
+                options={licenseOptions}
+              />
+            </div>
+            <label style={{ display: "grid", gap: "0.3rem" }}>
               <span>Optional Fandom page title override</span>
-              <input
+              <Input
                 type="text"
                 value={titleOverride}
                 onChange={(e) => setTitleOverride(e.target.value)}
@@ -483,17 +456,19 @@ function FandomSyncControls({
               justifyContent: "flex-end",
             }}
           >
-            <button type="button" onClick={() => setOpen(false)}>
+            <Button variant="ghost" onClick={() => setOpen(false)}>
               Cancel
-            </button>
-            <button
-              type="button"
-              disabled={syncing || loading}
+            </Button>
+            <Button
+              variant="primary"
+              loading={syncing}
+              loadingLabel="Syncing…"
+              disabled={loading}
+              icon={<RefreshCw size={15} aria-hidden="true" />}
               onClick={() => void runSync()}
             >
-              <RefreshCw size={15} aria-hidden="true" />{" "}
-              {syncing ? "Syncing…" : "Run Fandom Sync"}
-            </button>
+              Run Fandom Sync
+            </Button>
           </div>
         </div>
       </dialog>
