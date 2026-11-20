@@ -900,8 +900,8 @@ async def test_worker_database_limits_are_local_and_cancel_long_queries_and_lock
         async with factory() as session:
             before = await session.scalar(text("SHOW statement_timeout"))
         async with defaults() as session:
-            assert await session.scalar(text("SELECT setting::int FROM pg_settings WHERE name='statement_timeout'")) == 180000
-            assert await session.scalar(text("SELECT setting::int FROM pg_settings WHERE name='lock_timeout'")) == 1000
+            assert await session.scalar(text("SELECT setting::int FROM pg_settings WHERE name='statement_timeout'")) == refresh_worker.PROJECTION_STATEMENT_TIMEOUT_MS
+            assert await session.scalar(text("SELECT setting::int FROM pg_settings WHERE name='lock_timeout'")) == refresh_worker.PROJECTION_LOCK_TIMEOUT_MS
         async with limited() as session:
             with pytest.raises(DBAPIError) as cancelled:
                 await session.execute(text("SELECT pg_sleep(5)"))

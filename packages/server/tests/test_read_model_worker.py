@@ -340,3 +340,22 @@ async def test_refresh_batch_runs_multiple_claims_concurrently(monkeypatch):
     monkeypatch.setattr(worker, "refresh_claim", fake_refresh)
     assert await worker.refresh_batch(object(), limit=3, concurrency=2) == 3
     assert peak == 2
+
+
+@pytest.mark.asyncio
+async def test_watch_refreshes_reconciles_ready_scopes_when_idle(monkeypatch):
+    stop = asyncio.Event()
+    monkeypatch.setattr(worker, "get_settings", lambda: SimpleNamespace(read_projection_min_free_gib=0))
+    monkeypatch.setattr(worker.shutil, "disk_usage", lambda _: SimpleNamespace(free=1))
+    monkeypatch.setattr(worker, "refresh_batch", AsyncMock(return_value=0))
+    reconcile = AsyncMock(return_value=1)
+    monkeypatch.setattr(worker, "reconcile_ready_scopes", reconcile)
+
+    async def stop_on_wait(awaitable, *, timeout):
+        stop.set()
+        await awaitable
+
+    monkeypatch.setattr(worker.asyncio, "wait_for", stop_on_wait)
+    await worker.watch_refreshes(stop, kinds=["character", "quest"])
+    reconcile.assert_awaited_once()
+    assert reconcile.call_args.kwargs["kinds"] == ["character", "quest"]

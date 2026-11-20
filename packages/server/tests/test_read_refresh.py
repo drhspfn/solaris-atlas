@@ -98,7 +98,7 @@ async def test_claim_commits_before_return_and_uses_bounded_skip_locked():
 @pytest.mark.asyncio
 async def test_stale_publish_does_not_write_or_acknowledge():
     session = AsyncMock()
-    session.scalar.side_effect = [SimpleNamespace(kind="character", snapshot_key="current"), None]
+    session.scalar.side_effect = [None]
     assert not await refresh.publish_refresh(factory(session), claim(), [])
     session.execute.assert_not_awaited()
     statement = sql(session.scalar.call_args.args[0])
@@ -113,7 +113,7 @@ async def test_publication_stamps_scope_generation_and_commits_all_locales(monke
     session = AsyncMock()
     row = SimpleNamespace(processed_generation=3, lease_token=uuid4(), lease_until=object())
     scope = SimpleNamespace(kind="character", snapshot_key="current", status="pending")
-    session.scalar.side_effect = [scope, row, None, False]
+    session.scalar.side_effect = [row, None, False, scope, False]
     publish = AsyncMock(return_value=True)
     monkeypatch.setattr(refresh, "publish_entry", publish)
     entries = [{"entity_id": 7, "locale_id": locale, "snapshot_key": "current",
@@ -125,6 +125,7 @@ async def test_publication_stamps_scope_generation_and_commits_all_locales(monke
     assert row.processed_generation == 4
     assert row.lease_token is row.lease_until is None
     assert row.attempts == 0
+    assert scope.status == "pending"
 
 
 @pytest.mark.asyncio
@@ -216,3 +217,99 @@ async def test_dirty_large_request_chunks_sorted_ids_without_extra_scope_generat
         assert 'requested_generation' in str(compiled).split('DO UPDATE SET', 1)[1]
     assert values == list(range(1, 9001))
     session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_publish_refresh_skips_scope_lock_while_pending_rows_remain(monkeypatch):
+    session = AsyncMock()
+    row = SimpleNamespace(processed_generation=3, lease_token=uuid4(), lease_until=object())
+    # Calls: 1) dirty row FOR UPDATE, 2) newer projection check, 3) pending EXISTS check -> True
+    session.scalar.side_effect = [row, None, True]
+    publish = AsyncMock(return_value=True)
+    monkeypatch.setattr(refresh, "publish_entry", publish)
+    entries = [{"entity_id": 7, "locale_id": 1, "snapshot_key": "current",
+                "title": "Entry", "sort_title": "entry", "card": {}, "searchable_text": "Entry", "payload": {}}]
+    assert await refresh.publish_refresh(factory(session), claim(), entries)
+    compiled = [sql(call.args[0]) for call in session.scalar.call_args_list]
+    assert not any("read_projection_scope" in item and "FOR UPDATE" in item for item in compiled)
+    assert row.processed_generation == 4
+
+
+@pytest.mark.asyncio
+async def test_publish_refresh_tolerates_scope_lock_timeout_after_commit(monkeypatch):
+    from sqlalchemy.exc import DBAPIError
+
+    session = AsyncMock()
+    row = SimpleNamespace(processed_generation=3, lease_token=uuid4(), lease_until=object())
+    orig = Exception("lock timeout")
+    orig.sqlstate = "55P03"
+    lock_err = DBAPIError("SELECT ... FOR UPDATE", {}, orig)
+    # Calls: 1) dirty row, 2) newer check, 3) pending=False, then 3 retries of _lock_scope -> 55P03
+    session.scalar.side_effect = [row, None, False, lock_err, lock_err, lock_err]
+    monkeypatch.setattr(refresh, "publish_entry", AsyncMock(return_value=True))
+    monkeypatch.setattr(refresh, "_SCOPE_RECONCILE_RETRY_DELAYS", (0.0, 0.0))
+    entries = [{"entity_id": 7, "locale_id": 1, "snapshot_key": "current",
+                "title": "Entry", "sort_title": "entry", "card": {}, "searchable_text": "Entry", "payload": {}}]
+    assert await refresh.publish_refresh(factory(session), claim(), entries)
+    assert row.processed_generation == 4
+
+
+@pytest.mark.asyncio
+async def test_reconcile_ready_scopes_uses_skip_locked_and_marks_ready():
+    session = AsyncMock()
+    scope = SimpleNamespace(kind="character", snapshot_key="current", status="pending",
+                            generation=9, published_generation=0, published_at=None, updated_at=None)
+    session.execute.side_effect = [SimpleNamespace(all=lambda: [("character", "current")]), None]
+    session.scalar.side_effect = [scope, True]
+    assert await refresh.reconcile_ready_scopes(factory(session), kinds=["character"]) == 1
+    assert scope.status == "ready"
+    assert scope.published_generation == 9
+    lock_query = sql(session.scalar.call_args_list[0].args[0])
+    assert "FOR UPDATE SKIP LOCKED" in lock_query
+
+
+@pytest.mark.asyncio
+async def test_estimate_backfill_uses_hash_sample_and_falls_back_to_current(monkeypatch):
+    session = AsyncMock()
+    monkeypatch.setattr(refresh, "get_settings", lambda: SimpleNamespace(read_projection_locales=("en",)))
+    # scalar calls: entities, locales
+    session.scalar.side_effect = [15651, 1]
+    # execute calls: snapshot '3.7.0' sample -> empty, fallback 'current' sample -> 200 rows @ 7500 B
+    session.execute.side_effect = [
+        SimpleNamespace(one=lambda: (0, None)),
+        SimpleNamespace(one=lambda: (200, 7500)),
+    ]
+    estimate = await refresh._estimate_backfill(session, "character", "3.7.0")
+    assert estimate.sampled_rows == 200
+    assert estimate.estimated_row_bytes == int(7500 * 1.5)
+    assert estimate.estimated_bytes == 15651 * estimate.estimated_row_bytes * 2
+    first_sql = sql(session.execute.call_args_list[0].args[0])
+    second_sql = sql(session.execute.call_args_list[1].args[0])
+    assert "hashtext" in first_sql and "LIMIT 500" in first_sql
+    assert "snapshot_key = '3.7.0'" in first_sql
+    assert "snapshot_key = 'current'" in second_sql
+
+
+@pytest.mark.asyncio
+async def test_refresh_claim_skips_relation_builder_and_stops_locales_on_proven_deletion(monkeypatch):
+    from fastapi import HTTPException
+
+    session = AsyncMock()
+    locales = [SimpleNamespace(id=1), SimpleNamespace(id=2), SimpleNamespace(id=3)]
+    session.scalars.side_effect = [locales]
+    monkeypatch.setattr(refresh, "_deletion_proven", AsyncMock(return_value=True))
+    publish = AsyncMock(return_value=True)
+    monkeypatch.setattr(refresh, "publish_refresh", publish)
+    builder = AsyncMock(side_effect=HTTPException(404, "NPC data is not available for this snapshot"))
+    relation_builder = AsyncMock(side_effect=AssertionError("relation_builder must not run on deleted entity"))
+    assert await refresh.refresh_claim(
+        factory(session),
+        refresh.RefreshClaim("character", 7302777, "3.7.0", 30, uuid4(), 1),
+        builder=builder,
+        relation_builder=relation_builder,
+    )
+    assert builder.await_count == 1
+    relation_builder.assert_not_awaited()
+    publish.assert_awaited_once()
+    assert publish.call_args.args[2] == []
+    assert publish.call_args.kwargs["complete_locales"] is True

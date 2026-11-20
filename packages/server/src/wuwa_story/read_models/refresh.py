@@ -1,14 +1,17 @@
 """Bounded, leased refresh work; source builds never hold publication locks."""
 
 import asyncio
+import logging
 import re
 from dataclasses import dataclass
 from datetime import timedelta
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
     Numeric,
+    Text,
     and_,
     case,
     cast,
@@ -24,6 +27,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import DBAPIError
 
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.browse import EntityReadRelation
@@ -49,8 +53,10 @@ from wuwa_story.ingestion.game_events import CLIENT_SOURCE
 from wuwa_story.read_models.publication import publish_entries, publish_entry
 
 _DEFAULT_PUBLISH_ENTRY = publish_entry
+logger = logging.getLogger(__name__)
 
 DIRTY_INSERT_BATCH_SIZE = 1000
+_SCOPE_RECONCILE_RETRY_DELAYS = (0.1, 0.25)
 
 NODE_KINDS = {
     "character": ("character",), "item": ("item",), "location": ("location", "area"),
@@ -198,6 +204,98 @@ async def _finish_scope(session, scope):
     scope.updated_at = func.clock_timestamp()
 
 
+def extract_sqlstate(error):
+    """Extract a validated 5-character SQLSTATE from a DBAPIError exception chain."""
+    if not isinstance(error, DBAPIError):
+        return None
+    pending = [error.orig]
+    seen = set()
+    while pending and len(seen) < 8:
+        original = pending.pop()
+        if original is None or id(original) in seen:
+            continue
+        seen.add(id(original))
+        candidate = getattr(original, "sqlstate", None)
+        if isinstance(candidate, str) and re.fullmatch(r"[0-9A-Z]{5}", candidate):
+            return candidate
+        pending.extend((getattr(original, "__context__", None), getattr(original, "__cause__", None)))
+    return None
+
+
+def _is_lock_timeout(error):
+    return extract_sqlstate(error) == "55P03"
+
+
+async def _reconcile_scope_if_drained(factory, kind, snapshot_key):
+    """Mark scope ready in a brief separate transaction only once no dirty rows remain.
+
+    Publication transactions lock only the single dirty row so concurrent entity
+    refreshes never serialize on ops.read_projection_scope or deadlock with
+    enqueuers (which lock scope before dirty rows).
+    """
+    async with factory() as session:
+        pending = await session.scalar(select(exists(select(ReadProjectionDirty.kind).where(
+            ReadProjectionDirty.kind == kind,
+            ReadProjectionDirty.snapshot_key == snapshot_key,
+            ReadProjectionDirty.processed_generation < ReadProjectionDirty.requested_generation,
+        ))))
+    if pending:
+        return
+    scope_key = SimpleNamespace(kind=kind, snapshot_key=snapshot_key)
+    for attempt in range(len(_SCOPE_RECONCILE_RETRY_DELAYS) + 1):
+        try:
+            async with factory() as session, session.begin():
+                scope = await _lock_scope(session, scope_key)
+                await _finish_scope(session, scope)
+            return
+        except DBAPIError as error:
+            if not _is_lock_timeout(error):
+                raise
+            if attempt < len(_SCOPE_RECONCILE_RETRY_DELAYS):
+                await asyncio.sleep(_SCOPE_RECONCILE_RETRY_DELAYS[attempt])
+                continue
+            logger.warning(
+                "read_projection.scope_reconcile_deferred kind=%s snapshot=%s",
+                kind, snapshot_key,
+            )
+
+
+async def reconcile_ready_scopes(factory, *, kinds=None):
+    """Transition drained pending/building scopes to ready without blocking writers."""
+    initialized = exists(select(ReadProjectionDirty.kind).where(
+        ReadProjectionDirty.kind == ReadProjectionScope.kind,
+        ReadProjectionDirty.snapshot_key == ReadProjectionScope.snapshot_key,
+        ReadProjectionDirty.entity_id == 0,
+        ReadProjectionDirty.processed_generation == ReadProjectionDirty.requested_generation,
+    ))
+    pending = exists(select(ReadProjectionDirty.kind).where(
+        ReadProjectionDirty.kind == ReadProjectionScope.kind,
+        ReadProjectionDirty.snapshot_key == ReadProjectionScope.snapshot_key,
+        ReadProjectionDirty.processed_generation < ReadProjectionDirty.requested_generation,
+    ))
+    statement = select(ReadProjectionScope.kind, ReadProjectionScope.snapshot_key).where(
+        ReadProjectionScope.status != "ready",
+        initialized,
+        ~pending,
+    ).order_by(ReadProjectionScope.kind, ReadProjectionScope.snapshot_key)
+    if kinds is not None:
+        statement = statement.where(ReadProjectionScope.kind.in_(kinds))
+    async with factory() as session:
+        candidates = list((await session.execute(statement)).all())
+    reconciled = 0
+    for kind, snapshot_key in candidates:
+        async with factory() as session, session.begin():
+            scope = await session.scalar(select(ReadProjectionScope).where(
+                ReadProjectionScope.kind == kind,
+                ReadProjectionScope.snapshot_key == snapshot_key,
+            ).with_for_update(skip_locked=True))
+            if scope is not None:
+                await _finish_scope(session, scope)
+                if scope.status == "ready":
+                    reconciled += 1
+    return reconciled
+
+
 def _active_snapshot_import():
     return exists(select(ImportRun.id).join(GameRelease, GameRelease.id == ImportRun.release_id).where(
         ImportRun.importer == "wuwa-deterministic-compiler",
@@ -343,7 +441,6 @@ async def publish_refresh(factory, claim, entries, relations=(), *, complete_loc
         merged[key] = relation
     relations = list(merged.values())
     async with factory() as session, session.begin():
-        scope = await _lock_scope(session, claim)
         row = await session.scalar(select(ReadProjectionDirty).where(
             *_lease(claim), ReadProjectionDirty.requested_generation == claim.generation,
             ReadProjectionDirty.processed_generation < claim.generation,
@@ -391,7 +488,7 @@ async def publish_refresh(factory, claim, entries, relations=(), *, complete_loc
         row.lease_token = row.lease_until = None
         row.last_error = None
         row.attempts = 0
-        await _finish_scope(session, scope)
+    await _reconcile_scope_if_drained(factory, claim.kind, claim.snapshot_key)
     return True
 
 
@@ -491,14 +588,24 @@ async def _estimate_backfill(session, kind, snapshot_key):
         locale_count = locale_count.where(Locale.code.in_(selected_locales))
     locales = 1 if kind == "game_notice" else await session.scalar(locale_count)
     # Sample stored attributes without extracting/decompressing full JSON payloads.
+    # Hash-order across entity_id so low-ID playable entities do not skew the mean,
+    # and prefer the exact snapshot before falling back to current.
     # Include tuple/key overhead, and reserve 2x for indexes, TOAST and replacement.
     size = 256 + sum(func.coalesce(func.pg_column_size(column), 0) for column in (
         model.payload, model.card, model.artwork, model.searchable_text, model.search_vector,
     ))
-    sample = select(size.label("bytes")).where(
-        model.snapshot_key.in_([snapshot_key, "current"]),
-    ).order_by(model.entity_id, model.locale_id).limit(100).subquery()
-    count, average = (await session.execute(select(func.count(), func.avg(sample.c.bytes)))).one()
+    sample_snapshots = (snapshot_key,) if snapshot_key == "current" else (snapshot_key, "current")
+    count, average = 0, None
+    for sample_snapshot in sample_snapshots:
+        sample = select(size.label("bytes")).where(
+            model.snapshot_key == sample_snapshot,
+        ).order_by(
+            func.hashtext(cast(model.entity_id, Text)),
+            model.locale_id,
+        ).limit(500).subquery()
+        count, average = (await session.execute(select(func.count(), func.avg(sample.c.bytes)))).one()
+        if count:
+            break
     row_bytes = max(4096, int(float(average) * 1.5)) if count and average is not None else 64 * 1024
     rows = entities * locales
     if snapshot_key.startswith("download:"):
@@ -577,6 +684,7 @@ async def expand_bulk(
                     return False
                 count = max(1, min(3, 64 // max(estimate.locales, 1)))
                 ids = list(await writer.scalars(select(identities.c.entity_id).order_by(
+                    func.hashtext(cast(identities.c.entity_id, Text)),
                     identities.c.entity_id,
                 ).limit(count)))
                 await mark_dirty(writer, claim.kind, ids, claim.snapshot_key, debounce_seconds=0)
@@ -683,6 +791,7 @@ async def refresh_claim(
                     locales = list(await session.scalars(statement))
                     if not locales:
                         break
+                    proven_deleted = False
                     for locale in locales:
                         try:
                             entry = await builder(session, claim.kind, claim.entity_id, locale.id, claim.snapshot_key)
@@ -694,8 +803,13 @@ async def refresh_claim(
                             if not await _deletion_proven(session, claim):
                                 raise
                             entry = None
+                            if not entries:
+                                proven_deleted = True
+                                break
                         if entry is not None:
                             entries.append(entry)
+                    if proven_deleted:
+                        break
                     after = locales[-1].id
             if not entries:
                 async with factory() as session:
@@ -709,7 +823,7 @@ async def refresh_claim(
                         if notice_locale is None or notice_locale in selected_locales:
                             raise ValueError("Source entity exists or its snapshot is unavailable; empty build rejected")
             relations = ()
-            if relation_builder is not None and (entries or deleted):
+            if relation_builder is not None and entries:
                 async with factory() as session:
                     relations = await relation_builder(session, claim.kind, claim.entity_id, claim.snapshot_key)
             if pulse.done():

@@ -11,7 +11,6 @@ import time
 from dataclasses import asdict
 
 from sqlalchemy import event, select
-from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.exceptions import HTTPException
 
@@ -23,8 +22,10 @@ from wuwa_story.read_models.policy import HISTORICAL_KINDS
 from wuwa_story.read_models.refresh import (
     claim_refreshes,
     estimate_backfill,
+    extract_sqlstate,
     fail_claim,
     mark_dirty,
+    reconcile_ready_scopes,
     refresh_claim,
 )
 
@@ -66,21 +67,7 @@ def _failure_codes(error):
     status = getattr(error, "status_code", None) if isinstance(error, HTTPException) else None
     if type(status) is not int or not 100 <= status <= 599:
         status = None
-    sqlstate = None
-    if isinstance(error, DBAPIError):
-        pending = [error.orig]
-        seen = set()
-        while pending and len(seen) < 8:
-            original = pending.pop()
-            if original is None or id(original) in seen:
-                continue
-            seen.add(id(original))
-            candidate = getattr(original, "sqlstate", None)
-            if isinstance(candidate, str) and re.fullmatch(r"[0-9A-Z]{5}", candidate):
-                sqlstate = candidate
-                break
-            pending.extend((getattr(original, "__context__", None), getattr(original, "__cause__", None)))
-    return status, sqlstate
+    return status, extract_sqlstate(error)
 
 
 def _log_failure(claim, error, *, claim_timeout=False):
@@ -149,6 +136,7 @@ async def watch_refreshes(stop, *, factory=SessionFactory, interval=2, kinds=Non
     last_storage_warning = 0.0
     selected_kinds = list(dict.fromkeys(kinds if kinds is not None else READ_PROJECTION_KINDS))
     next_kind = 0
+    busy_cycles = 0
     while not stop.is_set():
         # Compose stores worker and PostgreSQL volumes on the same host disk.
         # Leave import/API headroom; pending work is retained in PostgreSQL.
@@ -176,6 +164,15 @@ async def watch_refreshes(stop, *, factory=SessionFactory, interval=2, kinds=Non
                 logger.warning("read_projection.poll_failed kind=%s error=%s", kind, type(error).__name__)
             if worked:
                 break
+        busy_cycles = busy_cycles + 1 if worked else 0
+        if not stop.is_set() and (not worked or busy_cycles >= 20):
+            busy_cycles = 0
+            try:
+                await reconcile_ready_scopes(factory, kinds=selected_kinds)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logger.warning("read_projection.reconcile_failed error=%s", type(error).__name__)
         if not worked:
             try:
                 await asyncio.wait_for(stop.wait(), timeout=interval)
