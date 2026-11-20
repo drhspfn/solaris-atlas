@@ -1154,7 +1154,8 @@ def _estimate_input_tokens(payload: Any, atlases: list[AtlasEntry], *, extra_ima
 
     text_len = len(json.dumps(_strip_images(payload), ensure_ascii=False, default=str))
     _ = extra_images
-    return max(4096, text_len // 4 + image_tokens + 1024)
+    base_tokens = text_len // 4 + image_tokens
+    return max(4096, base_tokens + max(1536, base_tokens // 10))
 
 
 def _prune_old_history_images(history: list[dict[str, Any]], *, keep_tail: int = 2) -> bool:

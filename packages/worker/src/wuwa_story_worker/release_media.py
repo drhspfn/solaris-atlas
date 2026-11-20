@@ -538,13 +538,14 @@ async def cutscene_assets(payload, parent, session=None):
         # Preparation has not resolved its final video package identity yet.
         # Leaves check reuse with that identity; retain exact wrappers for their fallback.
         targets = payload["targets"]
-    discover_extra = bool(session is not None and parent.get("release_id") and parent.get("workspace_id"))
+    release_id = parent.get("release_id") or payload.get("release_id")
+    discover_extra = bool(session is not None and release_id and parent.get("workspace_id"))
     bindata_names: list[str] = []
     seq_candidates: dict[str, list[dict]] = {}
     if discover_extra:
-        bindata_report = await discover_bindata_cutscenes(session, parent["release_id"], apply=True)
+        bindata_report = await discover_bindata_cutscenes(session, release_id, apply=True)
         bindata_names = bindata_report.get("cutscene_names", [])
-        seq_candidates = await levela_sequence_candidates(session, parent["release_id"])
+        seq_candidates = await levela_sequence_candidates(session, release_id)
     extra_candidates = sorted((set(seq_candidates) | set(bindata_names)) - set(payload["targets"]))
     if not targets and not extra_candidates:
         return {**parent, "stage": "cutscene_assets_reused", "reused": len(payload["targets"])}, "completed"
@@ -571,10 +572,10 @@ async def cutscene_assets(payload, parent, session=None):
     scanned_extra: dict[str, dict[str, list[str]]] = {}
     non_vd_targets = sorted(set(targets) - vd_names)
     authored_by_name: dict[str, list[str]] = {}
-    if session is not None and parent.get("release_id"):
+    if session is not None and release_id:
         query_names = sorted(set(non_vd_targets) | set(bindata_names))
         if query_names:
-            authored_by_name = await authored_cutscene_assets(session, parent["release_id"], query_names)
+            authored_by_name = await authored_cutscene_assets(session, release_id, query_names)
     if parent.get("workspace_id"):
         # Historical config can retain wrappers removed from the current client.
         # Sound events come from the localized package in extract_cutscene_audio.
@@ -676,7 +677,7 @@ async def cutscene_assets(payload, parent, session=None):
                 }
             )
         if to_register:
-            await register_discovered_cutscenes(session, parent["release_id"], to_register)
+            await register_discovered_cutscenes(session, release_id, to_register)
     save_json(assets / "video-database.json", {"path": config.relative_to(receipts[0].parent / "files").as_posix()})
     from wuwa_story_worker.entity_media import tool
     from wuwa_story_worker.voice_bootstrap import discover_video_plan
