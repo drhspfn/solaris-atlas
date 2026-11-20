@@ -17,6 +17,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { Button } from "./Button";
+import { Tooltip } from "./Tooltip";
 import {
   mediaViewerIndex,
   mediaViewerUrl,
@@ -173,7 +174,17 @@ export function MediaViewer({
         <div className="media-viewer-layout">
           <header className="media-viewer-header">
             <div className="media-viewer-heading">
-              <strong>{item.title}</strong>
+              <Tooltip
+                content={item.title}
+                side="bottom"
+                align="start"
+                disabled={item.title.length <= 48}
+                className="media-viewer-title-tooltip"
+              >
+                <strong tabIndex={item.title.length > 48 ? 0 : undefined}>
+                  {item.title}
+                </strong>
+              </Tooltip>
               <span aria-live="polite">
                 {(activeIndex ?? 0) + 1} / {items.length}
               </span>

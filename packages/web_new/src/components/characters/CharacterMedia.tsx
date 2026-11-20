@@ -13,6 +13,7 @@ import { apiUrl } from "@/api/client";
 import { PlayerText } from "@/components/dialogue/PlayerText";
 import { Button } from "@/components/ui/Button";
 import type { MediaItem } from "@/components/ui/MediaViewer";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useMediaViewer } from "@/components/ui/MediaViewerProvider";
 import {
   animationPreviewUrl,
@@ -137,7 +138,14 @@ function MediaCard({ item, onOpen }: { item: MediaItem; onOpen: () => void }) {
           </span>
         )}
       </span>
-      <span className="character-media-caption">{item.title}</span>
+      <Tooltip
+        content={item.title}
+        side="bottom"
+        align="start"
+        disabled={item.title.length <= 28}
+      >
+        <span className="character-media-caption">{item.title}</span>
+      </Tooltip>
       <span className="character-media-action">
         View {item.type === "video" ? "animation" : "image"}
       </span>
@@ -184,27 +192,20 @@ export function CharacterShowcaseVideos({
   );
 }
 
-export function CharacterMediaGallery({
-  videos,
-  posterUrl,
-}: {
+export function CharacterMediaGallery(_props: {
   videos?: CharacterArchiveData["showcase_videos"];
   posterUrl?: string | null;
 } = {}) {
   const { items, open } = useCharacterMedia();
-  const playableVideos = (videos ?? []).filter((video) => Boolean(video?.url));
-  if (!items.length && !playableVideos.length) return null;
+  if (!items.length) return null;
   return (
     <section className="character-media" aria-label="Character media">
       <h3>Artwork and animation</h3>
-      {items.length > 0 && (
-        <div className="character-media-grid">
-          {items.map((item, index) => (
-            <MediaCard key={item.id} item={item} onOpen={() => open(index)} />
-          ))}
-        </div>
-      )}
-      <CharacterShowcaseVideos videos={playableVideos} posterUrl={posterUrl} />
+      <div className="character-media-grid">
+        {items.map((item, index) => (
+          <MediaCard key={item.id} item={item} onOpen={() => open(index)} />
+        ))}
+      </div>
     </section>
   );
 }
