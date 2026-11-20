@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import math
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass, field
@@ -350,6 +351,83 @@ def _review_evidence_errors(draft: VideoAnalysisResult, final: VideoAnalysisResu
                            for index in decision.final_indices):
                     errors.append(f"{label}: changed wording requires revision and evidence")
     return errors[:20]
+
+
+_CHRONOLOGY_STOPWORDS = frozenset({
+    "with", "that", "this", "from", "into", "then", "when", "while", "where",
+    "they", "their", "them", "there", "here", "scene", "shot", "frame", "frames",
+    "close", "view", "shows", "showing", "appears", "continuing", "continues",
+    "across", "toward", "towards", "around", "before", "after", "during", "over",
+})
+
+
+def _event_keywords(text: str) -> set[str]:
+    return {
+        tok
+        for tok in re.findall(r"[a-z0-9]{4,}", (text or "").casefold())
+        if tok not in _CHRONOLOGY_STOPWORDS
+    }
+
+
+def _revision_contradiction_errors(
+    previous_draft: VideoAnalysisResult | None,
+    candidate: VideoAnalysisResult,
+) -> list[str]:
+    """Detect when a revised pass duplicates or shifts a later scene into an earlier timestamp."""
+    if previous_draft is None or not previous_draft.events or not candidate.events:
+        return []
+    errors: list[str] = []
+    prev_events = [
+        (ev, ev.time, ev.time_end if ev.time_end is not None else ev.time, _event_keywords(ev.observation))
+        for ev in previous_draft.events
+    ]
+    cand_events = [
+        (ev, ev.time, ev.time_end if ev.time_end is not None else ev.time, _event_keywords(ev.observation))
+        for ev in candidate.events
+    ]
+    for ev, c_start, c_end, c_words in cand_events:
+        if len(c_words) < 4:
+            continue
+        best_match = None
+        best_jaccard = 0.0
+        for p_ev, p_start, p_end, p_words in prev_events:
+            if len(p_words) < 4:
+                continue
+            shared = c_words & p_words
+            if len(shared) < 4:
+                continue
+            jaccard = len(shared) / len(c_words | p_words)
+            if jaccard > best_jaccard:
+                best_jaccard = jaccard
+                best_match = (p_ev, p_start, p_end, p_words)
+        if best_match is None or best_jaccard < 0.45:
+            continue
+        p_ev, p_start, p_end, p_words = best_match
+        if abs(c_start - p_start) < 15.0:
+            continue
+        # Only flag if the original timestamp still exists in candidate (scene was duplicated/copied early)
+        # OR an unrelated earlier anchor occupied [c_start, c_end] in previous_draft.
+        still_at_origin = any(
+            o_ev is not ev
+            and abs(o_start - p_start) < 12.0
+            and len(o_words & p_words) >= 4
+            and (len(o_words & p_words) / len(o_words | p_words)) >= 0.35
+            for o_ev, o_start, _o_end, o_words in cand_events
+        )
+        prior_here_differs = any(
+            p_other_start <= c_end + 4.0
+            and p_other_end >= c_start - 4.0
+            and len(p_other_words & c_words) < 3
+            for _po, p_other_start, p_other_end, p_other_words in prev_events
+        )
+        if still_at_origin or prior_here_differs:
+            errors.append(
+                f"Chronology conflict at [{round(c_start, 2)}s..{round(c_end, 2)}s]: "
+                f"event duplicates/shifts content from previous draft's [{round(p_start, 2)}s..{round(p_end, 2)}s]. "
+                f"Verify the actual sampled frames at [{round(c_start, 2)}s..{round(c_end, 2)}s] instead of "
+                f"moving or copying a later scene into an earlier timestamp."
+            )
+    return errors[:10]
 
 
 async def _previous_scene_evidence(db: AsyncSession, run: ProcessingRun) -> dict[str, Any]:
@@ -1446,18 +1524,23 @@ TEMPORAL_REVIEW_INSTRUCTION = (
     "call `identify_atlas_characters` on their `evidence_frames`, and ALWAYS call `get_character_reference_image` on any "
     "returned candidate `reference_ids` (`status='unknown'` included!) plus `search_entities`, `search_lore`, and `search_facts` "
     "(which cover characters, speakers, NPCs, and Fandom bios/relations) to confirm or rule out identities. "
-    "3) Cross-cut persistence: ensure confirmed character identities (including Rover from "
+    "3) Cross-cut & version-identity persistence: ensure confirmed character identities (including Rover from "
     "{PlayerName} context or visually matched characters) remain linked across cuts and back/side "
-    "shots instead of regressing to generic labels. "
+    "shots instead of regressing to generic labels, and when multiple variants/manifestations of a character "
+    "appear (e.g., Wartime vs Current), cross-check clothing, headwear/veil, and setting against the exact "
+    "reference portrait and `evidence_frames` so their visual traits are never swapped. "
     "4) Ending & sparse windows: check the final 20-30s before fade-out with `view_atlases`, `resample_video_window`, "
     "or `inspect_video_region` whenever shots are sparse or show distant/back-view figures, verifying whether one person "
     "is supporting/carrying another. "
     "5) Deduplication without compression: merge adjacent (<=2-3s) observations that describe the "
     "exact same unchanging action (e.g., consecutive frames of aiming without a new beat), while "
     "keeping distinct micro-actions, emotional shifts, and multi-cut climax/ending beats separate. "
-    "6) Record major confirmed findings/relationships via `post_fact`. If concrete character checks, target windows, "
-    "or story gaps should be fixed by the Writer (and revisions remain), call `return_draft_for_revision`; do NOT return "
-    "a draft merely because `event_review`/`identity_review` are empty (you author those in your own final submission). "
+    "6) Evidence-first revision requests: if concrete character checks, target windows, or story gaps "
+    "should be fixed by the Writer (and revisions remain), call `return_draft_for_revision` with **open "
+    "questions per distinct window**—never merge separate locations into one window or state an unverified "
+    "location/scene inside an earlier timestamp as fact. Record major confirmed findings/relationships via "
+    "`post_fact`; do NOT return a draft merely because `event_review`/`identity_review` are empty "
+    "(you author those in your own final submission). "
     "Otherwise cite actual frame numbers and matching scene timestamps, set `evidence_kind` for every event, and call `finish_video_analysis`."
 )
 
@@ -1615,6 +1698,7 @@ async def run_video_analysis_agent(
         review_started = False
         review_started_at = -1
         review_draft: VideoAnalysisResult | None = None
+        last_writer_draft: VideoAnalysisResult | None = None
         revision_rounds = 0
         writer_history: list[dict[str, Any]] = []
         writer_draft_tc: ToolCall | None = None
@@ -1653,6 +1737,7 @@ async def run_video_analysis_agent(
                               else ["A saved draft is required before final review"])
             if review_required:
                 errors.extend(_unverified_candidate_errors(candidate, run, workspace, reference_images_used))
+                errors.extend(_revision_contradiction_errors(review_draft, candidate))
             return errors[:20]
 
         initial_accounted = set((run.raw_output or {}).get(
@@ -1752,6 +1837,19 @@ async def run_video_analysis_agent(
                         history.append(_multimodal_user_message(provider, json.dumps(outcome), []))
                         continue
                     if review_required and not review_started:
+                        if last_writer_draft is not None:
+                            chronology_errors = _revision_contradiction_errors(last_writer_draft, candidate)
+                            if chronology_errors:
+                                finish_corrections += 1
+                                outcome = {
+                                    "error": "invalid_temporal_evidence",
+                                    "details": chronology_errors,
+                                }
+                                await record_finish(f"{step}:text", outcome)
+                                if finish_corrections > MAX_FINISH_CORRECTIONS:
+                                    raise ProviderFailure("video_agent_finish_correction_limit")
+                                history.append(_multimodal_user_message(provider, json.dumps(outcome), []))
+                                continue
                         review_started = True
                         review_started_at = step
                         finish_corrections = 0
@@ -1819,6 +1917,19 @@ async def run_video_analysis_agent(
                         history.append(provider.tool_result(tc, outcome))
                         continue
                     if review_required and not review_started:
+                        if last_writer_draft is not None:
+                            chronology_errors = _revision_contradiction_errors(last_writer_draft, candidate)
+                            if chronology_errors:
+                                finish_corrections += 1
+                                outcome = {
+                                    "error": "invalid_temporal_evidence",
+                                    "details": chronology_errors,
+                                }
+                                await record_finish(finish_key, outcome)
+                                if finish_corrections > MAX_FINISH_CORRECTIONS:
+                                    raise ProviderFailure("video_agent_finish_correction_limit")
+                                history.append(provider.tool_result(tc, outcome))
+                                continue
                         review_started = True
                         review_started_at = step
                         finish_corrections = 0
@@ -1902,16 +2013,19 @@ async def run_video_analysis_agent(
                             "revision_requests": revisions,
                         }
                         await db.commit()
+                    last_writer_draft = review_draft
                     review_started = False
                     finish_corrections = 0
                     last_rejected_finish_digest = None
                     loaded_atlases_in_pass = set(writer_loaded_atlases)
                     history = list(writer_history)
                     revision_msg = (
-                        "Reader/Editor returned your draft for revision. Address every item below "
-                        "(check candidate portrait references with get_character_reference_image, inspect "
-                        "requested windows/atlases, and enrich narrative/emotional continuity), then "
-                        "resubmit via finish_video_analysis:\n"
+                        "Reader/Editor returned your draft for revision. Treat the feedback below as OPEN QUESTIONS "
+                        "to verify against the actual sampled frames—NOT confirmed facts. Keep separate locations "
+                        "and time anchors distinct, never move or duplicate a later scene into an earlier timestamp "
+                        "unless the frames at that earlier timestamp visibly depict it, and cross-check character "
+                        "variant outfits/accessories with `get_character_reference_image`. Then resubmit via "
+                        "finish_video_analysis:\n"
                         + json.dumps(feedback, ensure_ascii=False)
                     )
                     if writer_draft_tc is not None:

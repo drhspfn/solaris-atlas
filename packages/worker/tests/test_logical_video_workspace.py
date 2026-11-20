@@ -1420,3 +1420,90 @@ def test_build_verifier_history_numbers_draft_and_prune_old_images():
         evidence_review_required=True,
     )
     assert '"draft_index": 0' in verifier_msgs[1]["content"][0]["text"]
+
+
+def test_revision_contradiction_errors_flags_shifted_later_scene():
+    prev_payload = {
+        **result(),
+        "events": [
+            {
+                "time": 44.0,
+                "time_end": 56.0,
+                "global_frame": 1,
+                "evidence_frames": [1],
+                "confidence": "observed",
+                "observation": "Translucent uniformed comrades stand in a sunlit pale flower field beside Lily.",
+                "actors": ["Lily"],
+                "evidence_kind": "observed",
+            },
+            {
+                "time": 80.0,
+                "time_end": 108.0,
+                "global_frame": 2,
+                "evidence_frames": [2],
+                "confidence": "observed",
+                "observation": "Warm interior lounge memorial gathering with seated uniformed woman and child by candlelight.",
+                "actors": ["Cassandra"],
+                "evidence_kind": "observed",
+            },
+        ],
+    }
+    shifted_payload = {
+        **result(),
+        "events": [
+            {
+                "time": 50.0,
+                "time_end": 57.0,
+                "global_frame": 1,
+                "evidence_frames": [1],
+                "confidence": "observed",
+                "observation": "Warm interior lounge memorial gathering with seated uniformed woman and child by candlelight.",
+                "actors": ["Cassandra"],
+                "evidence_kind": "observed",
+            },
+            {
+                "time": 80.0,
+                "time_end": 108.0,
+                "global_frame": 2,
+                "evidence_frames": [2],
+                "confidence": "observed",
+                "observation": "Warm interior lounge memorial gathering with seated uniformed woman and child by candlelight.",
+                "actors": ["Cassandra"],
+                "evidence_kind": "observed",
+            },
+        ],
+    }
+    prev_draft = VideoAnalysisResult.model_validate(prev_payload)
+    shifted = VideoAnalysisResult.model_validate(shifted_payload)
+    errors = agent._revision_contradiction_errors(prev_draft, shifted)
+    assert len(errors) == 1
+    assert "[50.0s..57.0s]" in errors[0]
+    assert "[80.0s..108.0s]" in errors[0]
+
+    refined_payload = {
+        **result(),
+        "events": [
+            {
+                "time": 44.0,
+                "time_end": 56.0,
+                "global_frame": 1,
+                "evidence_frames": [1],
+                "confidence": "observed",
+                "observation": "Translucent uniformed comrades stand peacefully in a sunlit pale flower field around Lily.",
+                "actors": ["Lily"],
+                "evidence_kind": "observed",
+            },
+            {
+                "time": 80.0,
+                "time_end": 108.0,
+                "global_frame": 2,
+                "evidence_frames": [2],
+                "confidence": "observed",
+                "observation": "Warm interior lounge memorial gathering with seated uniformed woman, child, and glowing candles.",
+                "actors": ["Cassandra"],
+                "evidence_kind": "observed",
+            },
+        ],
+    }
+    refined = VideoAnalysisResult.model_validate(refined_payload)
+    assert agent._revision_contradiction_errors(prev_draft, refined) == []
