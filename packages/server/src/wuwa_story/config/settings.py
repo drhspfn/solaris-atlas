@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     read_projection_min_free_gib: int = Field(default=20, ge=1)
     read_projection_max_rows: int = Field(default=250_000, ge=1)
     read_projection_max_bytes: int = Field(default=2 * 1024**3, ge=1)
+    read_projection_batch_limit: int = Field(default=40, ge=1, le=100)
+    read_projection_batch_concurrency: int = Field(default=8, ge=1, le=32)
+    read_projection_poll_seconds: float = Field(default=1.0, gt=0, le=60)
     api_max_concurrent_requests: int = Field(default=8, ge=1)
     api_db_statement_timeout_ms: int = Field(default=20000, ge=1)
     s3_access_key_id: str = "minio"

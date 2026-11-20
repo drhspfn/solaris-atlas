@@ -359,3 +359,35 @@ async def test_watch_refreshes_reconciles_ready_scopes_when_idle(monkeypatch):
     await worker.watch_refreshes(stop, kinds=["character", "quest"])
     reconcile.assert_awaited_once()
     assert reconcile.call_args.kwargs["kinds"] == ["character", "quest"]
+
+
+@pytest.mark.asyncio
+async def test_watch_refreshes_uses_configured_batch_and_poll_settings(monkeypatch):
+    stop = asyncio.Event()
+    monkeypatch.setattr(
+        worker,
+        "get_settings",
+        lambda: SimpleNamespace(
+            read_projection_min_free_gib=0,
+            read_projection_batch_limit=40,
+            read_projection_batch_concurrency=8,
+            read_projection_poll_seconds=1.0,
+        ),
+    )
+    monkeypatch.setattr(worker.shutil, "disk_usage", lambda _: SimpleNamespace(free=1))
+    refresh = AsyncMock(return_value=0)
+    monkeypatch.setattr(worker, "refresh_batch", refresh)
+    monkeypatch.setattr(worker, "reconcile_ready_scopes", AsyncMock(return_value=0))
+    observed_timeouts = []
+
+    async def stop_on_wait(awaitable, *, timeout):
+        observed_timeouts.append(timeout)
+        stop.set()
+        await awaitable
+
+    monkeypatch.setattr(worker.asyncio, "wait_for", stop_on_wait)
+    await worker.watch_refreshes(stop, kinds=["character"])
+    refresh.assert_awaited_once()
+    assert refresh.call_args.kwargs["limit"] == 40
+    assert refresh.call_args.kwargs["concurrency"] == 8
+    assert observed_timeouts == [1.0]

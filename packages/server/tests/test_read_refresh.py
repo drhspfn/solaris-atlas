@@ -313,3 +313,25 @@ async def test_refresh_claim_skips_relation_builder_and_stops_locales_on_proven_
     publish.assert_awaited_once()
     assert publish.call_args.args[2] == []
     assert publish.call_args.kwargs["complete_locales"] is True
+
+
+@pytest.mark.asyncio
+async def test_publish_refresh_retries_lock_timeout_before_failing(monkeypatch):
+    from sqlalchemy.exc import DBAPIError
+
+    session = AsyncMock()
+    row = SimpleNamespace(processed_generation=3, lease_token=uuid4(), lease_until=object())
+    orig = Exception("lock timeout")
+    orig.sqlstate = "55P03"
+    lock_err = DBAPIError("INSERT ... ON CONFLICT", {}, orig)
+    # Attempt 1: dirty row FOR UPDATE, newer check -> lock_err during publish_entry;
+    # Attempt 2: dirty row FOR UPDATE, newer check, pending EXISTS -> True.
+    session.scalar.side_effect = [row, None, row, None, True]
+    publish = AsyncMock(side_effect=[lock_err, True])
+    monkeypatch.setattr(refresh, "publish_entry", publish)
+    monkeypatch.setattr(refresh, "_PUBLISH_LOCK_RETRY_DELAYS", (0.0, 0.0))
+    entries = [{"entity_id": 7, "locale_id": 1, "snapshot_key": "current",
+                "title": "Entry", "sort_title": "entry", "card": {}, "searchable_text": "Entry", "payload": {}}]
+    assert await refresh.publish_refresh(factory(session), claim(), entries)
+    assert publish.await_count == 2
+    assert row.processed_generation == 4

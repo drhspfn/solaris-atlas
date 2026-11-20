@@ -2,9 +2,14 @@
 
 import re
 from contextlib import contextmanager
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 from fastapi import HTTPException
+from fastapi.encoders import jsonable_encoder
+from pydantic import BaseModel
 from sqlalchemy import case, func, or_, select
 
 from wuwa_story.api.routes import nodes
@@ -58,6 +63,28 @@ _PRIVATE_FIELDS = {
     "can_delete",
     "can_import",
 }
+
+
+def _fast_jsonable(value: Any) -> Any:
+    """Convert nested build outputs to JSON-safe primitives without full FastAPI introspection."""
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    if isinstance(value, dict):
+        return {
+            (k if isinstance(k, str) else str(k)): _fast_jsonable(v)
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_fast_jsonable(item) for item in value]
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, BaseModel):
+        return _fast_jsonable(value.model_dump())
+    return jsonable_encoder(value)
 
 
 def _public_json(value: Any) -> Any:

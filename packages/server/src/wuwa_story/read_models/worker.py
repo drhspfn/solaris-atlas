@@ -33,10 +33,10 @@ logger = logging.getLogger(__name__)
 # Background-only DB budget; HTTP retains its separate statement limit.
 # The overall refresh claim remains bounded at 600 seconds.
 PROJECTION_STATEMENT_TIMEOUT_MS = 180_000
-PROJECTION_LOCK_TIMEOUT_MS = 5_000
+PROJECTION_LOCK_TIMEOUT_MS = 10_000
 CLAIM_TIMEOUT_SECONDS = 10 * 60
-DEFAULT_BATCH_LIMIT = 10
-DEFAULT_BATCH_CONCURRENCY = 4
+DEFAULT_BATCH_LIMIT = 40
+DEFAULT_BATCH_CONCURRENCY = 8
 
 
 def create_worker_database(
@@ -48,7 +48,7 @@ def create_worker_database(
         raise ValueError("Worker database timeouts must be positive")
     worker_engine = create_async_engine(
         database_url or get_settings().database_url, pool_pre_ping=True,
-        pool_size=10, max_overflow=5, pool_timeout=5,
+        pool_size=12, max_overflow=8, pool_timeout=5,
     )
 
     @event.listens_for(worker_engine.sync_engine, "begin")
@@ -132,7 +132,7 @@ async def refresh_batch(
     return len(claims)
 
 
-async def watch_refreshes(stop, *, factory=SessionFactory, interval=2, kinds=None, **claim_filters):
+async def watch_refreshes(stop, *, factory=SessionFactory, interval=None, kinds=None, **claim_filters):
     last_storage_warning = 0.0
     selected_kinds = list(dict.fromkeys(kinds if kinds is not None else READ_PROJECTION_KINDS))
     next_kind = 0
@@ -140,7 +140,8 @@ async def watch_refreshes(stop, *, factory=SessionFactory, interval=2, kinds=Non
     while not stop.is_set():
         # Compose stores worker and PostgreSQL volumes on the same host disk.
         # Leave import/API headroom; pending work is retained in PostgreSQL.
-        minimum = get_settings().read_projection_min_free_gib * 1024**3
+        settings = get_settings()
+        minimum = settings.read_projection_min_free_gib * 1024**3
         if shutil.disk_usage(".").free < minimum:
             if time.monotonic() - last_storage_warning > 60:
                 logger.warning("read_projection.storage_headroom_low; refresh paused")
@@ -150,6 +151,13 @@ async def watch_refreshes(stop, *, factory=SessionFactory, interval=2, kinds=Non
             except TimeoutError:
                 pass
             continue
+        batch_filters = dict(claim_filters)
+        batch_limit = getattr(settings, "read_projection_batch_limit", None)
+        batch_concurrency = getattr(settings, "read_projection_batch_concurrency", None)
+        if batch_limit is not None and "limit" not in batch_filters:
+            batch_filters["limit"] = batch_limit
+        if batch_concurrency is not None and "concurrency" not in batch_filters:
+            batch_filters["concurrency"] = batch_concurrency
         worked = 0
         for _ in range(len(selected_kinds)):
             if stop.is_set():
@@ -157,7 +165,7 @@ async def watch_refreshes(stop, *, factory=SessionFactory, interval=2, kinds=Non
             kind = selected_kinds[next_kind]
             next_kind = (next_kind + 1) % len(selected_kinds)
             try:
-                worked = await refresh_batch(factory, kinds=[kind], **claim_filters)
+                worked = await refresh_batch(factory, kinds=[kind], **batch_filters)
             except asyncio.CancelledError:
                 raise
             except Exception as error:
@@ -174,8 +182,12 @@ async def watch_refreshes(stop, *, factory=SessionFactory, interval=2, kinds=Non
             except Exception as error:
                 logger.warning("read_projection.reconcile_failed error=%s", type(error).__name__)
         if not worked:
+            poll_seconds = (
+                interval if interval is not None
+                else getattr(settings, "read_projection_poll_seconds", 2)
+            )
             try:
-                await asyncio.wait_for(stop.wait(), timeout=interval)
+                await asyncio.wait_for(stop.wait(), timeout=poll_seconds)
             except TimeoutError:
                 pass
 

@@ -365,4 +365,4 @@ async def _build_entity(session, kind, entity_id, locale, snapshot_key):
         "quest_type": card.get("quest_type"),
         "payload": payload,
     }
-    return sections._public_json(jsonable_encoder(sections._compact_storage(entry)))
+    return sections._public_json(sections._fast_jsonable(sections._compact_storage(entry)))

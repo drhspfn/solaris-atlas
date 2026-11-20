@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import re
+import weakref
 from dataclasses import dataclass
 from datetime import timedelta
 from types import SimpleNamespace
@@ -57,6 +58,20 @@ logger = logging.getLogger(__name__)
 
 DIRTY_INSERT_BATCH_SIZE = 1000
 _SCOPE_RECONCILE_RETRY_DELAYS = (0.1, 0.25)
+_PUBLISH_LOCK_RETRY_DELAYS = (0.15, 0.4, 0.8)
+_PUBLISH_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, asyncio.Lock]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _publish_lock(kind: str) -> asyncio.Lock:
+    """Serialize publication commits per kind within one worker loop to avoid 55P03 on public_cache_revision."""
+    loop = asyncio.get_running_loop()
+    locks = _PUBLISH_LOCKS.setdefault(loop, {})
+    lock = locks.get(kind)
+    if lock is None:
+        lock = locks[kind] = asyncio.Lock()
+    return lock
 
 NODE_KINDS = {
     "character": ("character",), "item": ("item",), "location": ("location", "area"),
@@ -440,54 +455,62 @@ async def publish_refresh(factory, claim, entries, relations=(), *, complete_loc
             raise ValueError("Conflicting evidence for one projected relationship")
         merged[key] = relation
     relations = list(merged.values())
-    async with factory() as session, session.begin():
-        row = await session.scalar(select(ReadProjectionDirty).where(
-            *_lease(claim), ReadProjectionDirty.requested_generation == claim.generation,
-            ReadProjectionDirty.processed_generation < claim.generation,
-            ~_active_snapshot_import(),
-        ).with_for_update())
-        if row is None:
-            return False
-        model = ENTITY_READ_MODELS[claim.kind]
-        # A generation belongs to this exact entity/snapshot scope, never a bulk scope.
-        newer = await session.scalar(select(model.entity_id).where(
-            model.entity_id == claim.entity_id, model.snapshot_key == claim.snapshot_key,
-            model.generation > claim.generation,
-        ).limit(1))
-        if newer is not None:
-            raise ValueError("Projection is newer than its dirty scope")
-        if len(entries) > 1 and publish_entry is _DEFAULT_PUBLISH_ENTRY:
-            accepted = await publish_entries(
-                session,
-                claim.kind,
-                [{**entry, "generation": claim.generation} for entry in entries],
-                relations,
-            )
-            if not accepted:
-                raise ValueError("Projection publication rejected an older generation")
-        else:
-            for index, entry in enumerate(entries):
-                accepted = await publish_entry(
-                    session, claim.kind, {**entry, "generation": claim.generation},
-                    relations if index == len(entries) - 1 else None,
-                )
-                if not accepted:
-                    raise ValueError("Projection publication rejected an older generation")
-        if complete_locales:
-            await session.execute(delete(model).where(
-                model.entity_id == claim.entity_id, model.snapshot_key == claim.snapshot_key,
-                model.locale_id.not_in(locales), model.generation <= claim.generation,
-            ))
-        if not entries and complete_locales:
-            await session.execute(delete(EntityReadRelation).where(
-                EntityReadRelation.owner_kind == claim.kind,
-                EntityReadRelation.owner_id == claim.entity_id,
-                EntityReadRelation.snapshot_key == claim.snapshot_key,
-            ))
-        row.processed_generation = claim.generation
-        row.lease_token = row.lease_until = None
-        row.last_error = None
-        row.attempts = 0
+    async with _publish_lock(claim.kind):
+        for attempt in range(len(_PUBLISH_LOCK_RETRY_DELAYS) + 1):
+            try:
+                async with factory() as session, session.begin():
+                    row = await session.scalar(select(ReadProjectionDirty).where(
+                        *_lease(claim), ReadProjectionDirty.requested_generation == claim.generation,
+                        ReadProjectionDirty.processed_generation < claim.generation,
+                        ~_active_snapshot_import(),
+                    ).with_for_update())
+                    if row is None:
+                        return False
+                    model = ENTITY_READ_MODELS[claim.kind]
+                    # A generation belongs to this exact entity/snapshot scope, never a bulk scope.
+                    newer = await session.scalar(select(model.entity_id).where(
+                        model.entity_id == claim.entity_id, model.snapshot_key == claim.snapshot_key,
+                        model.generation > claim.generation,
+                    ).limit(1))
+                    if newer is not None:
+                        raise ValueError("Projection is newer than its dirty scope")
+                    if len(entries) > 1 and publish_entry is _DEFAULT_PUBLISH_ENTRY:
+                        accepted = await publish_entries(
+                            session,
+                            claim.kind,
+                            [{**entry, "generation": claim.generation} for entry in entries],
+                            relations,
+                        )
+                        if not accepted:
+                            raise ValueError("Projection publication rejected an older generation")
+                    else:
+                        for index, entry in enumerate(entries):
+                            accepted = await publish_entry(
+                                session, claim.kind, {**entry, "generation": claim.generation},
+                                relations if index == len(entries) - 1 else None,
+                            )
+                            if not accepted:
+                                raise ValueError("Projection publication rejected an older generation")
+                    if complete_locales:
+                        await session.execute(delete(model).where(
+                            model.entity_id == claim.entity_id, model.snapshot_key == claim.snapshot_key,
+                            model.locale_id.not_in(locales), model.generation <= claim.generation,
+                        ))
+                    if not entries and complete_locales:
+                        await session.execute(delete(EntityReadRelation).where(
+                            EntityReadRelation.owner_kind == claim.kind,
+                            EntityReadRelation.owner_id == claim.entity_id,
+                            EntityReadRelation.snapshot_key == claim.snapshot_key,
+                        ))
+                    row.processed_generation = claim.generation
+                    row.lease_token = row.lease_until = None
+                    row.last_error = None
+                    row.attempts = 0
+                break
+            except DBAPIError as error:
+                if not _is_lock_timeout(error) or attempt >= len(_PUBLISH_LOCK_RETRY_DELAYS):
+                    raise
+                await asyncio.sleep(_PUBLISH_LOCK_RETRY_DELAYS[attempt])
     await _reconcile_scope_if_drained(factory, claim.kind, claim.snapshot_key)
     return True
 
@@ -777,10 +800,11 @@ async def refresh_claim(
             )
         else:
             entries = []
+            relations = ()
             deleted = False
             after = 0
-            while True:
-                async with factory() as session:
+            async with factory() as session:
+                while True:
                     statement = select(Locale).where(Locale.id > after).order_by(Locale.id).limit(locale_batch_size)
                     if selected_locales:
                         statement = statement.where(Locale.code.in_(selected_locales))
@@ -808,11 +832,10 @@ async def refresh_claim(
                                 break
                         if entry is not None:
                             entries.append(entry)
-                    if proven_deleted:
+                    if proven_deleted or len(locales) < locale_batch_size:
                         break
                     after = locales[-1].id
-            if not entries:
-                async with factory() as session:
+                if not entries:
                     deleted = await _deletion_proven(session, claim)
                     if not deleted:
                         # A notice belongs to exactly one source locale. A staged
@@ -822,9 +845,7 @@ async def refresh_claim(
                         )) if claim.kind == "game_notice" and selected_locales else None
                         if notice_locale is None or notice_locale in selected_locales:
                             raise ValueError("Source entity exists or its snapshot is unavailable; empty build rejected")
-            relations = ()
-            if relation_builder is not None and entries:
-                async with factory() as session:
+                if relation_builder is not None and entries:
                     relations = await relation_builder(session, claim.kind, claim.entity_id, claim.snapshot_key)
             if pulse.done():
                 pulse.result()

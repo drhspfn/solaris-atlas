@@ -1,6 +1,5 @@
 """Exact snapshot source relationships and search filters; no personal inference."""
 
-from fastapi.encoders import jsonable_encoder
 from sqlalchemy import case, or_, select
 
 from wuwa_story.api.routes.story import (
@@ -20,7 +19,12 @@ from wuwa_story.db.repositories.quest_scope import quest_state_links
 from wuwa_story.db.repositories.read_models import ENTITY_READ_MODELS
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
 from wuwa_story.read_models.context import source_build
-from wuwa_story.read_models.source_sections import _event_version, _public_json, _request_caches
+from wuwa_story.read_models.source_sections import (
+    _event_version,
+    _fast_jsonable,
+    _public_json,
+    _request_caches,
+)
 from wuwa_story.story import service
 
 _NODE_KINDS = {
@@ -250,7 +254,7 @@ async def build_relations(session, kind, entity_id, snapshot_key="current"):
                 )
             if kind == "character":
                 await _character_relations(session, node, release_id, add)
-    return _public_json(jsonable_encoder([grouped[key] for key in sorted(grouped)]))
+    return _public_json(_fast_jsonable([grouped[key] for key in sorted(grouped)]))
 
 
 def _speaker_crosswalk(release_id, character_id=None):

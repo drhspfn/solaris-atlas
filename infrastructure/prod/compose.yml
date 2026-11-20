@@ -282,10 +282,14 @@ services:
   projection-worker:
     <<: *worker
     command: ["python", "-m", "wuwa_story.read_models.worker", "--watch"]
-    cpus: ${WUWA_PROJECTION_CPUS:-1.0}
+    cpus: ${WUWA_PROJECTION_CPUS:-2.0}
     mem_limit: ${WUWA_PROJECTION_MEMORY:-2g}
     deploy:
       replicas: ${WUWA_PROJECTION_REPLICAS:-0}
+    environment:
+      READ_PROJECTION_BATCH_LIMIT: ${READ_PROJECTION_BATCH_LIMIT:-40}
+      READ_PROJECTION_BATCH_CONCURRENCY: ${READ_PROJECTION_BATCH_CONCURRENCY:-8}
+      READ_PROJECTION_POLL_SECONDS: ${READ_PROJECTION_POLL_SECONDS:-1}
 
   asset-worker:
     <<: *worker
