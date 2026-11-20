@@ -610,8 +610,9 @@ async def register_discovered_cutscenes(
         state_ids = {state_id for _, state_id in state_by_action.values()}
         states_with_lines = set(
             await session.scalars(
-                select(DialogueLine.quest_state_node_id)
-                .where(DialogueLine.quest_state_node_id.in_(state_ids))
+                select(QuestAction.quest_state_node_id)
+                .join(DialogueLine, DialogueLine.action_node_id == QuestAction.node_id)
+                .where(QuestAction.quest_state_node_id.in_(state_ids))
                 .distinct()
             )
         ) if state_ids else set()
