@@ -230,3 +230,63 @@ async def enqueue_event_images(session, payload: dict, paths: list[str], *, kind
         raise RuntimeError(
             f"Could not enqueue {failed} event image tasks; retry catalog import")
     return {"tasks": len(runs), "queued": len(pending)}
+
+
+async def enqueue_discovered_cutscenes(session, payload: dict, names: list[str]) -> dict:
+    """Queue cutscene assembly tasks for archive-discovered scenes under cutscene_assets."""
+    targets = sorted({name for name in names if isinstance(name, str) and name})
+    if not targets:
+        return {"tasks": 0, "queued": 0}
+    parent = await session.get(ProcessingRun, payload["run_id"])
+    if parent is None:
+        raise ValueError("Cutscene asset preparation task not found")
+    workspace_id = (parent.raw_output or {}).get(
+        "workspace_id") if getattr(parent, "raw_output", None) else None
+    if workspace_id is not None:
+        await retain_workspace(session, workspace_id)
+    pending = []
+    runs = []
+    for name in targets:
+        request = {
+            "release_id": payload["release_id"],
+            "game_version": payload["game_version"],
+            "kind": "cutscene",
+            "targets": [name],
+            "parent_id": parent.id,
+            "cutscene_assembly_schema": CUTSCENE_ASSEMBLY_SCHEMA,
+        }
+        digest = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).digest()
+        run = await session.scalar(select(ProcessingRun).where(
+            ProcessingRun.processor_id == parent.processor_id,
+            ProcessingRun.input_hash == digest,
+        ))
+        if run is None:
+            run = ProcessingRun(processor_id=parent.processor_id, input_hash=digest)
+            session.add(run)
+            await session.flush()
+        if payload.get("recheck_files") and run.status == "completed":
+            run.status = "pending"
+        if run.status not in {"running", "completed", "queued", "waiting_dependency"}:
+            job = {"schema_version": 1, "job_type": "media.release",
+                   "run_id": run.id, **request}
+            run.status, run.error, run.finished_at, run.raw_output = "queued", None, None, None
+            run.metadata_json = {
+                "payload": job,
+                "request": request,
+                "queue": CUTSCENE_ASSEMBLY_QUEUE,
+            }
+            pending.append((run, job))
+        runs.append(run)
+    await session.commit()
+    failed = 0
+    for run, job in pending:
+        try:
+            await publish_media_job(job, f"release-media:{run.id}", CUTSCENE_ASSEMBLY_QUEUE)
+        except Exception:
+            run.status, run.error = "enqueue_failed", "Cutscene publication failed; retry asset preparation"
+            await session.commit()
+            failed += 1
+    if failed:
+        raise RuntimeError(
+            f"Could not enqueue {failed} discovered cutscene tasks; retry asset preparation")
+    return {"tasks": len(runs), "queued": len(pending)}

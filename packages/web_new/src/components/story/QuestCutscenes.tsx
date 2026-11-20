@@ -704,6 +704,13 @@ export function Cutscene({
               : "Position in the story is not mapped."}
           </p>
         )}
+      {event.sequence_transition && (
+        <p className={styles.placement}>
+          {event.sequence_transition.movie_scope === "embedded_fragment"
+            ? "Transition from in-engine sequence · Embedded pre-rendered movie clip"
+            : "Transition from in-engine sequence"}
+        </p>
+      )}
       {flow ? (
         <FlowPlayer
           key={`${flow.asset_version}-${flow.entry}`}

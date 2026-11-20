@@ -19,11 +19,21 @@ from wuwa_story.db.models.storage import FileReference
 from wuwa_story.db.session import SessionFactory, engine
 from wuwa_story.ingestion.client_assets import discover_plan, inspect_installed_clients
 from wuwa_story.ingestion.client_events import store_client_events
+from wuwa_story.ingestion.cutscene_discovery import (
+    authored_cutscene_assets,
+    discover_bindata_cutscenes,
+    levela_sequence_candidates,
+    register_discovered_cutscenes,
+)
 from wuwa_story.ingestion.entity_media import MediaRequest
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE, SOURCE
 from wuwa_story.ingestion.media_jobs import enqueue_entity_media
 from wuwa_story.ingestion.media_provenance import missing_media_targets
-from wuwa_story.ingestion.release_media import enqueue_event_images, enqueue_release_media
+from wuwa_story.ingestion.release_media import (
+    enqueue_discovered_cutscenes,
+    enqueue_event_images,
+    enqueue_release_media,
+)
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
@@ -45,7 +55,11 @@ from wuwa_story_worker.cutscene_caption_audio import (
 )
 from wuwa_story_worker.cutscene_import import import_cutscene_recipe, missing_cutscene_identities
 from wuwa_story_worker.cutscene_plan import engine_path, plan_cutscene
-from wuwa_story_worker.cutscene_sources import prepare_base_movies
+from wuwa_story_worker.cutscene_sources import (
+    prepare_base_movies,
+    resolve_discovered_cutscene_sources,
+    scan_archive_cutscene_candidates,
+)
 from wuwa_story_worker.cutscene_video_source import exported_video_path
 from wuwa_story_worker.event_catalog import client_event_record, read_event_catalog
 from wuwa_story_worker.event_resources import annotate_image_packages, event_resources
@@ -454,7 +468,68 @@ def video_database(root, *, cache=None):
     raise ValueError("Exported client has no VideoData/VideoSound database")
 
 
-async def cutscene_assets(payload, parent):
+async def _resolve_authored_and_archive_sources(root: Path, assets: Path, name: str, parent: dict) -> list[dict]:
+    authored = list((parent.get("authored_cutscene_assets") or {}).get(name, []))
+    candidate_wrappers: list[str] = []
+    candidate_mp4s: list[str] = []
+    index = root / "archive-index.sqlite"
+    if index.is_file():
+        scanned = (await asyncio.to_thread(scan_archive_cutscene_candidates, index, [name])).get(name)
+        if scanned:
+            candidate_wrappers = scanned["wrappers"]
+            candidate_mp4s = scanned["direct_mp4s"]
+    return await asyncio.to_thread(
+        resolve_discovered_cutscene_sources,
+        assets,
+        name,
+        authored_assets=authored,
+        candidate_wrappers=candidate_wrappers,
+        candidate_mp4s=candidate_mp4s,
+        require_movie_file=not bool(authored),
+    )
+
+
+async def _plan_cutscene_or_fallback(
+    root: Path,
+    config: Path,
+    assets: Path,
+    name: str,
+    asset_version: str,
+    *,
+    missing_assets: list | None = None,
+    frame_audio: list[dict] | None = None,
+    parent: dict | None = None,
+) -> dict:
+    plan_kwargs: dict = {"missing_assets": missing_assets}
+    if frame_audio is not None:
+        plan_kwargs["frame_audio"] = frame_audio
+    try:
+        return await asyncio.to_thread(
+            plan_cutscene,
+            config,
+            assets,
+            name,
+            asset_version,
+            **plan_kwargs,
+        )
+    except ValueError as err:
+        if "Cutscene not found in VideoData" not in str(err):
+            raise
+        fallback = await _resolve_authored_and_archive_sources(root, assets, name, parent or {})
+        if not fallback:
+            raise
+        return await asyncio.to_thread(
+            plan_cutscene,
+            config,
+            assets,
+            name,
+            asset_version,
+            fallback_sources=fallback,
+            **plan_kwargs,
+        )
+
+
+async def cutscene_assets(payload, parent, session=None):
     context = await source_context(parent, video=True)
     missing = await missing_cutscene_identities({"cutscene:" + name for name in payload["targets"]},
                                                source_context=context)
@@ -463,7 +538,15 @@ async def cutscene_assets(payload, parent):
         # Preparation has not resolved its final video package identity yet.
         # Leaves check reuse with that identity; retain exact wrappers for their fallback.
         targets = payload["targets"]
-    if not targets:
+    discover_extra = bool(session is not None and parent.get("release_id") and parent.get("workspace_id"))
+    bindata_names: list[str] = []
+    seq_candidates: dict[str, list[dict]] = {}
+    if discover_extra:
+        bindata_report = await discover_bindata_cutscenes(session, parent["release_id"], apply=True)
+        bindata_names = bindata_report.get("cutscene_names", [])
+        seq_candidates = await levela_sequence_candidates(session, parent["release_id"])
+    extra_candidates = sorted((set(seq_candidates) | set(bindata_names)) - set(payload["targets"]))
+    if not targets and not extra_candidates:
         return {**parent, "stage": "cutscene_assets_reused", "reused": len(payload["targets"])}, "completed"
     root = client_root(parent)
     fmodel = tool_path("WUWA_FMODEL_PATH")
@@ -473,30 +556,127 @@ async def cutscene_assets(payload, parent):
     config = await asyncio.to_thread(video_database, receipts[0].parent / "files",
                                      cache=receipts[0].parent / "video-database.json")
     with closing(sqlite3.connect(config.resolve().as_uri() + "?mode=ro", uri=True)) as db:
-        videos = [(row[0], exported_video_path(engine_path(row[1])))
-                  for name in targets for row in db.execute("SELECT CgId, BinData FROM videodata WHERE CgName = ?", (name,))]
+        videos = [(row[0], row[2], exported_video_path(engine_path(row[1])))
+                  for name in targets
+                  for row in db.execute("SELECT CgId, BinData, CgName FROM videodata WHERE CgName = ?", (name,))]
     caption_cg_names = [name for name in targets if await asyncio.to_thread(has_caption_audio, config, name)]
-    cg_ids = {cg_id for cg_id, _ in videos}
+    cg_ids = {cg_id for cg_id, _, _ in videos}
+    vd_names = {vd_name for _, vd_name, _ in videos}
     unavailable = []
     available = {}
     index = None
-    direct_movies = {path for _, path in videos if path.casefold().endswith(".mp4")}
+    direct_movies = {path for _, _, path in videos if path.casefold().endswith(".mp4")}
+    extra_direct_movies: set[str] = set()
+    extra_wrappers: dict[str, str] = {}
+    scanned_extra: dict[str, dict[str, list[str]]] = {}
+    non_vd_targets = sorted(set(targets) - vd_names)
+    authored_by_name: dict[str, list[str]] = {}
+    if session is not None and parent.get("release_id"):
+        query_names = sorted(set(non_vd_targets) | set(bindata_names))
+        if query_names:
+            authored_by_name = await authored_cutscene_assets(session, parent["release_id"], query_names)
     if parent.get("workspace_id"):
         # Historical config can retain wrappers removed from the current client.
         # Sound events come from the localized package in extract_cutscene_audio.
         paths = {path.removeprefix("Client/Content/").removesuffix(".uexp")
-                 for _, path in videos if path not in direct_movies}
+                 for _, _, path in videos if path not in direct_movies}
+        for name in non_vd_targets:
+            for asset_key in authored_by_name.get(name, []):
+                rel = exported_video_path(asset_key.removeprefix("asset:ue:"))
+                if rel.casefold().endswith(".mp4"):
+                    direct_movies.add(rel)
+                else:
+                    paths.add(rel.removeprefix("Client/Content/").removesuffix(".uexp"))
         index = await ensure_archive_index(root, fmodel, root)
         available = await asyncio.to_thread(indexed_package_paths, index, paths)
         unavailable = sorted(paths - available.keys())
-        cg_ids = {cg_id for cg_id, path in videos if path in direct_movies
+        cg_ids = {cg_id for cg_id, _, path in videos if path in direct_movies
                   or path.removeprefix("Client/Content/").removesuffix(".uexp") in available}
-        for batch in voice_filter_batches(path.removesuffix(".uasset") for path in available.values()):
+        if index.is_file():
+            scan_names = sorted((set(non_vd_targets) - authored_by_name.keys()) | set(extra_candidates))
+            if scan_names:
+                scanned_extra = await asyncio.to_thread(scan_archive_cutscene_candidates, index, scan_names)
+            for name in non_vd_targets:
+                if name in authored_by_name:
+                    continue
+                entry = scanned_extra.get(name, {})
+                for w in entry.get("wrappers", []):
+                    extra_wrappers[w.removesuffix(".uasset")] = w
+                extra_direct_movies.update(entry.get("direct_mp4s", []))
+            extra_authored_paths: set[str] = set()
+            for name in extra_candidates:
+                if name in authored_by_name:
+                    for asset_key in authored_by_name[name]:
+                        rel = exported_video_path(asset_key.removeprefix("asset:ue:"))
+                        if rel.casefold().endswith(".mp4"):
+                            extra_direct_movies.add(rel)
+                        else:
+                            extra_authored_paths.add(rel.removeprefix("Client/Content/").removesuffix(".uexp"))
+                entry = scanned_extra.get(name, {})
+                for w in entry.get("wrappers", []):
+                    extra_wrappers[w.removesuffix(".uasset")] = w
+                extra_direct_movies.update(entry.get("direct_mp4s", []))
+            if extra_authored_paths:
+                extra_available = await asyncio.to_thread(indexed_package_paths, index, extra_authored_paths)
+                for pkg_key, asset_path in extra_available.items():
+                    extra_wrappers[pkg_key] = asset_path
+        export_wrapper_packages = {
+            path.removesuffix(".uasset")
+            for path in (*available.values(), *extra_wrappers.values())
+        }
+        for batch in voice_filter_batches(export_wrapper_packages):
             receipts.append(await export_assets(root, fmodel, "|".join(batch)))
     assets = await asyncio.to_thread(merge_exports, receipts, root / "release-media" / "files")
     base_movies = await prepare_base_movies(root, assets, [*available.values(), *sorted(direct_movies)], fmodel, index=index)
     if base_movies["receipts"]:
         await asyncio.to_thread(merge_exports, base_movies["receipts"], assets)
+    if extra_wrappers or extra_direct_movies:
+        discovered_movies = await prepare_base_movies(
+            root,
+            assets,
+            [*sorted(extra_wrappers.values()), *sorted(extra_direct_movies)],
+            fmodel,
+            index=index,
+        )
+        if discovered_movies["receipts"]:
+            await asyncio.to_thread(merge_exports, discovered_movies["receipts"], assets)
+    discovered_names: list[str] = []
+    if discover_extra and index is not None and index.is_file():
+        to_register: list[dict] = []
+        for name in extra_candidates:
+            scanned = scanned_extra.get(name, {})
+            variants = await asyncio.to_thread(
+                resolve_discovered_cutscene_sources,
+                assets,
+                name,
+                authored_assets=authored_by_name.get(name, ()),
+                candidate_wrappers=scanned.get("wrappers", ()),
+                candidate_mp4s=scanned.get("direct_mp4s", ()),
+                require_movie_file=True,
+            )
+            if not variants:
+                continue
+            discovered_names.append(name)
+            if name in seq_candidates and seq_candidates[name]:
+                for ref in seq_candidates[name]:
+                    to_register.append(
+                        {
+                            "cg_name": name,
+                            "resolution_basis": "LevelA SequenceDataAsset + client archive",
+                            "sequence_asset": ref["sequence_asset"],
+                            "variants": variants,
+                        }
+                    )
+                continue
+            to_register.append(
+                {
+                    "cg_name": name,
+                    "resolution_basis": "Client archive discovery",
+                    "variants": variants,
+                }
+            )
+        if to_register:
+            await register_discovered_cutscenes(session, parent["release_id"], to_register)
     save_json(assets / "video-database.json", {"path": config.relative_to(receipts[0].parent / "files").as_posix()})
     from wuwa_story_worker.entity_media import tool
     from wuwa_story_worker.voice_bootstrap import discover_video_plan
@@ -539,10 +719,14 @@ async def cutscene_assets(payload, parent):
     inventory["missing_video_packages"] = unavailable
     inventory["video_packages"] = video_diagnostics
     inventory["invalid_movie_sources"] = base_movies.get("errors", {})
+    if discovered_names:
+        inventory["discovered_cutscenes"] = sorted(set(discovered_names))
     from wuwa_story_worker.cutscene_import import confined
     inventory["missing_movies"] = [path for path in sorted(set(base_movies["movies"].values()))
                                     if not confined(assets, path).is_file()]
     return {**parent, "video_plan_id": plan["id"], "stage": "cutscene_assets_ready", "media_report": inventory,
+            **({"discovered_cutscene_names": sorted(set(discovered_names))} if discovered_names else {}),
+            **({"authored_cutscene_assets": authored_by_name} if authored_by_name else {}),
             **({'caption_voice_cg_names': caption_cg_names} if caption_cg_names else {})}, "completed"
 
 
@@ -613,7 +797,10 @@ async def cutscene(payload, parent):
     config = await asyncio.to_thread(video_database, assets)
     missing_assets = []
     try:
-        recipe = await asyncio.to_thread(plan_cutscene, config, assets, payload["targets"][0], parent["asset_version"], missing_assets=missing_assets)
+        recipe = await _plan_cutscene_or_fallback(
+            root, config, assets, payload["targets"][0], parent["asset_version"],
+            missing_assets=missing_assets, parent=parent,
+        )
     except ValueError as err:
         if "Cutscene not found in VideoData" in str(err):
             await cleanup_published_output(parent, payload["run_id"], "cutscene")
@@ -688,8 +875,10 @@ async def cutscene(payload, parent):
         if identity not in missing_assets:
             missing_assets.append(identity)
     try:
-        recipe = await asyncio.to_thread(plan_cutscene, config, assets, payload["targets"][0], parent["asset_version"],
-                                         missing_assets=missing_assets, frame_audio=frame_audio)
+        recipe = await _plan_cutscene_or_fallback(
+            root, config, assets, payload["targets"][0], parent["asset_version"],
+            missing_assets=missing_assets, frame_audio=frame_audio, parent=parent,
+        )
     except ValueError as err:
         if "Cutscene not found in VideoData" in str(err):
             await cleanup_published_output(parent, payload["run_id"], "cutscene")
@@ -1104,7 +1293,7 @@ async def _process_release_media(payload):
                                                                  release_id=payload['release_id'])
                         result = await repair_indexed_story(payload, result, status, session)
                     elif payload["kind"] == "cutscene_assets":
-                        result, status = await cutscene_assets(payload, parent.raw_output)
+                        result, status = await cutscene_assets(payload, parent.raw_output, session=session)
                     elif payload["kind"] == "voice_packages":
                         result, status = await voice_packages(parent.raw_output)
                     elif payload["kind"] == "cutscene":
@@ -1140,6 +1329,21 @@ async def _process_release_media(payload):
                 if payload["kind"] != "prepare" and parent.raw_output.get("workspace_id"):
                     result = {**result, "workspace_id": parent.raw_output["workspace_id"]}
                 await update_admin_run(run.id, "release_media", status, raw_output=result)
+                if (
+                    payload["kind"] == "cutscene_assets"
+                    and status == "completed"
+                    and result.get("discovered_cutscene_names")
+                ):
+                    await enqueue_discovered_cutscenes(
+                        session,
+                        {
+                            "run_id": run.id,
+                            "release_id": payload["release_id"],
+                            "game_version": payload["game_version"],
+                            **({"recheck_files": True} if payload.get("recheck_files") else {}),
+                        },
+                        result["discovered_cutscene_names"],
+                    )
                 logger.info("release_media.finished run=%s kind=%s status=%s", run.id, payload["kind"], status)
         except JobDeferred as error:
             await connection.rollback()

@@ -101,7 +101,7 @@ def compile_media(
         return identity
 
     def group(name: Any, source: dict[str, Any], raw_value: Any = None,
-              resolution: str = "exact") -> str | None:
+              resolution: str = "exact", resolution_basis: str = "CgName") -> str | None:
         if not isinstance(name, str) or not name:
             diagnostic("missing_cg_name", "warning", source["file"], source["raw_path"], "CgName is empty")
             return None
@@ -111,7 +111,7 @@ def compile_media(
                                "normalized_value": name,
                                "resolution": resolution,
                                "raw": {"CgName": name if raw_value is None else raw_value},
-                               "resolution_basis": "CgName"})
+                               "resolution_basis": resolution_basis})
             groups.add(identity)
         return identity
 
@@ -276,3 +276,33 @@ def compile_media(
     for link in package_cutscene_links(enumerate(package_rows), enumerate(video_rows)):
         edge(link["from"], link["to"], link["type"], link["basis"],
              link["source"], link["raw_path"], {"relation": "inference"})
+
+    roletower = "RoleTower/roletowerlevel.json"
+    if (root / roletower).is_file():
+        for row, raw in enumerate(_rows(root, roletower, diagnostic)):
+            video_path = raw.get("VideoPath")
+            if not isinstance(video_path, str) or not video_path.startswith("/Game/"):
+                continue
+            name = video_path.rsplit("/", 1)[-1].split(".", 1)[0]
+            if not name:
+                continue
+            src = _source(roletower, row)
+            cg = group(name, src, raw_value=name, resolution_basis="RoleTowerLevel.VideoPath")
+            identity = f"cutscene_variant:roletower:{raw.get('Id', row)}:{row}"
+            emit("cutscene_variant", {
+                "id": identity,
+                "source": src,
+                "raw": raw,
+                "cg_id": None,
+                "cg_name": name,
+                "girl_or_boy": 2,
+                "belong_branch": None,
+                "video_name_key": raw.get("VideoName"),
+            })
+            if cg:
+                edge(cg, identity, "has_variant", "RoleTowerLevel.VideoPath",
+                     src["file"], f"$[{row}].VideoPath", None)
+            ref = asset(video_path, "ue", src, "VideoPath")
+            if ref:
+                edge(identity, ref, "references_asset", "VideoPath",
+                     src["file"], f"$[{row}].VideoPath", None)

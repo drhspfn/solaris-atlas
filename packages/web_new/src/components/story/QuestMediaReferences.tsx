@@ -98,6 +98,14 @@ export interface QuestMediaEvent {
   interaction_id?: string;
   branches?: Array<{ id: string; type: string }>;
   transition?: boolean;
+  sequence_transition?: {
+    kind: string;
+    from_reference?: string;
+    to_reference?: string;
+    movie_scope?: string;
+    to_mode?: string;
+    basis?: string;
+  };
   title?: string;
   kind: "cutscene" | "sequence" | "audio_event";
   occurrence_id?: string;

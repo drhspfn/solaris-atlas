@@ -177,6 +177,39 @@ class MediaCompilerTest(unittest.TestCase):
                             edge["basis"] == "CgName = videodata.CgName"
                             for edge in self.edges))
 
+    def test_roletower_activity_videos_emit_cutscenes_and_variants(self) -> None:
+        self.write("cgVedio/videodata.json", [])
+        self.write("RoleTower/roletowerlevel.json", [
+            {"Id": 1, "VideoName": "RoleTowerLevel_VedioName_1", "VideoPath": ""},
+            {
+                "Id": 4,
+                "VideoName": "RoleTowerLevel_VedioName_4",
+                "VideoPath": "/Game/Aki/UI/UIResources/UiActivity/Mp4/Activity38/RoleTower/Charact_ChangLi.Charact_ChangLi",
+            },
+        ])
+        self.compile()
+        self.assertIn("cutscene:Charact_ChangLi", self.nodes)
+        self.assertEqual(
+            self.nodes["cutscene:Charact_ChangLi"]["resolution_basis"],
+            "RoleTowerLevel.VideoPath",
+        )
+        variant_id = "cutscene_variant:roletower:4:1"
+        self.assertIn(variant_id, self.nodes)
+        asset_id = "asset:ue:/Game/Aki/UI/UIResources/UiActivity/Mp4/Activity38/RoleTower/Charact_ChangLi.Charact_ChangLi"
+        self.assertIn(asset_id, self.nodes)
+        self.assertTrue(any(
+            edge["from"] == "cutscene:Charact_ChangLi"
+            and edge["to"] == variant_id
+            and edge["type"] == "has_variant"
+            for edge in self.edges
+        ))
+        self.assertTrue(any(
+            edge["from"] == variant_id
+            and edge["to"] == asset_id
+            and edge["type"] == "references_asset"
+            for edge in self.edges
+        ))
+
 
 if __name__ == "__main__":
     unittest.main()

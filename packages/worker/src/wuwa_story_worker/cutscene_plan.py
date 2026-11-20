@@ -34,18 +34,61 @@ def sound_timing(blob: bytes) -> tuple[float, float | None]:
 
 
 def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str, *, missing_assets: list | None = None,
-                  frame_audio: list[dict] | None = None) -> dict:
+                  frame_audio: list[dict] | None = None, fallback_sources: list[dict] | None = None) -> dict:
     if not is_supported_cutscene_version(asset_version):
         raise ValueError(f"Config schema requires client >= {MIN_SUPPORTED_CLIENT_VERSION}, got {asset_version}")
     # Read-only: never create or modify an absent game database.
-    with sqlite3.connect(config_db.resolve().as_uri() + "?mode=ro", uri=True) as db:
-        videos = db.execute(
-            "SELECT CgId, GirlOrBoy, BinData FROM videodata WHERE CgName = ? ORDER BY CgId", (name,)
-        ).fetchall()
-        sounds = db.execute(
-            "SELECT GirlOrBoy, BinData FROM videosound WHERE CgName = ? ORDER BY CaptionId", (name,)
-        ).fetchall()
-    if not videos:
+    videos, sounds = [], []
+    if config_db.is_file():
+        with sqlite3.connect(config_db.resolve().as_uri() + "?mode=ro", uri=True) as db:
+            videos = db.execute(
+                "SELECT CgId, GirlOrBoy, BinData FROM videodata WHERE CgName = ? ORDER BY CgId", (name,)
+            ).fetchall()
+            sounds = db.execute(
+                "SELECT GirlOrBoy, BinData FROM videosound WHERE CgName = ? ORDER BY CaptionId", (name,)
+            ).fetchall()
+    elif not fallback_sources:
+        with sqlite3.connect(config_db.resolve().as_uri() + "?mode=ro", uri=True) as db:
+            videos = db.execute(
+                "SELECT CgId, GirlOrBoy, BinData FROM videodata WHERE CgName = ? ORDER BY CgId", (name,)
+            ).fetchall()
+            sounds = db.execute(
+                "SELECT GirlOrBoy, BinData FROM videosound WHERE CgName = ? ORDER BY CaptionId", (name,)
+            ).fetchall()
+    if videos:
+        variant_entries = [
+            {
+                "clip_id": f"cg-{cg_id}",
+                "gender": gender,
+                "asset": "asset:ue:" + engine_path(blob),
+                "label": "Male Rover" if gender == 1 else "Female Rover" if gender == 0 else f"CG {cg_id}",
+            }
+            for cg_id, gender, blob in videos
+        ]
+        evidence = (
+            f"{config_db.name}: VideoData CG {name}, gender-specific/shared VideoSound with source seconds. "
+            "Shared prefixes and narrative choices are not inferred."
+        )
+    elif fallback_sources:
+        variant_entries = [
+            {
+                "clip_id": f"clip-{index}",
+                "gender": item.get("girl_or_boy", 2),
+                "asset": item["asset"],
+                "label": (
+                    "Male Rover" if item.get("girl_or_boy", 2) == 1
+                    else "Female Rover" if item.get("girl_or_boy", 2) == 0
+                    else f"Clip {index + 1}"
+                ),
+            }
+            for index, item in enumerate(fallback_sources)
+        ]
+        bases = sorted({item.get("basis", "archive discovery") for item in fallback_sources})
+        evidence = (
+            f"Client archive discovery ({', '.join(bases)}) for {name} (absent from VideoData). "
+            "Shared prefixes and narrative choices are not inferred."
+        )
+    else:
         raise ValueError("Cutscene not found in VideoData")
     inputs, clips, options = [], [], []
     input_assets = {}
@@ -56,8 +99,10 @@ def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str, 
     for path in assets.rglob("*"):
         if path.is_file() and path.suffix.casefold() == ".bnk":
             banks_by_name.setdefault(path.name.casefold(), []).append(path)
-    for cg_id, gender, blob in videos:
-        key = "asset:ue:" + engine_path(blob)
+    for entry in variant_entries:
+        clip_id = entry["clip_id"]
+        gender = entry["gender"]
+        key = entry["asset"]
         soundtrack = []
         for sound_gender, sound_blob in shared_sounds or sounds:
             if not shared_sounds and sound_gender != gender:
@@ -82,8 +127,9 @@ def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str, 
                                    "language": language,
                                    "rover": "male" if gender == 1 else "female" if gender == 0 else None,
                                    "start_seconds": start, "end_seconds": end})
-        soundtrack.extend(caption_soundtracks(config_db, assets, name, gender,
-                                               missing_assets=missing_assets))
+        if config_db.is_file():
+            soundtrack.extend(caption_soundtracks(config_db, assets, name, gender,
+                                                   missing_assets=missing_assets))
         if key in input_assets:
             # One movie may serve two authored Rover variants. Keep the audio
             # alternatives separate while publishing the video only once.
@@ -94,37 +140,37 @@ def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str, 
             value = {"asset": key, "soundtrack": soundtrack, **({'frame_audio': frame_audio} if frame_audio else {})}
             input_assets[key] = value
             inputs.append(value)
-        clips.append({"id": f"cg-{cg_id}", "kind": "clip", "asset": key,
+        clips.append({"id": clip_id, "kind": "clip", "asset": key,
                       "rover": "male" if gender == 1 else "female" if gender == 0 else None})
         options.append(
             {
-                "label": "Male Rover"
-                if gender == 1
-                else "Female Rover"
-                if gender == 0
-                else f"CG {cg_id}",
-                "next": f"cg-{cg_id}",
+                "label": entry["label"],
+                "next": clip_id,
                 "rover": "male" if gender == 1 else "female" if gender == 0 else None,
             }
         )
-    nodes = (
-        clips
-        if len(clips) == 1
-        else [
+    if len(clips) == 1:
+        nodes = clips
+    elif not videos and all(clip.get("rover") is None for clip in clips):
+        # Multiple sequential non-gender fragments from the same sequence chain cleanly.
+        for index in range(len(clips) - 1):
+            clips[index]["next"] = clips[index + 1]["id"]
+        nodes = clips
+    else:
+        nodes = [
             {"id": "variants", "kind": "choice", "prompt": "Choose a variant", "options": options},
             *clips,
         ]
-    )
     recipe = CutsceneRecipe.model_validate(
         {
             "cutscene": "cutscene:" + name,
             "asset_version": asset_version,
             "videos": inputs,
-            "compare_variants": len(inputs) > 1,
+            "compare_variants": len(inputs) > 1 and any(clip.get("rover") is not None for clip in clips),
             "flow": {
                 "entry": nodes[0]["id"],
                 "nodes": nodes,
-                "evidence": f"{config_db.name}: VideoData CG {name}, gender-specific/shared VideoSound with source seconds. Shared prefixes and narrative choices are not inferred.",
+                "evidence": evidence,
             },
         }
     )

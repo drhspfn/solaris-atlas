@@ -389,9 +389,16 @@ async def quest_media(
             transcript_states[cutscene_id].append(state_key)
     sources = []
     for action, state, action_key in action_rows:
-        for link in action_links.get(action.node_id, []):
+        links = action_links.get(action.node_id, [])
+        seq_refs = [
+            item["canonical_key"] for item in links
+            if item["relation"] == "plays_sequence_asset"
+        ]
+        for link in links:
             if state.node_id in contextual_state_ids and link["relation"] not in ("plays_cutscene", "plays_sequence_asset"):
                 continue
+            is_hybrid_movie = link["relation"] == "plays_cutscene" and bool(seq_refs)
+            sub_index = 0 if is_hybrid_movie else -1
             entry = {
                 "kind": {"plays_cutscene": "cutscene", "plays_sequence_asset": "sequence",
                          "posts_audio_event": "audio_event"}[link["relation"]],
@@ -406,15 +413,28 @@ async def quest_media(
                 "reference_kind": "unreal_asset_path"
                 if link["canonical_key"].startswith("asset:ue:") else "cg_name",
             }
+            if is_hybrid_movie:
+                entry["transition"] = True
+                entry["sequence_transition"] = {
+                    "kind": "sequence_to_movie",
+                    "from_reference": seq_refs[0],
+                    "to_reference": link["canonical_key"],
+                    "movie_scope": (
+                        "embedded_fragment"
+                        if "embedded movie fragment" in (link.get("basis") or "")
+                        else "full_movie"
+                    ),
+                    "basis": link["basis"],
+                }
             position = (tree_order or {}).get(
                 'positions', {}).get(state.state_key)
             if position:
-                entry['story_position'] = [*position, action.action_index, -1]
+                entry['story_position'] = [*position, action.action_index, sub_index]
             review_position = (tree_order or {}).get(
                 'review_positions', {}).get(state.state_key)
             if review_position is not None:
                 entry['review_position'] = [
-                    *review_position, action.action_index, -1]
+                    *review_position, action.action_index, sub_index]
                 entry['review_order_source'] = tree_order['review_source']
             sources.append((entry, link['node_id']))
     state_owners = defaultdict(set)
@@ -590,7 +610,61 @@ async def quest_media(
             for link in package_links.get(quest.node_id, [])
         ],
     })
+    _annotate_sequence_transitions(manifest.get("events", []), action_rows)
     return await attach_sequence_videos(session, manifest)
+
+
+def _annotate_sequence_transitions(events: list[dict[str, Any]], action_rows: list[Any]) -> None:
+    """Record explicit transitions between adjacent in-engine sequences and movies."""
+    mode_switches: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    for action, state, _ in action_rows:
+        if getattr(action, "action_name", None) != "SetPlotMode":
+            continue
+        params = getattr(action, "params", None)
+        mode = params.get("Mode") if isinstance(params, dict) else None
+        if isinstance(mode, str) and mode:
+            mode_switches[state.state_key].append((action.action_index, mode))
+    for switches in mode_switches.values():
+        switches.sort(key=lambda item: item[0])
+
+    cinematic = [
+        event for event in events
+        if event.get("kind") in {"sequence", "cutscene"}
+    ]
+    for prev, curr in zip(cinematic, cinematic[1:], strict=False):
+        if "sequence_transition" in curr:
+            continue
+        if prev.get("kind") == "sequence" and curr.get("kind") == "cutscene":
+            if curr.get("flow_state") == prev.get("flow_state") or (
+                curr.get("story_position") and prev.get("story_position")
+            ):
+                curr["sequence_transition"] = {
+                    "kind": "sequence_to_movie",
+                    "from_reference": prev["reference"],
+                    "to_reference": curr["reference"],
+                    "movie_scope": "standalone_cutscene",
+                    "basis": curr.get("basis") or "adjacent sequence -> movie",
+                }
+        elif (
+            prev.get("kind") == "sequence"
+            and curr.get("kind") == "sequence"
+            and prev.get("flow_state") == curr.get("flow_state")
+            and prev.get("action_index") is not None
+            and curr.get("action_index") is not None
+        ):
+            switches = [
+                (idx, mode)
+                for idx, mode in mode_switches.get(curr["flow_state"], [])
+                if prev["action_index"] < idx < curr["action_index"]
+            ]
+            if switches:
+                curr["sequence_transition"] = {
+                    "kind": "plot_mode_transition",
+                    "from_reference": prev["reference"],
+                    "to_reference": curr["reference"],
+                    "to_mode": switches[-1][1],
+                    "basis": "SetPlotMode",
+                }
 
 
 class SequenceVideoInput(BaseModel):
