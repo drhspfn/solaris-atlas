@@ -640,7 +640,8 @@ async def test_finish_errors_are_saved_and_retries_bounded(runtime, monkeypatch)
     monkeypatch.setattr(agent.Provider, "post", post)
     await agent.run_video_analysis_agent(db, run, settings, await workspace(runtime), storage, {})
     assert post.await_count == 1
-    assert run.raw_output["finish_diagnostics"]["3:0"]["status"] == "accepted"
+    accepted_key = f"{agent.MAX_FINISH_CORRECTIONS + 1}:0"
+    assert run.raw_output["finish_diagnostics"][accepted_key]["status"] == "accepted"
 
 
 @pytest.mark.asyncio
@@ -1365,3 +1366,57 @@ async def test_process_cutscene_vision_distinguishes_context_and_budget_pauses(
     await cv.process_cutscene_vision({"run_id": 999})
     assert run.status == expected_status
     assert expected_sub in run.error
+
+
+def test_build_verifier_history_numbers_draft_and_prune_old_images():
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (320, 320), color=(255, 0, 0)).save(buf, format="JPEG")
+    small_b64 = __import__("base64").b64encode(buf.getvalue()).decode("ascii")
+    big_buf = io.BytesIO()
+    Image.new("RGB", (1024, 1024), color=(0, 255, 0)).save(big_buf, format="JPEG")
+    big_b64 = __import__("base64").b64encode(big_buf.getvalue()).decode("ascii")
+
+    small_tokens = agent._image_tokens_from_b64(small_b64)
+    assert small_tokens == 1024  # real 320x320 crop instead of blind 8192
+
+    history = [
+        {"role": "system", "content": "sys"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "old turn"},
+                {"type": "input_image", "image_url": f"data:image/jpeg;base64,{big_b64}"},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "latest turn"},
+                {"type": "input_image", "image_url": f"data:image/jpeg;base64,{big_b64}"},
+            ],
+        },
+    ]
+    before_tokens = agent._estimate_input_tokens(history, [])
+    assert agent._prune_old_history_images(history, keep_tail=1) is True
+    assert any(p.get("type") == "input_image" for p in history[2]["content"])
+    assert not any(p.get("type") == "input_image" for p in history[1]["content"])
+    after_tokens = agent._estimate_input_tokens(history, [])
+    assert after_tokens < before_tokens
+
+    draft = VideoAnalysisResult.model_validate(result())
+    ws = SimpleNamespace(duration=12.0, limits={}, atlases=[], frame_times={0: 0.0, 1: 2.0}, manifest=lambda _atlases: [])
+    verifier_msgs = agent._build_verifier_history(
+        agent.Provider(
+            __import__("wuwa_story.agents.settings", fromlist=["AgentSettings"]).AgentSettings(_env_file=None),
+            client=None,
+        ),
+        draft,
+        ws,
+        {},
+        evidence_review_required=True,
+    )
+    assert '"draft_index": 0' in verifier_msgs[1]["content"][0]["text"]

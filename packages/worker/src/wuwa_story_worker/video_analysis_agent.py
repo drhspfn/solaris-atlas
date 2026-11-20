@@ -63,8 +63,8 @@ from wuwa_story_worker.video_atlas import write_atlas
 
 logger = logging.getLogger(__name__)
 
-MAX_AGENT_TURNS = 28
-MAX_FINISH_CORRECTIONS = 2
+MAX_AGENT_TURNS = 32
+MAX_FINISH_CORRECTIONS = 5
 MAX_REFERENCE_IMAGES = 10
 MAX_SPATIAL_INSPECTIONS = 6
 MAX_ATLAS_VIEW_PER_CALL = 4
@@ -318,7 +318,16 @@ def _review_evidence_errors(draft: VideoAnalysisResult, final: VideoAnalysisResu
                     start - 3 <= workspace.frame_times[frame] <= end + 3
                     for frame in valid_frames
                 ):
-                    errors.append(f"{label}: cite known nearby frames to revise or dispute")
+                    nearby = [
+                        f"{f}@{round(workspace.frame_times[f], 2)}s"
+                        for f in sorted(workspace.frame_times)
+                        if start - 3 <= workspace.frame_times[f] <= end + 3
+                    ][:8]
+                    errors.append(
+                        f"{label} (draft [{round(start, 2)}s..{round(end, 2)}s]): "
+                        f"cite known nearby frames on this decision matching the draft timestamp "
+                        f"(nearby: {nearby or 'none'}; mapped final_indices={decision.final_indices})"
+                    )
             if name == "identity" and decision.status == "retained" and any(
                 after[index].identity.strip().casefold() != before[decision.draft_index].identity.strip().casefold()
                 or after[index].appearance.strip().casefold() != before[decision.draft_index].appearance.strip().casefold()
@@ -1089,6 +1098,23 @@ def _atlas_image_tokens(entry: AtlasEntry) -> int:
     )
 
 
+def _image_tokens_from_b64(encoded: str, fallback: int = 8192) -> int:
+    """Estimate vision tokens from actual encoded JPEG/PNG pixel dimensions."""
+    if not encoded:
+        return fallback
+    try:
+        import io
+
+        from PIL import Image
+
+        raw = base64.b64decode(encoded, validate=False)
+        with Image.open(io.BytesIO(raw)) as img:
+            w, h = img.size
+        return max(1024, math.ceil(w / 16) * math.ceil(h / 16) * 2)
+    except Exception:
+        return fallback
+
+
 def _estimate_input_tokens(payload: Any, atlases: list[AtlasEntry], *, extra_images: int = 0) -> int:
     """Estimate text tokens without counting raw base64 bytes, plus tokens for images in payload."""
     atlas_tokens_by_b64: dict[str, int] = {}
@@ -1098,13 +1124,21 @@ def _estimate_input_tokens(payload: Any, atlases: list[AtlasEntry], *, extra_ima
             atlas_tokens_by_b64[b64] = _atlas_image_tokens(entry)
 
     image_tokens = 0
+    dim_cache: dict[str, int] = {}
+
+    def _tokens_for_encoded(encoded: str) -> int:
+        if encoded in atlas_tokens_by_b64:
+            return atlas_tokens_by_b64[encoded]
+        if encoded not in dim_cache:
+            dim_cache[encoded] = _image_tokens_from_b64(encoded)
+        return dim_cache[encoded]
 
     def _strip_images(obj: Any) -> Any:
         nonlocal image_tokens
         if isinstance(obj, str):
             if obj.startswith("data:image/"):
                 _, _, encoded = obj.partition("base64,")
-                image_tokens += atlas_tokens_by_b64.get(encoded, 8192)
+                image_tokens += _tokens_for_encoded(encoded)
                 return "<image>"
             return obj
         if isinstance(obj, list):
@@ -1113,7 +1147,7 @@ def _estimate_input_tokens(payload: Any, atlases: list[AtlasEntry], *, extra_ima
             if obj.get("type") == "image" and "source" in obj:
                 source = obj.get("source")
                 encoded = source.get("data", "") if isinstance(source, dict) else ""
-                image_tokens += atlas_tokens_by_b64.get(str(encoded), 8192)
+                image_tokens += _tokens_for_encoded(str(encoded))
                 return {"type": "image", "source": "<image>"}
             return {k: _strip_images(v) for k, v in obj.items()}
         return obj
@@ -1121,6 +1155,33 @@ def _estimate_input_tokens(payload: Any, atlases: list[AtlasEntry], *, extra_ima
     text_len = len(json.dumps(_strip_images(payload), ensure_ascii=False, default=str))
     _ = extra_images
     return max(4096, text_len // 4 + image_tokens + 1024)
+
+
+def _prune_old_history_images(history: list[dict[str, Any]], *, keep_tail: int = 2) -> bool:
+    """Drop inline images from the oldest multimodal history item before keep_tail; return True if pruned."""
+    cutoff = max(0, len(history) - keep_tail)
+    for idx in range(cutoff):
+        msg = history[idx]
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if not isinstance(content, list):
+            continue
+        changed = False
+        new_content: list[Any] = []
+        omitted = 0
+        for part in content:
+            if isinstance(part, dict) and (part.get("type") == "input_image" or part.get("type") == "image"):
+                changed = True
+                omitted += 1
+            else:
+                new_content.append(part)
+        if changed:
+            new_content.append({
+                "type": "input_text" if any(isinstance(p, dict) and p.get("type") == "input_text" for p in new_content) else "text",
+                "text": f"[{omitted} earlier image(s) omitted to stay within context budget; extracted timestamps and frame evidence remain above.]",
+            })
+            history[idx] = {**msg, "content": new_content}
+            return True
+    return False
 
 
 def _temporal_evidence_errors(result: VideoAnalysisResult, workspace: VideoWorkspace,
@@ -1426,6 +1487,13 @@ def _build_verifier_history(
     """Start the second pass with a clean, low-token Reader/Editor context."""
     alerts = _collect_candidate_alerts(tool_results)
     checked_refs = sorted(_collect_checked_reference_ids(tool_results))
+    draft_dump = draft.model_dump()
+    draft_dump["events"] = [
+        {"draft_index": idx, **ev} for idx, ev in enumerate(draft_dump.get("events") or [])
+    ]
+    draft_dump["identity_tracks"] = [
+        {"draft_index": idx, **tr} for idx, tr in enumerate(draft_dump.get("identity_tracks") or [])
+    ]
     payload = {
         "duration_seconds": workspace.duration,
         "limits": workspace.limits,
@@ -1438,7 +1506,7 @@ def _build_verifier_history(
             "checked_reference_ids": checked_refs,
         },
         "source_text_context": context or {},
-        "draft": draft.model_dump(),
+        "draft": draft_dump,
         "instruction": TEMPORAL_REVIEW_INSTRUCTION
         + (" " + EVIDENCE_REVIEW_INSTRUCTION if evidence_review_required else ""),
     }
@@ -1606,6 +1674,21 @@ async def run_video_analysis_agent(
                     raise ProviderFailure("recorded_provider_rejection_requires_new_run")
                 source_tokens, output_tokens = token_usage(raw, settings.provider)
             else:
+                soft_limit = int(settings.max_input_tokens * 0.85)
+                while input_bound > soft_limit and _prune_old_history_images(history, keep_tail=2):
+                    route, payload = provider.request(history, tools)
+                    input_bound = _estimate_input_tokens(
+                        payload,
+                        workspace.atlases,
+                        extra_images=reference_images_used + spatial_inspections_used,
+                    )
+                if input_bound > settings.max_input_tokens and _prune_old_history_images(history, keep_tail=1):
+                    route, payload = provider.request(history, tools)
+                    input_bound = _estimate_input_tokens(
+                        payload,
+                        workspace.atlases,
+                        extra_images=reference_images_used + spatial_inspections_used,
+                    )
                 call = await reserve(
                     db, settings, run_id=run.id, step=step, input_bound=input_bound,
                     output_bound=settings.max_output_tokens, kind="cutscene_visual")
