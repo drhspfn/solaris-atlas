@@ -85,6 +85,7 @@ async def test_character_archive_trial_bundle_is_gated_and_owner_scoped(monkeypa
     monkeypatch.setattr(archive, '_record_groups', AsyncMock(side_effect=lambda session, release, groups: {path: [] for path in groups}))
     monkeypatch.setattr(archive, '_localized_strings', AsyncMock(return_value={}))
     monkeypatch.setattr(archive, '_reference_urls', AsyncMock(return_value={}))
+    monkeypatch.setattr(archive, '_showcase_videos', AsyncMock(return_value=[]))
     monkeypatch.setattr(archive, 'get_settings', lambda: Row(s3_bucket='public', story_spine_playback_enabled=enabled))
     monkeypatch.setattr(archive, 'S3Storage', lambda _: Row(public_url=lambda key: 'https://cdn/' + key))
     session = Row(get=AsyncMock(return_value=object()), execute=AsyncMock(side_effect=[[], Row(first=lambda: ('source.zip', 7, 1024, {'animation_preview': preview, 'riglyph_file_id': 8}))]))

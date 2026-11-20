@@ -233,6 +233,7 @@ async def test_cutscene_assets_discovers_levela_archive_cutscenes_without_pure_e
     monkeypatch.setattr(release_media, "publish_inventory", AsyncMock(return_value={}))
     monkeypatch.setattr(release_media, "authored_cutscene_assets", AsyncMock(return_value={}))
     monkeypatch.setattr(release_media, "discover_bindata_cutscenes", AsyncMock(return_value={"cutscene_names": []}))
+    monkeypatch.setattr(release_media, "sync_roletower_showcase_videos", AsyncMock(return_value={"attached": 0, "reused": 0, "missing": []}))
     monkeypatch.setattr(
         release_media,
         "levela_sequence_candidates",

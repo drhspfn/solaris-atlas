@@ -19,6 +19,7 @@ export function collectCharacterMedia(
   name: string,
   trialUrl: string | null,
   normalize: (url: string) => string,
+  showcaseVideos: CharacterArchiveData["showcase_videos"] = [],
 ): MediaItem[] {
   const items: MediaItem[] = [];
   const seen = new Set<string>();
@@ -27,6 +28,11 @@ export function collectCharacterMedia(
     seen.add(item.src);
     items.push(item);
   };
+  const posterArt = artwork.find(
+    (art) =>
+      art.kind === "RoleStand" && art.scope !== "shared_resource" && art.url,
+  );
+  const poster = posterArt?.url ? normalize(posterArt.url) : undefined;
   for (const art of artwork) {
     if (!art.url || art.scope === "shared_resource") continue;
     const src = normalize(art.url);
@@ -42,16 +48,23 @@ export function collectCharacterMedia(
     });
   }
   if (trialUrl) {
-    const posterArt = artwork.find(
-      (art) =>
-        art.kind === "RoleStand" && art.scope !== "shared_resource" && art.url,
-    );
     add({
       id: `trial:${trialUrl}`,
       src: trialUrl,
       type: "video",
       title: "Trial animation",
-      poster: posterArt?.url ? normalize(posterArt.url) : undefined,
+      poster,
+    });
+  }
+  for (const video of showcaseVideos ?? []) {
+    if (!video?.url) continue;
+    const src = normalize(video.url);
+    add({
+      id: `showcase:${video.id}:${src}`,
+      src,
+      type: "video",
+      title: video.title || video.name || "Showcase video",
+      poster,
     });
   }
   return items;

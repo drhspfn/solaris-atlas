@@ -256,6 +256,67 @@ async def _reference_urls(session, owner_id, source_paths, settings):
     return {(path, language): (storage.public_url(key), mime) for path, language, mime, key in rows}
 
 
+async def _showcase_videos(
+    session: AsyncSession, owner_id: int, release_id: int, locale: str, settings: Any
+) -> list[dict[str, Any]]:
+    """Return playable character showcase videos attached to this character node."""
+    rows = list(await session.execute(
+        select(
+            FileReference.id,
+            FileObject.id,
+            FileObject.size_bytes,
+            FileObject.mime_type,
+            FileReference.source_path,
+            FileReference.source_name,
+            FileReference.metadata_json,
+            FileLocation.object_key,
+        )
+        .select_from(FileReference)
+        .join(FileObject, FileObject.id == FileReference.file_id)
+        .join(FileLocation, FileLocation.file_id == FileObject.id)
+        .where(
+            FileReference.owner_node_id == owner_id,
+            FileReference.reference_type == "character_showcase_video",
+            FileObject.mime_type.like("video/%"),
+            FileLocation.available.is_(True),
+            FileLocation.is_primary.is_(True),
+            FileLocation.backend == "s3",
+            FileLocation.bucket == settings.s3_bucket,
+        )
+        .order_by(FileReference.id.desc())
+    ))
+    if not rows:
+        return []
+    name_keys = [
+        (metadata.get("video_name_key") if isinstance(metadata, dict) else None) or source_name
+        for _, _, _, _, _, source_name, metadata, _ in rows
+    ]
+    localized = await _localized_strings(session, release_id, locale, name_keys)
+    videos: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+    storage = S3Storage(settings)
+    for ref_id, file_id, size_bytes, mime_type, source_path, source_name, metadata, object_key in rows:
+        path_key = source_path or str(file_id)
+        if path_key in seen_paths:
+            continue
+        seen_paths.add(path_key)
+        meta = metadata if isinstance(metadata, dict) else {}
+        name_key = meta.get("video_name_key") or source_name
+        title = localized.get(name_key) if isinstance(name_key, str) else None
+        stem = (source_path or "").rsplit("/", 1)[-1].split(".", 1)[0]
+        videos.append({
+            "id": meta.get("roletower_level_id") or ref_id,
+            "name": meta.get("name") or stem or f"showcase-{file_id}",
+            "title": title or meta.get("name") or stem or "Showcase video",
+            "engine_path": source_path,
+            "url": storage.public_url(object_key),
+            "file_id": file_id,
+            "size_bytes": size_bytes,
+            "mime_type": mime_type,
+        })
+    return videos
+
+
 @router.get("/characters/{canonical_key:path}/archive")
 @public_addresses
 async def character_archive(
@@ -509,9 +570,11 @@ async def character_archive(
             key, identity, size, metadata = row
             trial_spine = spine_bundle(S3Storage(settings).public_url(
                 key), identity, size, metadata, True)
+    showcase_videos = await _showcase_videos(session, node.id, release_id, locale, settings)
     return {
         "canonical_key": canonical_key, "locale": locale, "release_id": release_id,
         "trial_spine": trial_spine,
+        "showcase_videos": showcase_videos,
         "biography": (localized.get(role.get("Introduction")) or localized.get(favor.get("Info"))) if not inherited else None,
         "profile": {
             "country": localized.get(favor.get("Country")),
@@ -543,7 +606,7 @@ async def character_media_file(
     file_id: int, session: AsyncSession = Depends(get_session)
 ) -> RedirectResponse:
     file = await session.get(FileObject, file_id)
-    if file is None or not (file.mime_type or "").startswith(("image/", "audio/")):
+    if file is None or not (file.mime_type or "").startswith(("image/", "audio/", "video/")):
         raise HTTPException(status_code=404, detail="media file not found")
     public_reference = await session.scalar(
         select(FileReference.id).where(

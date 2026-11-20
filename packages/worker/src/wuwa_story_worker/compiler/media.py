@@ -283,26 +283,21 @@ def compile_media(
             video_path = raw.get("VideoPath")
             if not isinstance(video_path, str) or not video_path.startswith("/Game/"):
                 continue
-            name = video_path.rsplit("/", 1)[-1].split(".", 1)[0]
-            if not name:
+            main_role_id = raw.get("MainRoleId")
+            if not isinstance(main_role_id, int) or isinstance(main_role_id, bool):
                 continue
             src = _source(roletower, row)
-            cg = group(name, src, raw_value=name, resolution_basis="RoleTowerLevel.VideoPath")
-            identity = f"cutscene_variant:roletower:{raw.get('Id', row)}:{row}"
-            emit("cutscene_variant", {
-                "id": identity,
-                "source": src,
-                "raw": raw,
-                "cg_id": None,
-                "cg_name": name,
-                "girl_or_boy": 2,
-                "belong_branch": None,
-                "video_name_key": raw.get("VideoName"),
-            })
-            if cg:
-                edge(cg, identity, "has_variant", "RoleTowerLevel.VideoPath",
-                     src["file"], f"$[{row}].VideoPath", None)
             ref = asset(video_path, "ue", src, "VideoPath")
             if ref:
-                edge(identity, ref, "references_asset", "VideoPath",
-                     src["file"], f"$[{row}].VideoPath", None)
+                edge(
+                    f"character:{main_role_id}",
+                    ref,
+                    "references_asset",
+                    "RoleTowerLevel.MainRoleId + VideoPath",
+                    src["file"],
+                    f"$[{row}].VideoPath",
+                    {
+                        "roletower_level_id": raw.get("Id"),
+                        "video_name_key": raw.get("VideoName"),
+                    },
+                )

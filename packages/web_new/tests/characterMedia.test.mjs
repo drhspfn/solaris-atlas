@@ -32,3 +32,27 @@ test('selection follows its source when items change order or disappear', async 
   assert.equal(characterMediaIndex([second, first], '/second'), 0);
   assert.equal(characterMediaIndex([first], '/second'), null);
 });
+
+test('collects character showcase videos with poster and localized title', () => {
+  const items = collectCharacterMedia(
+    [art('RoleStand', '/api/changli.png')],
+    null,
+    'Changli',
+    null,
+    normalize,
+    [
+      {
+        id: 4,
+        name: 'Charact_ChangLi',
+        title: 'Changli Showcase',
+        engine_path: '/Game/Aki/UI/UIResources/UiActivity/Mp4/Activity38/RoleTower/Charact_ChangLi.Charact_ChangLi',
+        url: '/api/media/changli.mp4',
+      },
+    ],
+  );
+  assert.equal(items.length, 2);
+  assert.equal(items[1].type, 'video');
+  assert.equal(items[1].title, 'Changli Showcase');
+  assert.equal(items[1].src, '/media/changli.mp4');
+  assert.equal(items[1].poster, '/changli.png');
+});

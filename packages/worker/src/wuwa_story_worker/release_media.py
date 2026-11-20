@@ -14,8 +14,9 @@ from sqlalchemy import select
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.core import AuthoredTreeImport
 from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
+from wuwa_story.db.models.graph import Node
 from wuwa_story.db.models.ops import ProcessingRun
-from wuwa_story.db.models.storage import FileReference
+from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.db.session import SessionFactory, engine
 from wuwa_story.ingestion.client_assets import discover_plan, inspect_installed_clients
 from wuwa_story.ingestion.client_events import store_client_events
@@ -24,6 +25,7 @@ from wuwa_story.ingestion.cutscene_discovery import (
     discover_bindata_cutscenes,
     levela_sequence_candidates,
     register_discovered_cutscenes,
+    roletower_showcase_videos,
 )
 from wuwa_story.ingestion.entity_media import MediaRequest
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE, SOURCE
@@ -529,6 +531,111 @@ async def _plan_cutscene_or_fallback(
         )
 
 
+async def sync_roletower_showcase_videos(session, release_id: int, root: Path, fmodel: Path) -> dict:
+    """Extract and attach RoleTower character showcase MP4s to their character nodes."""
+    entries = await roletower_showcase_videos(session, release_id)
+    if not entries:
+        return {"attached": 0, "reused": 0, "missing": []}
+
+    settings = get_settings()
+    pending: list[tuple[dict, int]] = []
+    reused = 0
+    for entry in entries:
+        char_node_id = await session.scalar(
+            select(Node.id).where(Node.canonical_key == entry["character_key"])
+        )
+        if char_node_id is None:
+            continue
+        existing = await session.scalar(
+            select(FileReference.id)
+            .join(FileObject, FileObject.id == FileReference.file_id)
+            .join(FileLocation, FileLocation.file_id == FileObject.id)
+            .where(
+                FileReference.owner_node_id == char_node_id,
+                FileReference.reference_type == "character_showcase_video",
+                FileReference.source_path == entry["video_path"],
+                FileLocation.available.is_(True),
+                FileLocation.is_primary.is_(True),
+                FileLocation.backend == "s3",
+                FileLocation.bucket == settings.s3_bucket,
+            )
+            .limit(1)
+        )
+        if existing is not None:
+            reused += 1
+            continue
+        pending.append((entry, char_node_id))
+
+    if not pending:
+        return {"attached": 0, "reused": reused, "missing": []}
+
+    from wuwa_story_worker.cutscene_import import confined, movie_path
+
+    index = await ensure_archive_index(root, fmodel, root)
+    pkg_keys = {
+        exported_video_path(entry["video_path"]).removeprefix("Client/Content/").removesuffix(".uexp")
+        for entry, _ in pending
+    }
+    available = await asyncio.to_thread(indexed_package_paths, index, pkg_keys)
+    receipts = []
+    wrapper_packages = {path.removesuffix(".uasset") for path in available.values()}
+    for batch in voice_filter_batches(wrapper_packages):
+        receipts.append(await export_assets(root, fmodel, "|".join(batch)))
+    assets = root / "release-media" / "files"
+    if receipts:
+        assets = await asyncio.to_thread(merge_exports, receipts, assets)
+    if available:
+        movies = await prepare_base_movies(root, assets, sorted(available.values()), fmodel, index=index)
+        if movies["receipts"]:
+            await asyncio.to_thread(merge_exports, movies["receipts"], assets)
+
+    storage = S3Storage(settings)
+    await storage.ensure_bucket()
+    service = FileRegistrationService(storage)
+    attached = 0
+    missing: list[str] = []
+    for entry, char_node_id in pending:
+        rel = exported_video_path(entry["video_path"])
+        wrapper_file = confined(assets, rel)
+        if not wrapper_file.is_file():
+            missing.append(entry["video_path"])
+            continue
+        try:
+            mp4_rel = rel if rel.casefold().endswith(".mp4") else movie_path(wrapper_file.read_bytes())
+        except ValueError:
+            missing.append(entry["video_path"])
+            continue
+        mp4_file = confined(assets, mp4_rel)
+        if not mp4_file.is_file():
+            missing.append(entry["video_path"])
+            continue
+        file_obj = await service.register_file(
+            session,
+            mp4_file,
+            "video_mp4",
+            logical_name=mp4_file.name,
+            mime_type="video/mp4",
+        )
+        ref = await service.register_reference(
+            session,
+            file_id=file_obj.id,
+            reference_type="character_showcase_video",
+            release_id=release_id,
+            owner_node_id=char_node_id,
+            source_name=entry["video_name_key"],
+            source_path=entry["video_path"],
+            source_record_id=entry["source_record_id"],
+        )
+        ref.metadata_json = {
+            "roletower_level_id": entry["roletower_level_id"],
+            "video_name_key": entry["video_name_key"],
+            "name": entry["name"],
+        }
+        attached += 1
+    await session.commit()
+    return {"attached": attached, "reused": reused, "missing": missing}
+
+
 async def cutscene_assets(payload, parent, session=None):
     context = await source_context(parent, video=True)
     missing = await missing_cutscene_identities({"cutscene:" + name for name in payload["targets"]},
@@ -545,6 +652,7 @@ async def cutscene_assets(payload, parent, session=None):
     if discover_extra:
         bindata_report = await discover_bindata_cutscenes(session, release_id, apply=True)
         bindata_names = bindata_report.get("cutscene_names", [])
+        await sync_roletower_showcase_videos(session, release_id, client_root(parent), tool_path("WUWA_FMODEL_PATH"))
         seq_candidates = await levela_sequence_candidates(session, release_id)
     extra_candidates = sorted((set(seq_candidates) | set(bindata_names)) - set(payload["targets"]))
     if not targets and not extra_candidates:

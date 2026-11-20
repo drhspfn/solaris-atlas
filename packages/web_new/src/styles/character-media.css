@@ -11,3 +11,8 @@
 @media (max-width: 480px) { .character-media-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 .character-media-thumbnail video { pointer-events: none; }
+.character-showcase-videos { margin-block: 24px; }
+.character-showcase-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.character-showcase-card { margin: 0; padding: 10px; border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--surface-2); }
+.character-showcase-player { display: block; width: 100%; max-height: 420px; border-radius: 8px; background: #000; }
+.character-showcase-caption { margin-top: 8px; color: var(--text-secondary); font-size: 13px; }

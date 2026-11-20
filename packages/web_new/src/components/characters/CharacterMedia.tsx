@@ -62,6 +62,7 @@ export function CharacterMediaProvider({
           selectAnimationClip(archive?.trial_spine?.animation_preview, "idle"),
         ),
         normalize,
+        archive?.showcase_videos ?? [],
       ),
     [archive, portraitUrl, name],
   );
@@ -140,6 +141,43 @@ function MediaCard({ item, onOpen }: { item: MediaItem; onOpen: () => void }) {
         View {item.type === "video" ? "animation" : "image"}
       </span>
     </Button>
+  );
+}
+
+export function CharacterShowcaseVideos({
+  videos,
+  posterUrl,
+}: {
+  videos?: CharacterArchiveData["showcase_videos"];
+  posterUrl?: string | null;
+}) {
+  const playable = (videos ?? []).filter((video) => Boolean(video?.url));
+  if (!playable.length) return null;
+  const poster = posterUrl ? normalize(posterUrl) : undefined;
+  return (
+    <section
+      className="character-showcase-videos"
+      aria-label="Character showcase videos"
+    >
+      <h3>Showcase video</h3>
+      <div className="character-showcase-grid">
+        {playable.map((video) => (
+          <figure key={`${video.id}:${video.url}`} className="character-showcase-card">
+            <video
+              className="character-showcase-player"
+              src={normalize(video.url)}
+              poster={poster}
+              controls
+              playsInline
+              preload="metadata"
+            />
+            <figcaption className="character-showcase-caption">
+              {video.title || video.name || "Showcase video"}
+            </figcaption>
+          </figure>
+        ))}
+      </div>
+    </section>
   );
 }
 

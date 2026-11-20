@@ -25,6 +25,7 @@ import { Select } from "@/components/ui/Select";
 import { TrackPlayer } from "@/components/ui/TrackPlayer";
 import {
   CharacterMediaGallery,
+  CharacterShowcaseVideos,
   useCharacterMedia,
 } from "@/components/characters/CharacterMedia";
 import type { AnimationPreview } from "@/components/ui/animationPreview";
@@ -38,6 +39,16 @@ export interface CharacterArchiveData {
     file_id: number;
     animation_preview?: AnimationPreview | null;
   } | null;
+  showcase_videos?: {
+    id: number | string;
+    name: string;
+    title: string | null;
+    engine_path: string;
+    url: string;
+    file_id?: number;
+    size_bytes?: number | null;
+    mime_type?: string | null;
+  }[];
   biography: string | null;
   profile: {
     country: string | null;
@@ -708,6 +719,10 @@ export function CharacterArchive({
                 </code>
               </div>
             )}
+            <CharacterShowcaseVideos
+              videos={archive?.showcase_videos}
+              posterUrl={portrait?.url}
+            />
             <CharacterMediaGallery />
             {!!archive?.artwork.length && (
               <section

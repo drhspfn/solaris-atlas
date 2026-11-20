@@ -11,7 +11,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from types import SimpleNamespace
 
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from wuwa_story.db.models.core import Cutscene, DialogueLine, QuestAction, QuestState
@@ -19,6 +19,7 @@ from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision, N
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
+from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.db.session import SessionFactory
 from wuwa_story.ingestion.canonical_import import import_canonical_edges
 from wuwa_story.ingestion.cutscene_order import rebuild as rebuild_cutscene_order
@@ -282,21 +283,14 @@ async def _register_records(
     return ids
 
 
-async def discover_bindata_cutscenes(
-    session, release_id: int, *, apply: bool = False, max_rows: int = 1000
-) -> dict:
-    """Backfill explicit BinData Activity MP4s (RoleTower) from snapshot raw rows."""
+async def roletower_showcase_videos(
+    session, release_id: int, *, max_rows: int = 1000
+) -> list[dict]:
+    """Return character showcase video entries from BinData/RoleTower/roletowerlevel.json."""
     if type(release_id) is not int or release_id <= 0:
         raise ValueError("A positive imported release ID is required")
     if type(max_rows) is not int or not 1 <= max_rows <= 10000:
         raise ValueError("max_rows must be between 1 and 10000")
-    await session.execute(text("SET LOCAL lock_timeout = '2s'"))
-    await session.execute(text("SET LOCAL statement_timeout = '30s'"))
-    if apply:
-        await session.execute(text("SELECT pg_advisory_xact_lock(708, :id)"), {"id": release_id})
-    release = await session.get(GameRelease, release_id)
-    if release is None:
-        raise ValueError("Unknown imported release")
     rows = list(
         await session.execute(
             select(SourceRecord.id, SourceRecord.row_index, SourceRecord.data)
@@ -312,133 +306,228 @@ async def discover_bindata_cutscenes(
     )
     if len(rows) > max_rows:
         raise ValueError("RoleTower rows exceed max_rows bound")
-    node_specs: list[dict] = []
-    edge_records: list[dict] = []
-    seen_cutscenes: set[str] = set()
-    seen_assets: set[str] = set()
-    names: list[str] = []
+    entries: list[dict] = []
     for source_id, row_index, raw in rows:
         if not isinstance(raw, dict):
             continue
         video_path = raw.get("VideoPath")
+        main_role_id = raw.get("MainRoleId")
         if not isinstance(video_path, str) or not video_path.startswith("/Game/"):
+            continue
+        if not isinstance(main_role_id, int) or isinstance(main_role_id, bool):
             continue
         name = video_path.rsplit("/", 1)[-1].split(".", 1)[0]
         if not name:
             continue
-        names.append(name)
-        scene_key = f"cutscene:{name}"
-        if scene_key not in seen_cutscenes:
-            seen_cutscenes.add(scene_key)
-            node_specs.append(
-                {
-                    "canonical_key": scene_key,
-                    "type": "cutscene",
-                    "cg_name": name,
-                    "source_record_id": source_id,
-                    "node_metadata": {
-                        "source_file": ROLETOWER_SOURCE,
-                        "source_row": row_index,
-                        "source_raw_path": f"$[{row_index}].VideoPath",
-                    },
-                    "revision_metadata": {
-                        "source_file": ROLETOWER_SOURCE,
-                        "source_row": row_index,
-                    },
-                    "cutscene_metadata": {
-                        "resolution": "exact",
-                        "resolution_basis": "RoleTowerLevel.VideoPath",
-                    },
-                }
-            )
-        variant_key = f"cutscene_variant:roletower:{raw.get('Id', row_index)}:{row_index}"
-        node_specs.append(
+        entries.append(
             {
-                "canonical_key": variant_key,
-                "type": "cutscene_variant",
+                "character_key": f"character:{main_role_id}",
+                "main_role_id": main_role_id,
+                "roletower_level_id": raw.get("Id"),
+                "name": name,
+                "video_path": video_path,
+                "video_name_key": raw.get("VideoName"),
                 "source_record_id": source_id,
-                "node_metadata": {
-                    "source_file": ROLETOWER_SOURCE,
-                    "source_row": row_index,
-                    "cg_name": name,
-                    "girl_or_boy": 2,
-                    "video_name_key": raw.get("VideoName"),
-                },
-                "revision_metadata": {
-                    "source_file": ROLETOWER_SOURCE,
-                    "source_row": row_index,
-                },
+                "row_index": row_index,
             }
         )
-        asset_key = f"asset:ue:{video_path}"
-        if asset_key not in seen_assets:
-            seen_assets.add(asset_key)
-            node_specs.append(
-                {
-                    "canonical_key": asset_key,
-                    "type": "asset_reference",
-                    "source_record_id": source_id,
-                    "node_metadata": {
-                        "source_file": ROLETOWER_SOURCE,
-                        "source_row": row_index,
-                        "source_raw_path": f"$[{row_index}].VideoPath",
-                    },
-                    "revision_metadata": {
-                        "source_file": ROLETOWER_SOURCE,
-                        "source_row": row_index,
-                    },
-                }
-            )
-        raw_path = f"$[{row_index}].VideoPath"
-        edge_records.append(
-            {
-                "from": scene_key,
-                "to": variant_key,
-                "type": "has_variant",
-                "relation": "explicit_reference",
-                "source": ROLETOWER_SOURCE,
-                "raw_path": raw_path,
-                "basis": "RoleTowerLevel.VideoPath",
-            }
-        )
-        edge_records.append(
-            {
-                "from": variant_key,
-                "to": asset_key,
-                "type": "references_asset",
-                "relation": "explicit_reference",
-                "source": ROLETOWER_SOURCE,
-                "raw_path": raw_path,
-                "basis": "VideoPath",
-            }
-        )
+    return entries
 
-    existing_keys = set(
-        await session.scalars(
-            select(Node.canonical_key)
-            .join(NodeRevision, NodeRevision.node_id == Node.id)
-            .where(
-                NodeRevision.release_id == release_id,
-                Node.canonical_key.in_([spec["canonical_key"] for spec in node_specs]),
-            )
-        )
-    ) if node_specs else set()
-    missing_nodes = [spec for spec in node_specs if spec["canonical_key"] not in existing_keys]
-    report = {
+
+async def discover_bindata_cutscenes(
+    session, release_id: int, *, apply: bool = False, max_rows: int = 1000
+) -> dict:
+    """RoleTower videos are character showcase media, not story cutscenes."""
+    if type(release_id) is not int or release_id <= 0:
+        raise ValueError("A positive imported release ID is required")
+    if type(max_rows) is not int or not 1 <= max_rows <= 10000:
+        raise ValueError("max_rows must be between 1 and 10000")
+    release = await session.get(GameRelease, release_id)
+    if release is None:
+        raise ValueError("Unknown imported release")
+    return {
         "release_id": release_id,
         "game_version": release.game_version,
         "apply": apply,
-        "source_rows": len(rows),
-        "cutscene_names": sorted(set(names)),
-        "missing_nodes": len(missing_nodes),
-        "edge_candidates": len(edge_records),
+        "source_rows": 0,
+        "cutscene_names": [],
+        "missing_nodes": 0,
+        "edge_candidates": 0,
         "written_edges": 0,
     }
-    if not apply or not (node_specs or edge_records):
-        return report
-    await _register_records(session, release, node_specs, edge_records)
-    report["written_edges"] = len(edge_records)
-    return report
+
+
+async def cleanup_roletower_cutscenes(
+    session, *, apply: bool = False, max_rows: int = 1000
+) -> dict:
+    """Remove RoleTower Charact_* cutscenes and attach showcase MP4s to their characters."""
+    if type(max_rows) is not int or not 1 <= max_rows <= 10000:
+        raise ValueError("max_rows must be between 1 and 10000")
+    await session.execute(text("SET LOCAL lock_timeout = '2s'"))
+    await session.execute(text("SET LOCAL statement_timeout = '30s'"))
+    if apply:
+        await session.execute(text("SELECT pg_advisory_xact_lock(708, 0)"))
+
+    raw_rows = list(
+        await session.execute(
+            select(
+                SourceRecord.id,
+                SourceRecord.release_id,
+                SourceRecord.row_index,
+                SourceRecord.data,
+            )
+            .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
+            .where(SourceFile.logical_source_path == ROLETOWER_SOURCE)
+            .order_by(SourceFile.release_id.desc(), SourceRecord.row_index.asc())
+            .limit(max_rows + 1)
+        )
+    )
+    if len(raw_rows) > max_rows:
+        raise ValueError("RoleTower rows exceed max_rows bound")
+
+    entries_by_pair: dict[tuple[int, str], dict] = {}
+    roletower_names: set[str] = set()
+    for source_id, rel_id, row_index, raw in raw_rows:
+        if not isinstance(raw, dict):
+            continue
+        video_path = raw.get("VideoPath")
+        main_role_id = raw.get("MainRoleId")
+        if not isinstance(video_path, str) or not video_path.startswith("/Game/"):
+            continue
+        name = video_path.rsplit("/", 1)[-1].split(".", 1)[0]
+        if name:
+            roletower_names.add(name)
+        if not isinstance(main_role_id, int) or isinstance(main_role_id, bool) or not name:
+            continue
+        entries_by_pair.setdefault(
+            (main_role_id, video_path),
+            {
+                "character_key": f"character:{main_role_id}",
+                "main_role_id": main_role_id,
+                "roletower_level_id": raw.get("Id"),
+                "name": name,
+                "video_path": video_path,
+                "video_name_key": raw.get("VideoName"),
+                "source_record_id": source_id,
+                "release_id": rel_id,
+                "row_index": row_index,
+            },
+        )
+
+    attached_count = 0
+    already_attached_count = 0
+    missing_video_files: list[str] = []
+
+    for entry in entries_by_pair.values():
+        char_node_id = await session.scalar(
+            select(Node.id).where(Node.canonical_key == entry["character_key"])
+        )
+        if char_node_id is None:
+            continue
+        existing_ref = await session.scalar(
+            select(FileReference.id)
+            .where(
+                FileReference.owner_node_id == char_node_id,
+                FileReference.reference_type == "character_showcase_video",
+                FileReference.source_path == entry["video_path"],
+            )
+            .limit(1)
+        )
+        if existing_ref is not None:
+            already_attached_count += 1
+            continue
+        file_id = await session.scalar(
+            select(FileReference.file_id)
+            .join(FileObject, FileObject.id == FileReference.file_id)
+            .join(FileLocation, FileLocation.file_id == FileObject.id)
+            .where(
+                FileReference.source_path == entry["video_path"],
+                FileObject.mime_type == "video/mp4",
+                FileLocation.available.is_(True),
+            )
+            .order_by(FileReference.id.desc())
+            .limit(1)
+        )
+        if file_id is None:
+            missing_video_files.append(entry["video_path"])
+            continue
+        attached_count += 1
+        if apply:
+            session.add(
+                FileReference(
+                    release_id=entry["release_id"],
+                    owner_node_id=char_node_id,
+                    file_id=file_id,
+                    reference_type="character_showcase_video",
+                    source_name=entry["video_name_key"],
+                    source_path=entry["video_path"],
+                    source_record_id=entry["source_record_id"],
+                    metadata_json={
+                        "roletower_level_id": entry["roletower_level_id"],
+                        "video_name_key": entry["video_name_key"],
+                        "name": entry["name"],
+                    },
+                )
+            )
+
+    cutscene_filter = Cutscene.metadata_json["resolution_basis"].astext == "RoleTowerLevel.VideoPath"
+    if roletower_names:
+        cutscene_filter = or_(
+            cutscene_filter,
+            Node.canonical_key.in_(sorted(f"cutscene:{name}" for name in roletower_names)),
+        )
+    cutscene_rows = list(
+        await session.execute(
+            select(Node.id, Node.canonical_key)
+            .join(Cutscene, Cutscene.node_id == Node.id)
+            .where(cutscene_filter)
+            .order_by(Node.id)
+        )
+    )
+    variant_rows = list(
+        await session.execute(
+            select(Node.id, Node.canonical_key)
+            .where(Node.canonical_key.like("cutscene_variant:roletower:%"))
+            .order_by(Node.id)
+        )
+    )
+
+    cutscene_ids = [node_id for node_id, _ in cutscene_rows]
+    variant_ids = [node_id for node_id, _ in variant_rows]
+    remove_ids = sorted(set(cutscene_ids) | set(variant_ids))
+
+    if apply and remove_ids:
+        affected_releases = list(
+            await session.scalars(
+                select(NodeRevision.release_id)
+                .where(NodeRevision.node_id.in_(cutscene_ids))
+                .distinct()
+            )
+        ) if cutscene_ids else []
+        await session.execute(
+            delete(FileReference).where(FileReference.owner_node_id.in_(remove_ids))
+        )
+        await session.execute(
+            delete(Edge).where(
+                or_(Edge.from_node_id.in_(remove_ids), Edge.to_node_id.in_(remove_ids))
+            )
+        )
+        if cutscene_ids:
+            await session.execute(delete(Cutscene).where(Cutscene.node_id.in_(cutscene_ids)))
+        await session.execute(delete(Node).where(Node.id.in_(remove_ids)))
+        for rel_id in affected_releases:
+            await rebuild_cutscene_order(session, rel_id)
+        await session.commit()
+
+    return {
+        "apply": apply,
+        "roletower_entries": len(entries_by_pair),
+        "attached_to_characters": attached_count,
+        "already_attached": already_attached_count,
+        "missing_video_files": sorted(set(missing_video_files)),
+        "removed_cutscenes": [key for _, key in cutscene_rows],
+        "removed_variants": [key for _, key in variant_rows],
+    }
 
 
 async def register_discovered_cutscenes(
@@ -664,15 +753,23 @@ async def register_discovered_cutscenes(
 
 async def main(args) -> None:
     async with SessionFactory() as session:
-        report = await discover_bindata_cutscenes(
-            session, args.release_id, apply=args.apply, max_rows=args.max_rows
-        )
+        if args.cleanup_roletower:
+            report = await cleanup_roletower_cutscenes(
+                session, apply=args.apply, max_rows=args.max_rows
+            )
+        else:
+            if not args.release_id:
+                raise SystemExit("--release-id is required unless --cleanup-roletower is set")
+            report = await discover_bindata_cutscenes(
+                session, args.release_id, apply=args.apply, max_rows=args.max_rows
+            )
         print(json.dumps(report, ensure_ascii=False))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--release-id", type=int, required=True)
+    parser.add_argument("--release-id", type=int)
     parser.add_argument("--max-rows", type=int, default=1000)
+    parser.add_argument("--cleanup-roletower", action="store_true")
     parser.add_argument("--apply", action="store_true")
     asyncio.run(main(parser.parse_args()))

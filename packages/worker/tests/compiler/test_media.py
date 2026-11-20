@@ -177,36 +177,27 @@ class MediaCompilerTest(unittest.TestCase):
                             edge["basis"] == "CgName = videodata.CgName"
                             for edge in self.edges))
 
-    def test_roletower_activity_videos_emit_cutscenes_and_variants(self) -> None:
+    def test_roletower_showcase_videos_attach_to_characters_not_cutscenes(self) -> None:
         self.write("cgVedio/videodata.json", [])
         self.write("RoleTower/roletowerlevel.json", [
-            {"Id": 1, "VideoName": "RoleTowerLevel_VedioName_1", "VideoPath": ""},
+            {"Id": 1, "MainRoleId": 1107, "VideoName": "RoleTowerLevel_VedioName_1", "VideoPath": ""},
             {
                 "Id": 4,
+                "MainRoleId": 1205,
                 "VideoName": "RoleTowerLevel_VedioName_4",
                 "VideoPath": "/Game/Aki/UI/UIResources/UiActivity/Mp4/Activity38/RoleTower/Charact_ChangLi.Charact_ChangLi",
             },
         ])
         self.compile()
-        self.assertIn("cutscene:Charact_ChangLi", self.nodes)
-        self.assertEqual(
-            self.nodes["cutscene:Charact_ChangLi"]["resolution_basis"],
-            "RoleTowerLevel.VideoPath",
-        )
-        variant_id = "cutscene_variant:roletower:4:1"
-        self.assertIn(variant_id, self.nodes)
+        self.assertNotIn("cutscene:Charact_ChangLi", self.nodes)
+        self.assertNotIn("cutscene_variant:roletower:4:1", self.nodes)
         asset_id = "asset:ue:/Game/Aki/UI/UIResources/UiActivity/Mp4/Activity38/RoleTower/Charact_ChangLi.Charact_ChangLi"
         self.assertIn(asset_id, self.nodes)
         self.assertTrue(any(
-            edge["from"] == "cutscene:Charact_ChangLi"
-            and edge["to"] == variant_id
-            and edge["type"] == "has_variant"
-            for edge in self.edges
-        ))
-        self.assertTrue(any(
-            edge["from"] == variant_id
+            edge["from"] == "character:1205"
             and edge["to"] == asset_id
             and edge["type"] == "references_asset"
+            and edge["basis"] == "RoleTowerLevel.MainRoleId + VideoPath"
             for edge in self.edges
         ))
 

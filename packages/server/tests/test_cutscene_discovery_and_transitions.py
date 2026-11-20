@@ -28,14 +28,15 @@ def test_server_levela_sequence_code(engine_path, expected):
 
 
 @pytest.mark.asyncio
-async def test_discover_bindata_cutscenes_dry_run_and_apply(monkeypatch):
+async def test_discover_bindata_cutscenes_skips_roletower_and_extracts_showcase_entries():
     rows = [
-        (10, 0, {"Id": 1, "VideoPath": ""}),
+        (10, 0, {"Id": 1, "MainRoleId": 1107, "VideoPath": ""}),
         (
             11,
             1,
             {
                 "Id": 4,
+                "MainRoleId": 1205,
                 "VideoName": "RoleTowerLevel_VedioName_4",
                 "VideoPath": "/Game/Aki/UI/UIResources/UiActivity/Mp4/Activity38/RoleTower/Charact_ChangLi.Charact_ChangLi",
             },
@@ -44,30 +45,83 @@ async def test_discover_bindata_cutscenes_dry_run_and_apply(monkeypatch):
     session = NS(
         execute=AsyncMock(return_value=rows),
         get=AsyncMock(return_value=NS(id=22, game_version="3.8.0", upstream_name="up", upstream_commit="c")),
-        scalars=AsyncMock(return_value=[]),
-        commit=AsyncMock(),
     )
     dry = await cutscene_discovery.discover_bindata_cutscenes(session, 22, apply=False)
     assert dry["apply"] is False
-    assert dry["cutscene_names"] == ["Charact_ChangLi"]
-    assert dry["missing_nodes"] == 3
-    assert dry["edge_candidates"] == 2
+    assert dry["cutscene_names"] == []
+    assert dry["missing_nodes"] == 0
     assert dry["written_edges"] == 0
 
-    register = AsyncMock(return_value={})
-    monkeypatch.setattr(cutscene_discovery, "_register_records", register)
-    session.execute = AsyncMock(return_value=rows)
-    session.scalars = AsyncMock(return_value=[])
     applied = await cutscene_discovery.discover_bindata_cutscenes(session, 22, apply=True)
-    assert applied["written_edges"] == 2
-    register.assert_awaited_once()
-    node_specs, edge_records = register.await_args.args[2:]
-    assert [spec["canonical_key"] for spec in node_specs] == [
-        "cutscene:Charact_ChangLi",
-        "cutscene_variant:roletower:4:1",
-        "asset:ue:/Game/Aki/UI/UIResources/UiActivity/Mp4/Activity38/RoleTower/Charact_ChangLi.Charact_ChangLi",
+    assert applied["cutscene_names"] == []
+    assert applied["written_edges"] == 0
+
+    showcase = await cutscene_discovery.roletower_showcase_videos(session, 22)
+    assert showcase == [
+        {
+            "character_key": "character:1205",
+            "main_role_id": 1205,
+            "roletower_level_id": 4,
+            "name": "Charact_ChangLi",
+            "video_path": "/Game/Aki/UI/UIResources/UiActivity/Mp4/Activity38/RoleTower/Charact_ChangLi.Charact_ChangLi",
+            "video_name_key": "RoleTowerLevel_VedioName_4",
+            "source_record_id": 11,
+            "row_index": 1,
+        }
     ]
-    assert [edge["type"] for edge in edge_records] == ["has_variant", "references_asset"]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_roletower_cutscenes_attaches_videos_and_removes_cutscenes(monkeypatch):
+    added = []
+    executed_statements = []
+
+    async def fake_execute(stmt, *args, **kwargs):
+        sql = str(stmt)
+        executed_statements.append(sql)
+        if "FROM raw.source_record" in sql:
+            return [
+                (
+                    11,
+                    22,
+                    1,
+                    {
+                        "Id": 4,
+                        "MainRoleId": 1205,
+                        "VideoName": "RoleTowerLevel_VedioName_4",
+                        "VideoPath": "/Game/Aki/UI/UIResources/UiActivity/Mp4/Activity38/RoleTower/Charact_ChangLi.Charact_ChangLi",
+                    },
+                )
+            ]
+        if "FROM graph.node JOIN core.cutscene" in sql:
+            return [(9490248, "cutscene:Charact_ChangLi")]
+        if "FROM graph.node" in sql and "LIKE" in sql:
+            return [(9490243, "cutscene_variant:roletower:4:1")]
+        return []
+
+    session = NS(
+        execute=AsyncMock(side_effect=fake_execute),
+        scalar=AsyncMock(side_effect=[130181, None, 670911]),
+        scalars=AsyncMock(return_value=[22]),
+        add=lambda obj: added.append(obj),
+        commit=AsyncMock(),
+    )
+    rebuild = AsyncMock()
+    monkeypatch.setattr(cutscene_discovery, "rebuild_cutscene_order", rebuild)
+
+    report = await cutscene_discovery.cleanup_roletower_cutscenes(session, apply=True)
+    assert report["roletower_entries"] == 1
+    assert report["attached_to_characters"] == 1
+    assert report["already_attached"] == 0
+    assert report["missing_video_files"] == []
+    assert report["removed_cutscenes"] == ["cutscene:Charact_ChangLi"]
+    assert report["removed_variants"] == ["cutscene_variant:roletower:4:1"]
+    assert len(added) == 1
+    assert added[0].owner_node_id == 130181
+    assert added[0].file_id == 670911
+    assert added[0].reference_type == "character_showcase_video"
+    rebuild.assert_awaited_once_with(session, 22)
+    session.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
