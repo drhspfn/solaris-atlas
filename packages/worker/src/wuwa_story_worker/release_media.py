@@ -594,6 +594,7 @@ async def sync_roletower_showcase_videos(session, release_id: int, root: Path, f
     service = FileRegistrationService(storage)
     attached = 0
     missing: list[str] = []
+    dirty_char_ids: set[int] = set()
     for entry, char_node_id in pending:
         rel = exported_video_path(entry["video_path"])
         wrapper_file = confined(assets, rel)
@@ -631,7 +632,17 @@ async def sync_roletower_showcase_videos(session, release_id: int, root: Path, f
             "video_name_key": entry["video_name_key"],
             "name": entry["name"],
         }
+        dirty_char_ids.add(char_node_id)
         attached += 1
+    if dirty_char_ids:
+        from wuwa_story.db.models.ops import GameRelease
+        from wuwa_story.read_models.refresh import mark_dirty
+
+        char_ids = sorted(dirty_char_ids)
+        await mark_dirty(session, "character", char_ids)
+        release = await session.get(GameRelease, release_id)
+        if release is not None and release.game_version:
+            await mark_dirty(session, "character", char_ids, release.game_version)
     await session.commit()
     return {"attached": attached, "reused": reused, "missing": missing}
 

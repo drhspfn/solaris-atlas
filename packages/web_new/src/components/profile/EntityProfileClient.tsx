@@ -384,7 +384,11 @@ export function EntityProfileClient({
             ) : null}
           </div>
           <p>
-            <PlayerText value={introduction} display={playerDisplay} />
+            <PlayerText
+              value={introduction}
+              display={playerDisplay}
+              terms={archive?.terms}
+            />
           </p>
           <FandomHeaderCard
             canonicalKey={entity?.canonical_key}

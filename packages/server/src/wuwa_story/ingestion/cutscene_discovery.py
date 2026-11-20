@@ -417,6 +417,8 @@ async def cleanup_roletower_cutscenes(
     attached_count = 0
     already_attached_count = 0
     missing_video_files: list[str] = []
+    dirty_char_ids: set[int] = set()
+    dirty_release_ids: set[int] = set()
 
     for entry in entries_by_pair.values():
         char_node_id = await session.scalar(
@@ -453,6 +455,8 @@ async def cleanup_roletower_cutscenes(
             continue
         attached_count += 1
         if apply:
+            dirty_char_ids.add(char_node_id)
+            dirty_release_ids.add(entry["release_id"])
             session.add(
                 FileReference(
                     release_id=entry["release_id"],
@@ -517,6 +521,23 @@ async def cleanup_roletower_cutscenes(
         await session.execute(delete(Node).where(Node.id.in_(remove_ids)))
         for rel_id in affected_releases:
             await rebuild_cutscene_order(session, rel_id)
+    if apply and dirty_char_ids:
+        from wuwa_story.read_models.refresh import mark_dirty
+
+        char_ids = sorted(dirty_char_ids)
+        await mark_dirty(session, "character", char_ids)
+        if dirty_release_ids:
+            versions = list(
+                await session.execute(
+                    select(GameRelease.game_version).where(
+                        GameRelease.id.in_(sorted(dirty_release_ids))
+                    )
+                )
+            )
+            for (version,) in versions:
+                if isinstance(version, str) and version:
+                    await mark_dirty(session, "character", char_ids, version)
+    if apply and (remove_ids or dirty_char_ids):
         await session.commit()
 
     return {

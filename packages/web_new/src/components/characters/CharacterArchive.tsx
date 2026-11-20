@@ -25,7 +25,6 @@ import { Select } from "@/components/ui/Select";
 import { TrackPlayer } from "@/components/ui/TrackPlayer";
 import {
   CharacterMediaGallery,
-  CharacterShowcaseVideos,
   useCharacterMedia,
 } from "@/components/characters/CharacterMedia";
 import type { AnimationPreview } from "@/components/ui/animationPreview";
@@ -600,7 +599,10 @@ export function CharacterArchive({
     profile?.talent ||
     groups.size;
   const hasProfile =
-    hasProfileDetails || archive?.artwork.length || mediaItems.length;
+    hasProfileDetails ||
+    archive?.artwork.length ||
+    mediaItems.length ||
+    archive?.showcase_videos?.some((video) => Boolean(video?.url));
   const skills =
     archive?.skills.filter(
       (skill) =>
@@ -639,7 +641,11 @@ export function CharacterArchive({
           <div className="character-fold-body">
             {biography && (
               <p className="character-biography">
-                <PlayerText value={archive?.biography} display={display} />
+                <PlayerText
+                  value={archive?.biography}
+                  display={display}
+                  terms={archive?.terms}
+                />
               </p>
             )}
             <dl className="character-facts">
@@ -719,11 +725,10 @@ export function CharacterArchive({
                 </code>
               </div>
             )}
-            <CharacterShowcaseVideos
+            <CharacterMediaGallery
               videos={archive?.showcase_videos}
               posterUrl={portrait?.url}
             />
-            <CharacterMediaGallery />
             {!!archive?.artwork.length && (
               <section
                 aria-label="Character artwork"
@@ -914,6 +919,7 @@ export function CharacterArchive({
                           value={line.title}
                           fallback="Text unavailable in this language."
                           display={display}
+                          terms={spoken?.terms ?? archive?.terms}
                         />
                       </h3>
                       <p>
@@ -921,6 +927,7 @@ export function CharacterArchive({
                           value={line.text}
                           fallback="Text unavailable in this language."
                           display={display}
+                          terms={spoken?.terms ?? archive?.terms}
                         />
                       </p>
                       {line.audio_event_path && (

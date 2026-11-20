@@ -59,11 +59,17 @@ export function collectCharacterMedia(
   for (const video of showcaseVideos ?? []) {
     if (!video?.url) continue;
     const src = normalize(video.url);
+    const rawTitle = video.title || video.name || "Showcase video";
+    const title =
+      rawTitle
+        .replace(/<\/?(?:color|ano|i|b|u|s|br|size|te)(?:\s*=[^>]*)?>/gi, "")
+        .replace(/\s+/g, " ")
+        .trim() || "Showcase video";
     add({
       id: `showcase:${video.id}:${src}`,
       src,
       type: "video",
-      title: video.title || video.name || "Showcase video",
+      title,
       poster,
     });
   }

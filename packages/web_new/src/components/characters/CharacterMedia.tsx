@@ -10,6 +10,7 @@ import {
 } from "react";
 import { Image as ImageIcon, Play } from "lucide-react";
 import { apiUrl } from "@/api/client";
+import { PlayerText } from "@/components/dialogue/PlayerText";
 import { Button } from "@/components/ui/Button";
 import type { MediaItem } from "@/components/ui/MediaViewer";
 import { useMediaViewer } from "@/components/ui/MediaViewerProvider";
@@ -155,11 +156,11 @@ export function CharacterShowcaseVideos({
   if (!playable.length) return null;
   const poster = posterUrl ? normalize(posterUrl) : undefined;
   return (
-    <section
+    <div
       className="character-showcase-videos"
       aria-label="Character showcase videos"
     >
-      <h3>Showcase video</h3>
+      <h4>Showcase video</h4>
       <div className="character-showcase-grid">
         {playable.map((video) => (
           <figure key={`${video.id}:${video.url}`} className="character-showcase-card">
@@ -172,26 +173,38 @@ export function CharacterShowcaseVideos({
               preload="metadata"
             />
             <figcaption className="character-showcase-caption">
-              {video.title || video.name || "Showcase video"}
+              <PlayerText
+                value={video.title || video.name || "Showcase video"}
+              />
             </figcaption>
           </figure>
         ))}
       </div>
-    </section>
+    </div>
   );
 }
 
-export function CharacterMediaGallery() {
+export function CharacterMediaGallery({
+  videos,
+  posterUrl,
+}: {
+  videos?: CharacterArchiveData["showcase_videos"];
+  posterUrl?: string | null;
+} = {}) {
   const { items, open } = useCharacterMedia();
-  if (!items.length) return null;
+  const playableVideos = (videos ?? []).filter((video) => Boolean(video?.url));
+  if (!items.length && !playableVideos.length) return null;
   return (
     <section className="character-media" aria-label="Character media">
       <h3>Artwork and animation</h3>
-      <div className="character-media-grid">
-        {items.map((item, index) => (
-          <MediaCard key={item.id} item={item} onOpen={() => open(index)} />
-        ))}
-      </div>
+      {items.length > 0 && (
+        <div className="character-media-grid">
+          {items.map((item, index) => (
+            <MediaCard key={item.id} item={item} onOpen={() => open(index)} />
+          ))}
+        </div>
+      )}
+      <CharacterShowcaseVideos videos={playableVideos} posterUrl={posterUrl} />
     </section>
   );
 }

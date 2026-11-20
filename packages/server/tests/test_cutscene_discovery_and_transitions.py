@@ -108,6 +108,11 @@ async def test_cleanup_roletower_cutscenes_attaches_videos_and_removes_cutscenes
     )
     rebuild = AsyncMock()
     monkeypatch.setattr(cutscene_discovery, "rebuild_cutscene_order", rebuild)
+    from wuwa_story.read_models import refresh as refresh_mod
+    dirty_calls = []
+    async def fake_mark_dirty(sess, kind, entity_ids, snapshot_key="current"):
+        dirty_calls.append((kind, entity_ids, snapshot_key))
+    monkeypatch.setattr(refresh_mod, "mark_dirty", fake_mark_dirty)
 
     report = await cutscene_discovery.cleanup_roletower_cutscenes(session, apply=True)
     assert report["roletower_entries"] == 1
@@ -120,6 +125,7 @@ async def test_cleanup_roletower_cutscenes_attaches_videos_and_removes_cutscenes
     assert added[0].owner_node_id == 130181
     assert added[0].file_id == 670911
     assert added[0].reference_type == "character_showcase_video"
+    assert dirty_calls == [("character", [130181], "current")]
     rebuild.assert_awaited_once_with(session, 22)
     session.commit.assert_awaited_once()
 

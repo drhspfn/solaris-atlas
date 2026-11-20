@@ -44,7 +44,7 @@ test('collects character showcase videos with poster and localized title', () =>
       {
         id: 4,
         name: 'Charact_ChangLi',
-        title: 'Changli Showcase',
+        title: 'Cast <color=Highlight>Resonance Skill</color> to attack.',
         engine_path: '/Game/Aki/UI/UIResources/UiActivity/Mp4/Activity38/RoleTower/Charact_ChangLi.Charact_ChangLi',
         url: '/api/media/changli.mp4',
       },
@@ -52,7 +52,7 @@ test('collects character showcase videos with poster and localized title', () =>
   );
   assert.equal(items.length, 2);
   assert.equal(items[1].type, 'video');
-  assert.equal(items[1].title, 'Changli Showcase');
+  assert.equal(items[1].title, 'Cast Resonance Skill to attack.');
   assert.equal(items[1].src, '/media/changli.mp4');
   assert.equal(items[1].poster, '/changli.png');
 });
