@@ -120,7 +120,7 @@ async def recover_media_workspaces(stop: asyncio.Event, *, include_model_uploads
     """Recover committed terminal trees even when their final ACK preceded a crash."""
     from wuwa_story.ingestion.model_uploads import cleanup_model_uploads
 
-    from wuwa_story_worker.media_workspace import cleanup_workspace
+    from wuwa_story_worker.media_workspace import cleanup_superseded_clients, cleanup_workspace
     from wuwa_story_worker.tooling import asset_workspace
     from wuwa_story_worker.transient_workspace import (
         cleanup_stale_temp_dirs,
@@ -154,6 +154,13 @@ async def recover_media_workspaces(stop: asyncio.Event, *, include_model_uploads
                 except Exception:
                     logger.exception(
                         "Workspace recovery failed workspace=%s", workspace_id)
+            if not stop.is_set():
+                try:
+                    removed_clients = await cleanup_superseded_clients()
+                    if removed_clients:
+                        logger.info("media_workspace.superseded_clients_recovered removed=%s", removed_clients)
+                except Exception:
+                    logger.exception("Superseded client cleanup failed")
             if include_model_uploads and not stop.is_set():
                 try:
                     async with SessionFactory() as session:

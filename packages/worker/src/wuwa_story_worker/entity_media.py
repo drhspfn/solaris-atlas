@@ -42,6 +42,7 @@ from wuwa_story_worker.media_workspace import (
     cleanup_workspace,
     finish_writes,
     package_root,
+    resolve_installed_client,
     resolve_workspace,
     workspace_lease,
 )
@@ -410,8 +411,18 @@ async def _locked_process_entity_media(payload: dict) -> None:
 
 async def _process_entity_media(payload: dict, connection) -> None:
     request = MediaRequest.model_validate(payload["request"])
-    client = (asset_workspace() / "assets"
-              / f"{request.asset_version}-{request.tier}-{request.download_id[:16]}")
+    client, fallback_plan = resolve_installed_client(
+        request.asset_version, request.tier, request.download_id, base=asset_workspace()
+    )
+    if fallback_plan is not None:
+        payload = {
+            **payload,
+            "request": {
+                **payload["request"],
+                "asset_version": fallback_plan["version"],
+                "download_id": fallback_plan["id"],
+            },
+        }
     if request.workspace_id is not None:
         workspace = nullcontext(resolve_workspace(
             client, request.workspace_id, base=asset_workspace()))

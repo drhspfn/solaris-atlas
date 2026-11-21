@@ -1073,3 +1073,94 @@ def test_video_database_accepts_authored_table_capitalization(tmp_path):
         db.execute('CREATE TABLE VideoData (CgId INTEGER)')
         db.execute('CREATE TABLE VideoSound (CgId INTEGER)')
     assert release_media.video_database(tmp_path) == database
+
+
+@pytest.mark.asyncio
+async def test_event_catalog_v2_not_partial_when_only_historical_not_in_client_packages(monkeypatch, tmp_path):
+    config = tmp_path / "export/files/ConfigDB"
+    config.mkdir(parents=True)
+    (config / "db_activity.db").touch()
+    readers = tmp_path / "readers/files/Config"
+    readers.mkdir(parents=True)
+    (readers / "Activity.js").touch()
+    monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
+    monkeypatch.setattr(release_media, "tool_path", lambda _: tmp_path / "tool")
+    monkeypatch.setattr(release_media, "export_assets", AsyncMock(side_effect=[
+        config.parent.parent / "manifest.json",
+        readers.parent.parent / "manifest.json",
+    ]))
+    monkeypatch.setattr(release_media, "read_event_catalog", lambda *_: {"102000009": {}})
+    monkeypatch.setattr(release_media, "annotate_image_packages", AsyncMock(return_value=[
+        {"expected": "/Game/Aki/UI/UIResources/Common/Image/Com/T_ScoreBgC", "status": "not_in_client", "matches": []},
+    ]))
+    monkeypatch.setattr(release_media, "store_client_events", AsyncMock(return_value={
+        "catalog_records": 10, "events": 10, "unresolved": [],
+        "artwork_paths": ["/Game/Aki/UI/UIResources/Common/Image/New"],
+        "resource_events": [],
+    }))
+    monkeypatch.setattr(release_media, "enqueue_event_images", AsyncMock(return_value={"tasks": 1, "queued": 1}))
+    session = AsyncMock()
+    parent = {"asset_version": "3.8.0", "tier": "hd", "download_id": "a" * 64}
+    report, status = await release_media.event_catalog(
+        {"targets": ["client-catalog:v2"], "release_id": 9}, parent, session,
+    )
+    assert status == "completed"
+    assert report["missing"] == 0
+    assert len(report["missing_image_packages"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_event_images_skips_non_texture_and_not_in_client_without_partial(monkeypatch, tmp_path):
+    (tmp_path / "plan.json").write_text(json.dumps({"id": "a" * 64}))
+    monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
+    monkeypatch.setattr(release_media, "tool_path", lambda _: tmp_path / "tool")
+    monkeypatch.setattr(release_media, "build_icons", AsyncMock(return_value={}))
+    monkeypatch.setattr(release_media, "ensure_archive_index", AsyncMock(return_value=tmp_path / "idx"))
+    # Only RealTexture is present in client; OldTexture is absent; TextData_NumH2 & UiItem_ are non-textures.
+    monkeypatch.setattr(release_media, "indexed_package_paths", lambda _idx, _paths: {
+        "Aki/UI/UIResources/Common/Image/RealTexture": "Client/Content/Aki/UI/UIResources/Common/Image/RealTexture.uasset",
+    })
+    session = AsyncMock()
+    parent = {"asset_version": "3.8.0", "tier": "hd", "download_id": "a" * 64}
+
+    report, status = await release_media.event_images(
+        {"release_id": 9, "targets": [
+            "/Game/Aki/UI/UIResources/Common/Image/OldTexture",
+            "/Game/Aki/UI/UIResources/Common/Prefabs/UiItem_LuckdrawRole",
+            "/Game/Aki/UI/UIResources/Common/Image/TextData_NumH2",
+        ]},
+        parent, session,
+    )
+    assert status == "completed"
+    assert report["missing"] == 0
+    assert report["missing_images"] == []
+    statuses = {entry["expected"]: entry["status"] for entry in report["entries"]}
+    assert statuses["/Game/Aki/UI/UIResources/Common/Image/OldTexture"] == "not_in_client"
+    assert statuses["/Game/Aki/UI/UIResources/Common/Prefabs/UiItem_LuckdrawRole"] == "non_texture_asset"
+    assert statuses["/Game/Aki/UI/UIResources/Common/Image/TextData_NumH2"] == "non_texture_asset"
+
+    # Present-in-client real texture that fails to convert STILL marks partial.
+    report2, status2 = await release_media.event_images(
+        {"release_id": 9, "targets": ["/Game/Aki/UI/UIResources/Common/Image/RealTexture"]},
+        parent, session,
+    )
+    assert status2 == "partial"
+    assert report2["missing_images"] == ["/Game/Aki/UI/UIResources/Common/Image/RealTexture"]
+
+
+def test_telegram_alert_suppresses_historical_removed_cutscenes():
+    from wuwa_story_worker.notifications import alert_text
+
+    historical = SimpleNamespace(
+        id=41000, status="partial", error=None,
+        metadata_json={"request": {"kind": "cutscene", "game_version": "3.8.0"}},
+        raw_output={"media_report": {"entries": [{"expected": "M01.mp4", "status": "not_in_archive"}]}},
+    )
+    assert alert_text(historical, "release_media") is None
+
+    genuine = SimpleNamespace(
+        id=41001, status="partial", error=None,
+        metadata_json={"request": {"kind": "cutscene", "game_version": "3.8.0"}},
+        raw_output={"media_report": {"entries": [{"expected": "M01.bnk", "status": "not_resolved"}]}},
+    )
+    assert alert_text(genuine, "release_media") is not None

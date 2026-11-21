@@ -92,6 +92,41 @@ def read_tree_node_record(data: bytes) -> tuple[str, dict[str, Any]]:
     return key, value
 
 
+_WRAPPER_SLOTS = {
+    'quest': (41, 42),       # 1.0–3.7.x used slot 41; 3.8.0 shifted to slot 42.
+    'level_play': (42, 43),  # 1.0–3.7.x used slot 42; 3.8.0 shifted to slot 43.
+}
+
+
+def _resolve_tree_root(
+    reader: _Reader, table_root: int, kind: str, records: dict[int, dict[str, Any]]
+) -> int:
+    """Resolve the tree root across client FlatBuffer schema versions (e.g. 3.7 vs 3.8)."""
+    fallback: int | None = None
+    for slot in _WRAPPER_SLOTS[kind]:
+        try:
+            wrapper = reader.pointer(table_root, slot)
+            inner = reader.pointer(wrapper, 1) if wrapper is not None else None
+            candidate = reader.pointer(inner, 7) if inner is not None else None
+        except ValueError:
+            continue
+        if candidate is None:
+            continue
+        if fallback is None:
+            fallback = candidate
+        try:
+            field = reader.field(candidate, 1)
+            node_id = reader.number(field, '<I') if field is not None else None
+        except ValueError:
+            continue
+        record = records.get(node_id) if node_id is not None else None
+        if record is not None and record.get('Id') == node_id and (record.get('ParentNodeId') or 0) == 0:
+            return candidate
+    if fallback is not None:
+        return fallback
+    raise ValueError("Tree root is missing")
+
+
 def read_tree_order(data: bytes, kind: str, records: dict[int, dict[str, Any]],
                     *, tree_id: int | None = None) -> list[TreePosition]:
     """Return source order, rejecting mismatched client tables and incomplete trees.
@@ -106,11 +141,7 @@ def read_tree_order(data: bytes, kind: str, records: dict[int, dict[str, Any]],
     identity = reader.field(root, 6 if kind == 'quest' else 4)
     if tree_id is not None and (identity is None or reader.number(identity, '<I') != tree_id):
         raise ValueError("Tree identity does not match its resource path")
-    wrapper = reader.pointer(root, 41 if kind == 'quest' else 42)
-    wrapper = reader.pointer(wrapper, 1) if wrapper is not None else None
-    root = reader.pointer(wrapper, 7) if wrapper is not None else None
-    if root is None:
-        raise ValueError("Tree root is missing")
+    root = _resolve_tree_root(reader, root, kind, records)
     positions: list[TreePosition] = []
     seen: set[int] = set()
 

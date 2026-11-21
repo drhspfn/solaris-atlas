@@ -30,6 +30,12 @@ def alert_text(run, processor, error=None):
         non_found = [entry for entry in entries if entry.get("status") != "found"]
         if non_found and all(entry.get("status") == "not_in_archives" for entry in non_found):
             return None
+    # Historical cutscenes whose source video was removed from the current client
+    # remain visible as partial in the admin panel without spamming Telegram.
+    if processor == "release_media" and status == "partial" and request.get("kind") == "cutscene":
+        entries = report.get("entries") or []
+        if entries and all(entry.get("status") in {"not_in_archive", "not_in_videodata"} for entry in entries):
+            return None
     detail = str(error or run.error or "").split("[SQL:")[0].split("[parameters:")[0].strip()
     missing = [
         entry for entry in report.get("entries", [])
