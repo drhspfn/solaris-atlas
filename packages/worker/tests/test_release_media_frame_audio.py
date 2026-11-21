@@ -167,3 +167,52 @@ async def test_cutscene_leaf_wires_frame_audio_after_merge_with_pinned_voice_and
     assert bool(result['missing_assets']) is bool(diagnostics)
     assert json.loads((tmp_path / 'release-media/90/frame-audio-report.json').read_text()) == report
     assert package.call_args.args[2] == 'pinned'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('diag_code', [
+    'unmapped_launcher',
+    'effect_sequence_requires_runtime_timing',
+    'effect_sequence_audio_context_unresolved',
+])
+async def test_cutscene_informational_frame_audio_diagnostics_do_not_mark_partial(tmp_path, monkeypatch, diag_code):
+    assets = tmp_path / 'release-media/files'
+    movie = assets / 'Client/Content/Aki/Movies/R0030_Nvzhu.mp4'
+    movie.parent.mkdir(parents=True)
+    movie.write_bytes(b'movie')
+    monkeypatch.setattr(release_media, 'client_root', lambda _: tmp_path)
+    monkeypatch.setattr(release_media, 'asset_workspace', lambda: tmp_path)
+    monkeypatch.setattr(release_media, 'video_database', lambda _: assets / 'ConfigDB/video.db')
+    monkeypatch.setattr(release_media, 'source_context', AsyncMock(return_value={}))
+    monkeypatch.setattr(release_media, 'missing_cutscene_identities', AsyncMock(return_value={'cutscene:R0030_Nvzhu'}))
+    monkeypatch.setattr(release_media, 'cleanup_published_output', AsyncMock())
+    monkeypatch.setattr(release_media, 'update_admin_run', AsyncMock())
+    monkeypatch.setattr(release_media, 'tool_path', lambda key: tmp_path / key)
+    monkeypatch.setattr(release_media.shutil, 'which', lambda _: str(tmp_path / 'ffmpeg'))
+    monkeypatch.setattr(release_media, 'package_root', Mock(return_value=tmp_path / 'pinned'))
+    monkeypatch.setattr(release_media, 'extract_cutscene_audio', AsyncMock(return_value=tmp_path / 'audio'))
+    monkeypatch.setattr(release_media, 'merge_exports', lambda *_: None)
+    report = {'contexts': [], 'diagnostics': [{'code': diag_code, 'video_name': 'R0030_Nvzhu'}]}
+    monkeypatch.setattr(release_media, 'frame_audio_inputs', AsyncMock(return_value=([], report)))
+    monkeypatch.setattr(release_media, 'plan_cutscene', lambda *_, **__: {
+        'videos': [{'asset': 'asset:ue:/Game/Aki/Movies/R0030_Nvzhu.mp4'}],
+        'flow': {'evidence': 'native CG'},
+    })
+
+    async def publish(*_args, **kwargs):
+        # Simulate Wwise external music context diagnostic too.
+        kwargs['missing_assets'].append(
+            'play_all_sound_m0319.bnk: Wwise startup State requires external music context: bgm'
+        )
+        return {'videos': 1}
+
+    monkeypatch.setattr(release_media, 'import_cutscene_recipe', publish)
+    result, status = await release_media.cutscene(
+        {'targets': ['R0030_Nvzhu'], 'run_id': 91, 'game_version': '3.8.0'},
+        {'asset_version': '3.8.0', 'workspace_id': 11, 'voice_plan_id': 'pinned'},
+    )
+    assert status == 'completed'
+    assert result['missing_assets'] == []
+    codes = [item['code'] for item in result['media_report']['diagnostics']]
+    assert diag_code in codes
+    assert 'wwise_external_music_context' in codes

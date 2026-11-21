@@ -75,6 +75,7 @@ from wuwa_story_worker.media_workspace import (
     finish_writes,
     package_root,
     remove_job_output,
+    resolve_installed_client,
     resolve_workspace,
     run_workspace_id,
     workspace_lease,
@@ -108,8 +109,18 @@ async def source_context(parent, *, voice=False, video=False):
             if key in parent} | {"tools": tools}
 
 
+_INFORMATIONAL_FRAME_AUDIO_CODES = frozenset({
+    "unmapped_launcher",
+    "effect_sequence_requires_runtime_timing",
+    "effect_sequence_audio_context_unresolved",
+})
+_NON_TEXTURE_ASSET_MARKERS = ("/Prefabs/", "/Font/", "/Fonts/", "TextData_", "UiItem_")
+
+
 def client_root(result):
-    root = asset_workspace() / "assets" / f"{result['asset_version']}-{result['tier']}-{result['download_id'][:16]}"
+    root, _ = resolve_installed_client(
+        result["asset_version"], result["tier"], result["download_id"], base=asset_workspace()
+    )
     return resolve_workspace(root, result.get("workspace_id"), base=asset_workspace())
 
 
@@ -285,10 +296,10 @@ async def event_catalog(payload, parent, session):
                 "image_tasks": images, "resource_tasks": resources, "notice_tasks": notices,
                 "requested": result["catalog_records"] + len(artwork_paths) + len(missing_packages),
                 "found": result["events"] + len(artwork_paths),
-                "missing": len(result["unresolved"]) + len(missing_packages),
+                "missing": len(result["unresolved"]),
                 "missing_image_packages": missing_packages,
                 "media_report": {"entries": result["unresolved"] + missing_packages}}, (
-                    "partial" if result["unresolved"] or missing_packages else "completed")
+                    "partial" if result["unresolved"] else "completed")
     records = await asyncio.to_thread(read_event_catalog, configs[0].parent)
     identities = [target.split("@", 1)[0] for target in payload["targets"]]
     events = list(await session.scalars(select(GameEvent).where(GameEvent.source == SOURCE,
@@ -370,6 +381,18 @@ async def event_images(payload, parent, session):
         root, tool_path("WUWA_FMODEL_PATH"), tool_path("WUWA_TEXTURE_CONVERTER_PATH"),
         markers, entity_media=True, exact_textures=True,
     ) if markers else {}
+    indexed = None
+    unresolved_sources = {
+        original: source for original, source in sources.items()
+        if original in missing_paths and icons.get(source) is None
+    }
+    if unresolved_sources and (root / "plan.json").is_file():
+        try:
+            index = await ensure_archive_index(root, tool_path("WUWA_FMODEL_PATH"), root)
+            authored = [source.removeprefix("/Game/").split(".", 1)[0] for source in unresolved_sources.values()]
+            indexed = await asyncio.to_thread(indexed_package_paths, index, authored)
+        except (OSError, ValueError):
+            indexed = None
     service = None
     entries = unresolved + reused
     for original, source in sources.items():
@@ -377,7 +400,14 @@ async def event_images(payload, parent, session):
             continue
         icon = icons.get(source)
         if icon is None:
-            entries.append({"expected": original, "status": "not_resolved", "matches": []})
+            authored_pkg = source.removeprefix("/Game/").split(".", 1)[0]
+            if any(marker in source for marker in _NON_TEXTURE_ASSET_MARKERS):
+                entry_status = "non_texture_asset"
+            elif indexed is not None and authored_pkg not in indexed:
+                entry_status = "not_in_client"
+            else:
+                entry_status = "not_resolved"
+            entries.append({"expected": original, "status": entry_status, "matches": []})
             continue
         if service is None:
             await storage.ensure_bucket()
@@ -410,14 +440,16 @@ async def event_images(payload, parent, session):
         entries.append({"expected": original, "status": "found",
                         "matches": [image_path.name]})
     await session.commit()
+    unresolved_entries = [entry for entry in entries if entry["status"] == "not_resolved"]
+    skipped_entries = [entry for entry in entries if entry["status"] in {"not_in_client", "non_texture_asset"}]
     return {"asset_version": parent["asset_version"],
             "images": sum(entry["status"] == "found" for entry in entries),
-            "missing_images": [entry["expected"] for entry in entries if entry["status"] != "found"],
+            "missing_images": [entry["expected"] for entry in unresolved_entries],
+            "skipped_images": skipped_entries,
             "media_report": {"entries": entries}, "requested": len(entries),
             "found": sum(entry["status"] == "found" for entry in entries),
-            "missing": sum(entry["status"] != "found" for entry in entries),
-            "entries": entries}, ("partial" if any(e["status"] != "found" for e in entries)
-                                  else "completed")
+            "missing": len(unresolved_entries),
+            "entries": entries}, ("partial" if unresolved_entries else "completed")
 
 
 def merge_exports(receipts, destination):
@@ -988,10 +1020,15 @@ async def cutscene(payload, parent):
         root, assets, config, payload['targets'][0], tool_path('WUWA_FMODEL_PATH'), work,
         voice_root=pinned_voice_root)
     save_json(work / 'frame-audio-report.json', frame_report)
+    informational_diagnostics = []
     for diagnostic in frame_report['diagnostics']:
         if diagnostic.get('severity') in {'info', 'debug'}:
             continue
-        identity = f"frame_audio:{payload['targets'][0]}:{diagnostic.get('code', 'unresolved')}"
+        code = diagnostic.get('code', 'unresolved')
+        if code in _INFORMATIONAL_FRAME_AUDIO_CODES:
+            informational_diagnostics.append(diagnostic)
+            continue
+        identity = f"frame_audio:{payload['targets'][0]}:{code}"
         if identity not in missing_assets:
             missing_assets.append(identity)
     try:
@@ -1058,6 +1095,18 @@ async def cutscene(payload, parent):
             await update_admin_run(payload["run_id"], "release_media", "running",
                                    raw_output={"missing_assets": missing_assets, "media_report": report})
         raise
+    wwise_context_diagnostics = []
+    if result.get("videos", 0) > 0:
+        fatal_missing = []
+        for item in missing_assets:
+            if isinstance(item, str) and "Wwise startup State requires external music context" in item:
+                wwise_context_diagnostics.append({"code": "wwise_external_music_context", "detail": item})
+            else:
+                fatal_missing.append(item)
+        missing_assets = fatal_missing
+    all_diagnostics = informational_diagnostics + wwise_context_diagnostics
+    if all_diagnostics:
+        report["diagnostics"] = all_diagnostics
     entries.extend({"expected": name, "status": "not_resolved", "matches": []} for name in missing_assets)
     report.update(requested=len(entries), found=sum(e["status"] == "found" for e in entries),
                   missing=sum(e["status"] != "found" for e in entries))

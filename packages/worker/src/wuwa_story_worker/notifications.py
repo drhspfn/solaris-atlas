@@ -25,6 +25,12 @@ def alert_text(run, processor, error=None):
     # in the parent release job that only waited for those children.
     if processor == "release_media" and status == "partial" and request.get("kind") in {"images", "character_voices"}:
         return None
+    # Historical cutscenes whose source video was removed from the current client
+    # remain visible as partial in the admin panel without spamming Telegram.
+    if processor == "release_media" and status == "partial" and request.get("kind") == "cutscene":
+        entries = report.get("entries") or []
+        if entries and all(entry.get("status") in {"not_in_archive", "not_in_videodata"} for entry in entries):
+            return None
     lines = [f"Solaris Atlas · {processor}", f"Task #{run.id} · {status}"]
     if request.get("game_version"):
         lines.append(f"Game version: {request['game_version']}")

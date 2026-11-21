@@ -404,3 +404,210 @@ async def cleanup_workspace(workspace_id: int | None) -> bool:
                 return removed
         finally:
             await connection.invalidate()
+
+
+def _parse_version(value: object) -> tuple[int, ...] | None:
+    if not isinstance(value, str) or not re.fullmatch(r"\d+\.\d+\.\d+", value):
+        return None
+    return tuple(int(part) for part in value.split("."))
+
+
+def _read_package_info(directory: Path) -> dict | None:
+    """Return parsed version/id/ready state for an assets/ or voices/ directory."""
+    if directory.is_symlink() or directory.is_junction() or not directory.is_dir():
+        return None
+    plan_path = directory / "plan.json"
+    status_path = directory / "status.json"
+    if not plan_path.is_file() or not status_path.is_file():
+        return None
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    version = _parse_version(plan.get("version"))
+    identity = plan.get("id")
+    if version is None or not isinstance(identity, str) or not identity:
+        return None
+    ready = status.get("state") == "downloaded" and status.get("id") == identity
+    try:
+        mtime = status_path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    return {
+        "path": directory.resolve(),
+        "name": directory.name,
+        "version": version,
+        "version_str": plan["version"],
+        "tier": plan.get("tier"),
+        "id": identity,
+        "ready": ready,
+        "mtime": mtime,
+        "plan": plan,
+    }
+
+
+def _workspace_referenced_packages(base: Path) -> set[Path]:
+    """Return every assets/ or voices/ directory referenced by any active patch-workspace."""
+    referenced: set[Path] = set()
+    workspaces = base / "patch-workspaces"
+    if not workspaces.is_dir() or workspaces.is_symlink() or workspaces.is_junction():
+        return referenced
+    managed_roots = {(base / "assets").resolve(), (base / "voices").resolve()}
+    for entry in workspaces.iterdir():
+        if not entry.is_dir() or entry.is_symlink() or entry.is_junction() or entry.name.startswith("."):
+            continue
+        markers = [entry / "workspace.json"]
+        voices_dir = entry / "voices"
+        if voices_dir.is_dir() and not voices_dir.is_symlink():
+            markers.extend(child / "workspace.json" for child in voices_dir.iterdir() if child.is_dir())
+        for marker in markers:
+            if marker.is_file() and not marker.is_symlink():
+                try:
+                    source = json.loads(marker.read_text(encoding="utf-8")).get("source")
+                    if isinstance(source, str) and source:
+                        resolved = Path(source).resolve()
+                        if resolved.parent in managed_roots:
+                            referenced.add(resolved)
+                except (OSError, ValueError):
+                    pass
+        # Also inspect direct input symlinks in case workspace.json is missing/corrupt.
+        for link_parent in [entry] + (
+            [child for child in voices_dir.iterdir() if child.is_dir()]
+            if voices_dir.is_dir() and not voices_dir.is_symlink() else []
+        ):
+            for name in ("game", "plan.json", "status.json"):
+                link = link_parent / name
+                if link.is_symlink():
+                    try:
+                        target = link.resolve().parent
+                        if target.parent in managed_roots:
+                            referenced.add(target)
+                    except OSError:
+                        pass
+    return referenced
+
+
+def _extract_run_package_refs(runs) -> tuple[set[str], set[str]]:
+    """Collect download/voice plan IDs and short prefixes referenced by non-terminal runs."""
+    plan_ids: set[str] = set()
+    versions: set[str] = set()
+    for run in runs:
+        metadata = run.metadata_json or {}
+        output = run.raw_output or {}
+        for container in (metadata, metadata.get("request"), metadata.get("payload"),
+                          metadata.get("client_plan"), output):
+            if not isinstance(container, dict):
+                continue
+            for key in ("download_id", "voice_plan_id", "id"):
+                val = container.get(key)
+                if isinstance(val, str) and len(val) >= 16:
+                    plan_ids.add(val)
+                    plan_ids.add(val[:16])
+            for key in ("asset_version", "version"):
+                val = container.get(key)
+                if isinstance(val, str) and _parse_version(val) is not None:
+                    versions.add(val)
+    return plan_ids, versions
+
+
+def resolve_installed_client(
+    asset_version: str,
+    tier: str,
+    download_id: str,
+    *,
+    base: Path | None = None,
+) -> tuple[Path, dict | None]:
+    """Return the pinned client directory, falling back to a newer ready client if GC'd."""
+    root_base = (base or asset_workspace()).resolve()
+    assets_dir = root_base / "assets"
+    exact = assets_dir / f"{asset_version}-{tier}-{download_id[:16]}"
+    if (exact / "status.json").is_file() and (exact / "plan.json").is_file():
+        return exact, None
+    requested_version = _parse_version(asset_version)
+    if requested_version is None or not assets_dir.is_dir():
+        return exact, None
+    candidates = []
+    for child in assets_dir.iterdir():
+        info = _read_package_info(child)
+        if info is None or not info["ready"]:
+            continue
+        if info["tier"] and info["tier"] != tier:
+            continue
+        if info["version"] >= requested_version:
+            candidates.append(info)
+    if not candidates:
+        return exact, None
+    newest = max(candidates, key=lambda item: (item["version"], item["mtime"]))
+    logger.warning(
+        "media_workspace.client_fallback requested=%s-%s-%s resolved=%s",
+        asset_version, tier, download_id[:16], newest["name"],
+    )
+    return newest["path"], newest["plan"]
+
+
+def remove_superseded_packages(
+    referenced_paths: set[Path],
+    active_plan_ids: set[str],
+    *,
+    base: Path | None = None,
+) -> list[str]:
+    """Remove superseded assets/<old>-* and voices/<old>-* directories safely.
+
+    Since unchanged archive files are hardlinked via os.link(), unlinking an old
+    version directory frees blocks unique to the old version without affecting
+    the newer client.
+    """
+    root_base = (base or asset_workspace()).resolve()
+    removed: list[str] = []
+    for kind in ("assets", "voices"):
+        container = root_base / kind
+        if not container.is_dir() or container.is_symlink() or container.is_junction():
+            continue
+        packages = [info for child in sorted(container.iterdir()) if (info := _read_package_info(child)) is not None]
+        ready = [info for info in packages if info["ready"]]
+        if not ready:
+            continue
+        newest = max(ready, key=lambda item: (item["version"], item["mtime"]))
+        for info in packages:
+            if info["path"] == newest["path"]:
+                continue
+            # Only collect strictly older versions (or older superseded same-version ready downloads).
+            if info["version"] > newest["version"]:
+                continue
+            if info["version"] == newest["version"] and not info["ready"]:
+                continue
+            if info["path"] in referenced_paths:
+                continue
+            if info["id"] in active_plan_ids or info["id"][:16] in active_plan_ids:
+                continue
+            target = _directory(info["path"])
+            if target.parent != container.resolve():
+                raise ValueError(f"Refusing to remove package outside {kind}: {target}")
+            shutil.rmtree(target)
+            removed.append(f"{kind}/{info['name']}")
+            logger.info("media_workspace.superseded_client_removed package=%s/%s kept=%s/%s",
+                        kind, info["name"], kind, newest["name"])
+    return removed
+
+
+async def cleanup_superseded_clients(*, base: Path | None = None) -> list[str]:
+    """Garbage-collect old client/voice packages no longer referenced by any workspace or active run."""
+    root_base = (base or asset_workspace()).resolve()
+    async with engine.connect() as connection:
+        try:
+            acquired = await connection.scalar(text("SELECT pg_try_advisory_lock(707, 1)"))
+            await connection.commit()
+            if not acquired:
+                return []
+            async with SessionFactory(bind=connection) as session:
+                runs = list(await session.scalars(
+                    select(ProcessingRun).where(ProcessingRun.status.not_in(sorted(TERMINAL)))
+                ))
+            active_plan_ids, _ = _extract_run_package_refs(runs)
+            referenced = await asyncio.to_thread(_workspace_referenced_packages, root_base)
+            return await finish_writes(asyncio.to_thread(
+                remove_superseded_packages, referenced, active_plan_ids, base=root_base,
+            ))
+        finally:
+            await connection.invalidate()

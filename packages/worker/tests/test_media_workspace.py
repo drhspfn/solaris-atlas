@@ -462,3 +462,63 @@ async def test_stale_workspace_with_queued_descendant_is_cleaned_after_ttl(tmp_p
     removed.clear()
     assert not await workspaces.cleanup_workspace(11)
     assert removed == []
+
+
+def _make_versioned_package(base, kind, version, plan_id, *, tier="hd", state="downloaded"):
+    name = f"{version}-{tier}-{plan_id[:16]}" if kind == "assets" else f"{version}-{plan_id[:16]}"
+    root = base / kind / name
+    (root / "game").mkdir(parents=True)
+    plan = {"id": plan_id, "version": version}
+    if kind == "assets":
+        plan["tier"] = tier
+    (root / "plan.json").write_text(json.dumps(plan))
+    (root / "status.json").write_text(json.dumps({"state": state, "id": plan_id}))
+    if kind == "assets":
+        (root / "keys.txt").write_text("key")
+    return root
+
+
+def test_superseded_client_gc_preserves_hardlinks_active_workspaces_and_active_runs(tmp_path):
+    import os
+
+    old_asset = _make_versioned_package(tmp_path, "assets", "3.7.1", "1" * 64)
+    old_pinned = _make_versioned_package(tmp_path, "assets", "3.7.2", "2" * 64)
+    new_asset = _make_versioned_package(tmp_path, "assets", "3.8.0", "3" * 64)
+    # Hardlink shared archive from 3.7.1 into 3.8.0 (just like reuse_archives).
+    shared_old = old_asset / "game/shared.pak"
+    shared_old.write_bytes(b"shared-pak-bytes")
+    os.link(shared_old, new_asset / "game/shared.pak")
+
+    old_voice = _make_versioned_package(tmp_path, "voices", "3.7.1", "4" * 64)
+    new_voice = _make_versioned_package(tmp_path, "voices", "3.8.0", "5" * 64)
+
+    # Bind an active patch-workspace to 3.7.2 so 3.7.2 must be retained.
+    workspaces.resolve_workspace(old_pinned, 99, base=tmp_path)
+    referenced = workspaces._workspace_referenced_packages(tmp_path)
+    assert old_pinned.resolve() in referenced
+
+    # Protect old_voice via active_plan_ids first.
+    removed = workspaces.remove_superseded_packages(referenced, {"4" * 64}, base=tmp_path)
+    assert removed == [f"assets/{old_asset.name}"]
+    assert not old_asset.exists()
+    assert old_pinned.is_dir()
+    assert new_asset.is_dir()
+    assert (new_asset / "game/shared.pak").read_bytes() == b"shared-pak-bytes"
+    assert old_voice.is_dir()
+
+    # Once no active run references old_voice, it is removed too.
+    removed2 = workspaces.remove_superseded_packages(referenced, set(), base=tmp_path)
+    assert removed2 == [f"voices/{old_voice.name}"]
+    assert not old_voice.exists()
+    assert new_voice.is_dir()
+
+
+def test_resolve_installed_client_falls_back_to_newer_ready_client(tmp_path):
+    new_asset = _make_versioned_package(tmp_path, "assets", "3.8.0", "3" * 64)
+    path, plan = workspaces.resolve_installed_client("3.7.1", "hd", "1" * 64, base=tmp_path)
+    assert path == new_asset.resolve()
+    assert plan is not None and plan["version"] == "3.8.0" and plan["id"] == "3" * 64
+
+    exact_path, exact_plan = workspaces.resolve_installed_client("3.8.0", "hd", "3" * 64, base=tmp_path)
+    assert exact_path == new_asset.resolve()
+    assert exact_plan is None
