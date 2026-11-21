@@ -25,19 +25,50 @@ def alert_text(run, processor, error=None):
     # in the parent release job that only waited for those children.
     if processor == "release_media" and status == "partial" and request.get("kind") in {"images", "character_voices"}:
         return None
+    detail = str(error or run.error or "").split("[SQL:")[0].split("[parameters:")[0].strip()
+    missing = [
+        entry for entry in report.get("entries", [])
+        if entry.get("status") not in {"found", "already_published"}
+    ]
+    diagnostic_lines = []
+    riglyph_failures = output.get("riglyph_failures") or []
+    if riglyph_failures:
+        sample = ", ".join(str(item.get("path", ""))[:80] for item in riglyph_failures[:4] if isinstance(item, dict))
+        diagnostic_lines.append(f"Riglyph failures: {len(riglyph_failures)}" + (f" ({sample})" if sample else ""))
+    unsupported_spine = output.get("unsupported_spine") or []
+    if unsupported_spine:
+        sample = ", ".join(str(item.get("path", ""))[:80] for item in unsupported_spine[:4] if isinstance(item, dict))
+        diagnostic_lines.append(f"Unsupported Spine: {len(unsupported_spine)}" + (f" ({sample})" if sample else ""))
+    actionable_controls = []
+    for item in output.get("incomplete_spine_controls") or []:
+        if not isinstance(item, dict):
+            continue
+        real_missing = [
+            m for m in (item.get("missing") or [])
+            if not isinstance(m, dict) or (
+                m.get("status") not in {"unsupported_control", "unresolved_audio"}
+                and not (isinstance(m.get("expected"), str) and m["expected"].startswith("/Game/NotInFinalPackage/"))
+            )
+        ]
+        if real_missing:
+            actionable_controls.append(item)
+    if actionable_controls:
+        sample = ", ".join(str(item.get("path", ""))[:80] for item in actionable_controls[:4])
+        diagnostic_lines.append(f"Incomplete controls: {len(actionable_controls)}" + (f" ({sample})" if sample else ""))
+    if status == "partial" and not detail and not missing and not diagnostic_lines:
+        return None
     lines = [f"Solaris Atlas · {processor}", f"Task #{run.id} · {status}"]
     if request.get("game_version"):
         lines.append(f"Game version: {request['game_version']}")
     if report.get("found") is not None:
         lines.append(f"Files found: {report['found']} · missing: {report.get('missing', 0)}")
-    detail = str(error or run.error or "").split("[SQL:")[0].split("[parameters:")[0].strip()
     if detail:
         lines.append("Error: " + detail[:1400])
-    missing = [entry for entry in report.get("entries", []) if entry.get("status") != "found"]
     for entry in missing[:8]:
         lines.append(f"Missing [{entry.get('language') or 'asset'}]: {entry.get('expected', '')[:180]}")
     if len(missing) > 8:
         lines.append(f"… and {len(missing) - 8} more; full report in the admin panel.")
+    lines.extend(diagnostic_lines)
     text = "\n".join(lines)
     # Errors can contain connection URLs or credential values. Never send them.
     text = re.sub(r"\b(?:https?|amqps?|postgresql[^:]*)://\S+", "[URL redacted]", text)

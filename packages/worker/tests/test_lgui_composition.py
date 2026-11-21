@@ -110,3 +110,37 @@ def test_unordered_ui_keys_are_rejected_before_rendering():
     source[2]['Properties']['FloatCurve']['Times'].reverse()
     with pytest.raises(ValueError, match='Invalid UI channel'):
         sequence_tracks(source, {'actor': 4})
+
+
+def test_lowercase_color_struct_property_decodes_bgra_to_rgba():
+    import struct
+
+    from wuwa_story_worker.lgui_properties import properties
+
+    names = ['None', 'color', 'StructProperty', 'Color']
+    # Build a tagged StructProperty stream: key='color', kind='StructProperty', size=4, index=0,
+    # extra='color' (lowercase), 16-byte struct GUID, guid flag=0, raw BGRA=(0x11, 0x22, 0x33, 0xff), terminator='None'
+    payload = (
+        struct.pack('<HHiiH', 1, 2, 4, 0, 1)
+        + b'\x00' * 16
+        + b'\x00'
+        + bytes([0x11, 0x22, 0x33, 0xFF])
+        + struct.pack('<H', 0)
+    )
+    decoded = properties(payload, names, [])
+    assert decoded == {'color': [0x33, 0x22, 0x11, 0xFF]}
+
+
+def test_lowercase_color_and_non_rendering_uiitem_container_color_are_supported():
+    source = layout()
+    # Non-rendering Class'UIItem' container with lowercase black color must not raise inherited tint error
+    source['actors'][1]['props'] = {'color': [0, 0, 0, 255]}
+    # Nested widget lowercase color on Spine renderable is read and validated
+    source['actors'][3]['props']['widget'] = {'color': [255, 255, 255, 128]}
+    layers = visible_layers(source)
+    assert [layer['actor'] for layer in layers] == [3, 4]
+    assert layers[0]['opacity'] == pytest.approx(128 / 255)
+    assert layers[1]['opacity'] == 1
+    # Alpha = 0 on UIItem container still hides descendants
+    source['actors'][1]['props'] = {'color': [0, 0, 0, 0]}
+    assert visible_layers(source) == []

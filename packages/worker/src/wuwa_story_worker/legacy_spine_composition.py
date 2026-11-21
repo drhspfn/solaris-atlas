@@ -1,5 +1,6 @@
 """Validate bounded legacy prefab playback against the archived source assets."""
 
+import copy
 import hashlib
 import json
 import math
@@ -7,7 +8,13 @@ import struct
 import zipfile
 from pathlib import Path
 
-from wuwa_story_worker.lgui_composition import _map, prefab_layout, visible_layers
+from wuwa_story_worker.lgui_composition import (
+    _map,
+    apply_settled_tracks,
+    prefab_layout,
+    sequence_tracks,
+    visible_layers,
+)
 from wuwa_story_worker.lgui_properties import properties
 from wuwa_story_worker.sequence_composition import (
     _asset_file,
@@ -196,7 +203,20 @@ def legacy_plan(bundle: Path):
             _verify_mip(archive, manifest)
         if _STANDARD_ADD in used:
             _verify_standard_add(archive, manifest)
-        layers = visible_layers(layout, verified_materials={_MIP_ADD} if _MIP_ADD in used else ())
+        actors = None
+        sequences = layout.get('sequences') or {}
+        start_key = next((key for key in ('Start', 'start') if key in sequences), None)
+        if start_key is not None:
+            seq_path = sequences[start_key]
+            binding = (layout.get('bindings') or {}).get(seq_path)
+            if seq_path and binding is not None:
+                duration, tracks = sequence_tracks(_exports(archive, manifest, seq_path), binding)
+                if not math.isfinite(duration) or duration < 0:
+                    raise ValueError('Invalid UI sequence duration')
+                actors = copy.deepcopy(layout['actors'])
+                apply_settled_tracks(actors, tracks, duration)
+        verified = {_MIP_ADD} if _MIP_ADD in used else ()
+        layers = visible_layers(layout, actors, verified_materials=verified) if actors is not None else visible_layers(layout, verified_materials=verified)
         rigs = [layer for layer in layers if 'source' in layer]
         if len(rigs) != 1:
             raise ValueError('Animated multi-rig compositing is not yet supported')

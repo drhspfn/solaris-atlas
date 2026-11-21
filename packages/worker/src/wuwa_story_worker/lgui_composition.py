@@ -183,7 +183,8 @@ def visible_layers(layout, actors=None, *, verified_materials=()):
         a, p = actors[identity], actors[identity]['props']
         if not a['active'] or p.get('bIsUIActive') is False:
             return
-        color = p.get('Color', p.get('widget', {}).get('Color', [255, 255, 255, 255]))
+        widget = p.get('widget') if isinstance(p.get('widget'), dict) else {}
+        color = p.get('Color', p.get('color', widget.get('Color', widget.get('color', [255, 255, 255, 255]))))
         alpha = p.get('Alpha', 1)
         if (not isinstance(color, list) or len(color) != 4
                 or any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 255 for v in color)
@@ -237,8 +238,6 @@ def visible_layers(layout, actors=None, *, verified_materials=()):
             result.append({'kind': 'solid', 'color': [0, 0, 0], 'opacity': 1, 'actor': identity})
         elif a['kind'] != "Class'UIItem'":
             raise ValueError('Unsupported UI render component')
-        elif color[:3] != [255, 255, 255]:
-            raise ValueError('Inherited UI tint requires a compositor adapter')
         for child in sorted((c for c in actors.values() if c['parent'] == identity), key=lambda c: (c['index'], c['id'])):
             visit(child['id'], scale, origin, opacity)
     visit(layout['root'], [1, 1], [0, 0], 1)

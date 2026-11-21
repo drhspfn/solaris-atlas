@@ -66,3 +66,31 @@ async def test_variant_insert_tolerates_another_publisher_winning():
     result = await FileRegistrationService(SimpleNamespace()).register_variant(session, 1, 2, "voice_pcm_wav")
     assert result is variant
     assert "ON CONFLICT" in str(session.execute.call_args.args[0])
+
+
+@pytest.mark.asyncio
+async def test_register_file_skips_redundant_location_update_when_already_verified(tmp_path):
+    from datetime import UTC, datetime
+
+    path = tmp_path / "shared.bnk"
+    path.write_bytes(b"data")
+    existing_time = datetime(2026, 1, 1, tzinfo=UTC)
+    file = SimpleNamespace(id=9, file_type_id=1, size_bytes=4,
+                           sha256=hashlib.sha256(b"data").digest())
+
+    class GuardedLocation:
+        file_id = 9
+        available = True
+        verified_at = existing_time
+        etag = "same-etag"
+
+        def __setattr__(self, name, value):
+            raise AssertionError(f"Unexpected write to FileLocation.{name}")
+
+    session = SimpleNamespace(scalar=AsyncMock(side_effect=[SimpleNamespace(id=1), file, GuardedLocation()]))
+    storage = SimpleNamespace(backend="fixture", bucket="test",
+                              stat=AsyncMock(return_value=ObjectInfo(size_bytes=4, etag="same-etag")),
+                              put_file=AsyncMock())
+    result = await FileRegistrationService(storage).register_file(session, path, "unknown")
+    assert result is file
+    storage.put_file.assert_not_awaited()

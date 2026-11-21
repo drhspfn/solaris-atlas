@@ -225,3 +225,165 @@ async def test_spine_failure_log_has_context_without_exception_text(tmp_path, mo
     assert 'story_spine.missing run=7 owner=42 resource=' in caplog.text
     assert 'stage=build error_type=ValueError' in caplog.text
     assert 'secret token' not in caplog.text and target['path'] not in caplog.text
+
+
+def test_actionable_spine_control_missing_filters_diagnostic_only_items():
+    from wuwa_story_worker.entity_media import actionable_spine_control_missing
+
+    items = [
+        {"status": "unsupported_control", "expected": "/Game/Aki/Sequence/Foo.1", "diagnostics": [{"code": "dynamic_operand"}]},
+        {"status": "unresolved_audio", "code": "sequence_audio_unavailable"},
+        {"status": "not_in_client", "expected": "/Game/NotInFinalPackage/EditorOnly"},
+        {"status": "dependency_failed", "expected": "/Game/Aki/UI/RealMissing"},
+    ]
+    assert actionable_spine_control_missing(items) == [
+        {"status": "dependency_failed", "expected": "/Game/Aki/UI/RealMissing"}
+    ]
+    assert actionable_spine_control_missing(items[:3]) == []
+
+
+@pytest.mark.asyncio
+async def test_entity_media_publish_retries_after_deadlock_with_rollback_and_ignores_diagnostic_controls(tmp_path, monkeypatch):
+    import json
+    import zipfile
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy.exc import DBAPIError
+
+    from wuwa_story_worker import entity_media
+
+    download_id = "a" * 64
+    root = tmp_path / "client"
+    root.mkdir()
+    (root / "plan.json").write_text(json.dumps({"id": download_id, "version": "3.8.0", "tier": "hd"}))
+    (root / "status.json").write_text(json.dumps({"id": download_id, "state": "downloaded"}))
+    fmodel = tmp_path / "fmodel"
+    converter = tmp_path / "converter"
+    fmodel.write_bytes(b"fmodel")
+    converter.write_bytes(b"converter")
+    bundle = root / "bundle.zip"
+    with zipfile.ZipFile(bundle, "w") as z:
+        z.writestr("manifest.json", json.dumps({
+            "animation_import": {"display": "static", "state": "static_only", "conversion_allowed": False, "reasons": []},
+            "control_sources": {"missing": [
+                {"status": "unsupported_control", "expected": "/Game/Aki/Sequence/Test.1"},
+                {"status": "not_in_client", "expected": "/Game/NotInFinalPackage/EditorAsset"},
+            ]},
+        }))
+    orig_b = root / "b.uasset"
+    orig_a = root / "a.uasset"
+    orig_b.write_bytes(b"bbb")
+    orig_a.write_bytes(b"aaa")
+
+    target = {
+        "kind": "spine",
+        "owner": 101,
+        "release_id": 1,
+        "path": "story_sequence:101",
+        "language": None,
+        "reference_type": "story_spine",
+        "spine_recipe": "v1",
+    }
+    payload = {
+        "schema_version": 1,
+        "job_type": "media.entities",
+        "run_id": 55,
+        "request": {
+            "asset_version": "3.8.0",
+            "download_id": download_id,
+            "tier": "hd",
+            "game_version": "3.8.0",
+            "entities": ["quest"],
+            "kinds": ["image"],
+        },
+        "targets": [target],
+    }
+    run = SimpleNamespace(id=55, status="queued", error=None, metadata_json={"payload": payload}, raw_output=None, finished_at=None)
+
+    commit_calls = 0
+    rollback_calls = 0
+    deadlock_orig = type("DeadlockOrig", (Exception,), {"sqlstate": "40P01"})()
+
+    async def fake_commit():
+        nonlocal commit_calls
+        commit_calls += 1
+        # Commit 1: status=running, Commit 2: after missing_media_targets, Commit 3: media_report,
+        # Commit 4: first target publish -> simulate deadlock, Commit 5: retry succeeds, Commit 6: finalize
+        if commit_calls == 4:
+            raise DBAPIError("UPDATE storage.file_location", {}, deadlock_orig)
+
+    async def fake_rollback():
+        nonlocal rollback_calls
+        rollback_calls += 1
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, model, ident):
+            return run
+
+        async def execute(self, *args, **kwargs):
+            return None
+
+        async def scalar(self, *args, **kwargs):
+            return None
+
+        commit = staticmethod(fake_commit)
+        rollback = staticmethod(fake_rollback)
+
+    registered_originals = []
+
+    class FakeService:
+        def __init__(self, storage):
+            self.storage = storage
+
+        async def prepare_file(self, path, mime=None):
+            return SimpleNamespace(digest=path.read_bytes(), size=len(path.read_bytes()), stored=SimpleNamespace(etag="e"))
+
+        async def register_file(self, session, path, kind, mime_type=None, prepared=None):
+            if path in (orig_a, orig_b):
+                registered_originals.append(path.name)
+            return SimpleNamespace(id=1 if path == bundle else 2, sha256=b"x" * 32, size_bytes=3)
+
+        async def register_variant(self, session, parent_id, child_id, vtype, run_id):
+            return SimpleNamespace(metadata_json={})
+
+        async def register_reference(self, session, **kwargs):
+            return SimpleNamespace(id=9, file_id=kwargs["file_id"], metadata_json={})
+
+    @contextmanager
+    def fake_lock(_path):
+        yield
+
+    monkeypatch.setattr(entity_media, "validate_plan", lambda _: None)
+    monkeypatch.setattr(entity_media, "workspace_lock", fake_lock)
+    monkeypatch.setattr(entity_media, "SessionFactory", lambda bind=None: FakeSession())
+    monkeypatch.setattr(entity_media, "S3Storage", lambda _s: SimpleNamespace(ensure_bucket=AsyncMock()))
+    monkeypatch.setattr(entity_media, "FileRegistrationService", FakeService)
+    monkeypatch.setattr(entity_media, "tool_path", lambda name: fmodel if "FMODEL" in name else converter)
+    monkeypatch.setattr(entity_media, "resolve_soundtrack_targets", AsyncMock(return_value=[target]))
+    monkeypatch.setattr(entity_media, "missing_media_targets", AsyncMock(return_value=[target]))
+    monkeypatch.setattr(entity_media, "build_entity_files", AsyncMock(return_value=([(target, bundle, "unknown", "application/zip", [orig_b, orig_a])], [])))
+    monkeypatch.setattr(entity_media, "publish_inventory", AsyncMock(return_value={"inventory": []}))
+    monkeypatch.setattr(entity_media, "source_provenance", lambda *args, **kwargs: {"v": 1})
+    monkeypatch.setattr(entity_media.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr("wuwa_story_worker.sequence_metadata.retained_bundle", AsyncMock(return_value=None))
+    monkeypatch.setattr("wuwa_story_worker.sequence_fragments.publish_sequence_fragments", AsyncMock(return_value=None))
+    monkeypatch.setattr("wuwa_story_worker.sequence_fragments.invalidate_sequence_quests", AsyncMock())
+    monkeypatch.setattr("wuwa_story_worker.sequence_speaker_identity.repair_sequence_bundle_speakers", AsyncMock())
+
+    await entity_media._process_entity_workspace(payload, object(), root)
+
+    assert rollback_calls == 1
+    assert commit_calls == 6
+    assert run.status == "completed"
+    assert run.raw_output["published"] == 1
+    assert len(run.raw_output["incomplete_spine_controls"]) == 1
+    # Originals were sorted deterministically by digest ('aaa' before 'bbb') on both attempts
+    assert registered_originals == ["a.uasset", "b.uasset", "a.uasset", "b.uasset"]
