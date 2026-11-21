@@ -8,7 +8,12 @@ from typing import Any
 from sqlalchemy import or_, select
 from wuwa_story.db.models.agent_workspace import AgentFactBoard
 from wuwa_story.db.models.graph import Node, NodeType
-from wuwa_story.db.models.visual_memory import VisualIdentityNode
+from wuwa_story.db.models.visual_memory import (
+    VisualAppearance,
+    VisualIdentity,
+    VisualIdentityNode,
+    VisualReferenceLink,
+)
 from wuwa_story.visual_memory.images import load_image
 from wuwa_story.visual_memory.inference import VisualMemoryUnavailable
 from wuwa_story.visual_memory.service import VisualMemoryService
@@ -36,6 +41,7 @@ async def character_reference_image(db: Any, args: dict[str, Any]) -> tuple[dict
         return {"error": "database_unavailable"}, None
     service = VisualMemoryService(db)
     try:
+        reference = None
         if reference_id is not None:
             reference = await service._reference(reference_id)
             if reference.status != "approved" or not reference.enabled_for_search:
@@ -50,8 +56,85 @@ async def character_reference_image(db: Any, args: dict[str, Any]) -> tuple[dict
         encoded = buffer.getvalue()
     except (ValueError, OSError):
         return {"error": "reference_image_unavailable"}, None
-    return {"asset_id": asset_id, "reference_id": reference_id,
-            "sha256": hashlib.sha256(encoded).hexdigest(), "mime_type": "image/jpeg"}, encoded
+    out: dict[str, Any] = {
+        "asset_id": asset_id,
+        "reference_id": reference_id,
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "mime_type": "image/jpeg",
+    }
+    if reference is not None:
+        src_type = getattr(reference, "source_type", None)
+        if src_type:
+            out["source_type"] = src_type
+        src_page = getattr(reference, "source_page", None)
+        if src_page:
+            out["source_page"] = src_page
+        if hasattr(db, "execute"):
+            try:
+                link_rows = (
+                    await db.execute(
+                        select(
+                            VisualIdentity.id.label("identity_id"),
+                            VisualIdentity.name.label("identity_name"),
+                            VisualAppearance.name.label("appearance_name"),
+                        )
+                        .join(VisualIdentity, VisualIdentity.id == VisualReferenceLink.identity_id)
+                        .outerjoin(VisualAppearance, VisualAppearance.id == VisualReferenceLink.appearance_id)
+                        .where(VisualReferenceLink.reference_id == reference_id)
+                    )
+                ).mappings().all()
+                if link_rows:
+                    first = link_rows[0]
+                    iid = int(first["identity_id"])
+                    out["identity_id"] = iid
+                    out["identity_name"] = first["identity_name"]
+                    if first["appearance_name"]:
+                        out["appearance_name"] = first["appearance_name"]
+                    node_rows = (
+                        await db.execute(
+                            select(
+                                Node.id.label("node_id"),
+                                NodeType.key.label("node_type"),
+                                Node.canonical_key,
+                            )
+                            .join(Node, Node.id == VisualIdentityNode.node_id)
+                            .join(NodeType, NodeType.id == Node.type_id)
+                            .where(VisualIdentityNode.identity_id == iid)
+                        )
+                    ).mappings().all()
+                    node_ids = [int(r["node_id"]) for r in node_rows]
+                    if node_rows:
+                        out["linked_nodes"] = [
+                            {
+                                "node_id": int(r["node_id"]),
+                                "node_type": r["node_type"],
+                                "canonical_key": r["canonical_key"],
+                            }
+                            for r in node_rows
+                        ]
+                    if node_ids and hasattr(db, "scalars"):
+                        fact_rows = list(
+                            await db.scalars(
+                                select(AgentFactBoard)
+                                .where(
+                                    AgentFactBoard.status == "active",
+                                    or_(
+                                        AgentFactBoard.subject_node_id.in_(node_ids),
+                                        AgentFactBoard.object_node_id.in_(node_ids),
+                                    ),
+                                )
+                                .order_by(AgentFactBoard.importance.desc(), AgentFactBoard.updated_at.desc())
+                                .limit(5)
+                            )
+                        )
+                        if fact_rows:
+                            out["facts"] = [
+                                f"{f.title}: {f.description[:180]}".strip()
+                                for f in fact_rows
+                            ]
+            except Exception:
+                pass
+    return out, encoded
 
 
 def _compact_detection(detection: dict[str, Any]) -> dict[str, Any]:

@@ -350,6 +350,38 @@ def _review_evidence_errors(draft: VideoAnalysisResult, final: VideoAnalysisResu
                            " ".join(after[index].observation.split()).casefold()
                            for index in decision.final_indices):
                     errors.append(f"{label}: changed wording requires revision and evidence")
+        if name == "event":
+            by_final: dict[int, list[int]] = {}
+            for decision in decisions:
+                if decision.status in ("retained", "revised") and 0 <= decision.draft_index < len(before):
+                    for f_idx in decision.final_indices:
+                        if 0 <= f_idx < len(after):
+                            by_final.setdefault(f_idx, []).append(decision.draft_index)
+            for f_idx, d_indices in sorted(by_final.items()):
+                unique_d = sorted(set(d_indices))
+                if len(unique_d) < 2:
+                    continue
+                min_start = min(before[d].time for d in unique_d)
+                max_end = max(
+                    before[d].time_end if before[d].time_end is not None else before[d].time
+                    for d in unique_d
+                )
+                span = max_end - min_start
+                kw_sets = [_event_keywords(before[d].observation) for d in unique_d]
+                min_jaccard = 1.0
+                for i in range(len(kw_sets)):
+                    for j in range(i + 1, len(kw_sets)):
+                        union = kw_sets[i] | kw_sets[j]
+                        jacc = (len(kw_sets[i] & kw_sets[j]) / len(union)) if union else 1.0
+                        if jacc < min_jaccard:
+                            min_jaccard = jacc
+                if span > 6.0 or min_jaccard < 0.45:
+                    errors.append(
+                        f"event_review {unique_d} -> final_indices=[{f_idx}]: cannot collapse {len(unique_d)} "
+                        f"distinct draft events spanning {round(span, 1)}s ([{round(min_start, 1)}s..{round(max_end, 1)}s]) "
+                        f"into one final event; preserve separate final events for sequential actions, emotional reactions, "
+                        f"cuts, and transitions (only identical static shots <=6s may be merged)"
+                    )
     return errors[:20]
 
 
@@ -1358,6 +1390,22 @@ def _temporal_evidence_errors(result: VideoAnalysisResult, workspace: VideoWorks
                 f"timeline ending coverage: last event starts at {round(max(event.time for event in result.events), 2)}s "
                 f"in a {round(workspace.duration, 2)}s scene; add separate event(s) for the final visual beats before fade-out"
             )
+        if workspace.duration >= 90.0 and int((getattr(workspace, "limits", None) or {}).get("resamples_remaining", 0)) > 0:
+            climax_lo = workspace.duration - 40.0
+            climax_hi = workspace.duration - 2.0
+            has_climax_resample = any(
+                getattr(a, "reason", "overview") != "overview"
+                and any(climax_lo <= float(t) <= climax_hi for t in (getattr(a, "sample_times", None) or []))
+                for a in (getattr(workspace, "atlases", None) or [])
+            )
+            if not has_climax_resample:
+                errors.append(
+                    f"climax/ending transition audit required: in a {round(workspace.duration, 1)}s scene, "
+                    f"call resample_video_window (interval_seconds=1.0) on the final climax/transition and departure window "
+                    f"([{round(workspace.duration - 36.0, 1)}s..{round(workspace.duration - 4.0, 1)}s]) before finalizing "
+                    f"so brief 1-2s transition cuts (e.g., doorways/portals in space) and physical support postures "
+                    f"are not missed by 2s overview sampling"
+                )
     dialogue_lines = (context or {}).get("dialogue_lines") if isinstance(context, dict) else None
     if isinstance(dialogue_lines, list) and any(
         isinstance(line, dict) and "{playername}" in str(line.get("speaker", "")).casefold()
@@ -1516,25 +1564,31 @@ def _unverified_candidate_errors(
 TEMPORAL_REVIEW_INSTRUCTION = (
     "Draft received. Act as a perceptive Story & Continuity Reader/Editor before submitting or returning the draft: "
     "1) Narrative & emotional clarity: read the draft as a player/viewer. Does it explain WHY emotions shift, "
-    "preserve recurring visual motifs and tonal contrasts, and resolve confusing jumps? If the draft is dry, "
+    "preserve recurring visual motifs and tonal contrasts, and resolve confusing jumps? Do NOT invent actions or "
+    "performances from static gestures or nearby props (e.g., a woman at a piano raising an arm is not a 'piano performance' "
+    "unless fingers visibly play the keys). If the draft is dry, "
     "fragmented, or leaves holes a viewer wouldn't understand, use `return_draft_for_revision` (when revisions remain) "
     "or deepen the observations and summary with grounded visual cues. "
     "2) Zero arbitrary skipped characters: inspect EVERY unnamed person in draft events or identity_tracks (e.g., "
     "uniformed woman, child, blonde student, dark-clad figure). Use `view_atlases` to inspect the relevant atlases directly, "
     "call `identify_atlas_characters` on their `evidence_frames`, and ALWAYS call `get_character_reference_image` on any "
     "returned candidate `reference_ids` (`status='unknown'` included!) plus `search_entities`, `search_lore`, and `search_facts` "
-    "(which cover characters, speakers, NPCs, and Fandom bios/relations) to confirm or rule out identities. "
+    "(which cover characters, speakers, NPCs, and Fandom bios/relations) to confirm or rule out identities. When a vignette "
+    "character is matched (e.g., `Cassandra`, with facts stating `Cassandra parent_of Liam` and an approved `reference_id` for `Liam`), "
+    "verify the companion's reference portrait and name BOTH characters in `events.actors`, `identity_tracks`, and `entity_links` "
+    "(`confidence='inferred'`, `basis='contextual'`) rather than leaving the child generic. "
     "3) Cross-cut & version-identity persistence: ensure confirmed character identities (including Rover from "
     "{PlayerName} context or visually matched characters) remain linked across cuts and back/side "
     "shots instead of regressing to generic labels, and when multiple variants/manifestations of a character "
-    "appear (e.g., Wartime vs Current), cross-check clothing, headwear/veil, and setting against the exact "
-    "reference portrait and `evidence_frames` so their visual traits are never swapped. "
-    "4) Ending & sparse windows: check the final 20-30s before fade-out with `view_atlases`, `resample_video_window`, "
-    "or `inspect_video_region` whenever shots are sparse or show distant/back-view figures, verifying whether one person "
-    "is supporting/carrying another. "
-    "5) Deduplication without compression: merge adjacent (<=2-3s) observations that describe the "
-    "exact same unchanging action (e.g., consecutive frames of aiming without a new beat), while "
-    "keeping distinct micro-actions, emotional shifts, and multi-cut climax/ending beats separate. "
+    "appear (e.g., Wartime vs Current), cross-check `source_type='game_asset'` reference portraits against `evidence_frames`: "
+    "the `game_asset` portrait shows the character's canonical present-day design (e.g., floral headpiece and dark veil), "
+    "while the period military uniform (shared with surrounding soldiers) belongs to the wartime/past manifestation—never swap them. "
+    "4) Climax transition & ending windows: in scenes >=90s, ensure `resample_video_window` (`interval_seconds=1.0`) is called "
+    "on the final ~30-35s climax/energy-transition/departure window so brief 1-2s transition cuts (such as a glowing rectangular "
+    "doorway/portal in cosmic space) and final physical support postures (such as carrying piggyback) are captured. "
+    "5) Deduplication without over-aggregation: merge ONLY adjacent (<=2-3s, total span <=6s) identical static observations; "
+    "NEVER collapse sequential draft events spanning >6s or distinct actions/reactions/cuts (e.g., cheek touch -> tears -> aiming together, "
+    "or sofa vignette -> communal lounge montage) into a single `final_indices` entry. "
     "6) Evidence-first revision requests: if concrete character checks, target windows, or story gaps "
     "should be fixed by the Writer (and revisions remain), call `return_draft_for_revision` with **open "
     "questions per distinct window**—never merge separate locations into one window or state an unverified "
@@ -1608,7 +1662,9 @@ EVIDENCE_REVIEW_INSTRUCTION = (
     "The draft is provisional evidence, not confirmed identity. Review every draft event and identity track "
     "by its zero-based index. In event_review and identity_review return exactly one decision for each: "
     "retained, revised, disputed, or unresolved. Retained/revised decisions need final_indices; disputed/"
-    "unresolved have none. For revised/disputed cite nearby numbered evidence_frames (you may also include "
+    "unresolved have none. Maintain 1-to-1 granularity between distinct draft events and final events: never "
+    "map multiple draft events spanning >6s or distinct sequential actions/cuts to the same final_index. "
+    "For revised/disputed cite nearby numbered evidence_frames (you may also include "
     "confirming frames from elsewhere in the scene) and explain why; "
     "for unresolved explain the uncertainty. A retained identity must keep the same label; revise it with "
     "evidence if its name, appearance, confidence, or basis changes. Retained observations must keep their "
@@ -1882,6 +1938,7 @@ async def run_video_analysis_agent(
 
             new_images: list[tuple[AtlasEntry, dict[str, Any]]] = []
             reference_images: list[bytes] = []
+            reference_image_manifests: list[dict[str, Any]] = []
             switched_pass = False
             for tool_index, tc in enumerate(turn.calls):
                 if tc.name == "finish_video_analysis":
@@ -2081,6 +2138,13 @@ async def run_video_analysis_agent(
                     history.append(provider.tool_result(tc, tool_out))
                     if image is not None:
                         spatial_inspections_used += 1
+                        reference_image_manifests.append({
+                            "image_index": len(reference_images) + 1,
+                            "kind": "video_region_crop",
+                            "global_frame": tc.arguments.get("global_frame"),
+                            "scene_time": tool_out.get("scene_time") if isinstance(tool_out, dict) else None,
+                            "bbox": tc.arguments.get("bbox"),
+                        })
                         reference_images.append(image)
                     continue
                 if tc.name == "get_character_reference_image":
@@ -2102,6 +2166,25 @@ async def run_video_analysis_agent(
                     history.append(provider.tool_result(tc, tool_out))
                     if image is not None:
                         reference_images_used += 1
+                        ref_meta = {
+                            "image_index": len(reference_images) + 1,
+                            "kind": "character_reference",
+                        }
+                        if isinstance(tool_out, dict):
+                            for k in (
+                                "reference_id",
+                                "asset_id",
+                                "identity_id",
+                                "identity_name",
+                                "appearance_name",
+                                "source_type",
+                                "source_page",
+                                "linked_nodes",
+                                "facts",
+                            ):
+                                if k in tool_out and tool_out[k] is not None:
+                                    ref_meta[k] = tool_out[k]
+                        reference_image_manifests.append(ref_meta)
                         reference_images.append(image)
                     continue
                 if cached is not None:
@@ -2137,7 +2220,10 @@ async def run_video_analysis_agent(
                 )
             if reference_images:
                 history.append(_multimodal_user_message(
-                    provider, "Requested character reference images and video region crops, in tool-call order; compare with scene frames.",
+                    provider,
+                    "Requested character reference images and video region crops, in tool-call order "
+                    "(note: `source_type='game_asset'` portraits show canonical present-day playable designs; compare with scene frames):\n"
+                    + json.dumps(reference_image_manifests, ensure_ascii=False),
                     reference_images,
                 ))
             if turn_index == MAX_AGENT_TURNS - 2 and final_result is None:

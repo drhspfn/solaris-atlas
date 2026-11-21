@@ -1507,3 +1507,113 @@ def test_revision_contradiction_errors_flags_shifted_later_scene():
     }
     refined = VideoAnalysisResult.model_validate(refined_payload)
     assert agent._revision_contradiction_errors(prev_draft, refined) == []
+
+
+def test_review_evidence_errors_rejects_collapsing_multi_beat_draft_events():
+    workspace = SimpleNamespace(
+        duration=180.0,
+        frame_times={30: 57.9, 34: 65.9, 38: 73.4, 41: 79.9},
+    )
+    draft_payload = {
+        **result(),
+        "events": [
+            {
+                "time": 57.9,
+                "time_end": 63.9,
+                "global_frame": 30,
+                "evidence_frames": [30],
+                "confidence": "observed",
+                "observation": "Wartime Lily gently touches present-day Lily on the cheek.",
+                "actors": ["Lily", "Lily (Wartime)"],
+                "evidence_kind": "observed",
+            },
+            {
+                "time": 65.9,
+                "time_end": 72.4,
+                "global_frame": 34,
+                "evidence_frames": [34],
+                "confidence": "observed",
+                "observation": "Tears well in Lily's eyes as she lowers her gaze in sorrow.",
+                "actors": ["Lily"],
+                "evidence_kind": "observed",
+            },
+            {
+                "time": 73.4,
+                "time_end": 79.9,
+                "global_frame": 38,
+                "evidence_frames": [38, 41],
+                "confidence": "observed",
+                "observation": "Both Lilys stand shoulder to shoulder aiming a dark pistol before cutting to a glowing white flower.",
+                "actors": ["Lily", "Lily (Wartime)"],
+                "evidence_kind": "observed",
+            },
+        ],
+        "identity_tracks": [],
+    }
+    collapsed_final_payload = {
+        **result(),
+        "events": [
+            {
+                "time": 57.9,
+                "time_end": 79.9,
+                "global_frame": 30,
+                "evidence_frames": [30, 34, 38, 41],
+                "confidence": "observed",
+                "observation": "Wartime Lily touches Lily's cheek, tears form, and both aim a dark pistol before a white flower cut.",
+                "actors": ["Lily", "Lily (Wartime)"],
+                "evidence_kind": "observed",
+            },
+        ],
+        "identity_tracks": [],
+        "event_review": [
+            {"draft_index": 0, "status": "revised", "final_indices": [0], "reason": "Merged beat", "evidence_frames": [30]},
+            {"draft_index": 1, "status": "revised", "final_indices": [0], "reason": "Merged beat", "evidence_frames": [34]},
+            {"draft_index": 2, "status": "revised", "final_indices": [0], "reason": "Merged beat", "evidence_frames": [38]},
+        ],
+        "identity_review": [],
+    }
+    draft_obj = VideoAnalysisResult.model_validate(draft_payload)
+    collapsed_obj = VideoAnalysisResult.model_validate(collapsed_final_payload)
+    errors = agent._review_evidence_errors(draft_obj, collapsed_obj, workspace)
+    assert any("cannot collapse 3 distinct draft events spanning 22.0s" in e for e in errors)
+
+
+def test_temporal_evidence_errors_requires_climax_resample_on_long_scenes():
+    frame_times = {1: 0.0, 80: 158.0, 85: 168.0, 89: 176.0}
+    overview_only_ws = SimpleNamespace(
+        duration=179.9,
+        frame_times=frame_times,
+        limits={"resamples_remaining": 2},
+        atlases=[SimpleNamespace(reason="overview", sample_times=[0.0, 158.0, 168.0, 176.0])],
+    )
+    payload = {
+        **result(),
+        "events": [
+            {
+                "time": 168.0,
+                "time_end": 176.0,
+                "global_frame": 85,
+                "evidence_frames": [85, 89],
+                "confidence": "observed",
+                "observation": "Rover carries Lily piggyback through the sunset flower field.",
+                "actors": ["Rover", "Lily"],
+                "evidence_kind": "observed",
+            },
+        ],
+        "story_events": [],
+        "identity_tracks": [],
+    }
+    res = VideoAnalysisResult.model_validate(payload)
+    errors = agent._temporal_evidence_errors(res, overview_only_ws)
+    assert any("climax/ending transition audit required" in e for e in errors)
+
+    resampled_ws = SimpleNamespace(
+        duration=179.9,
+        frame_times=frame_times,
+        limits={"resamples_remaining": 1},
+        atlases=[
+            SimpleNamespace(reason="overview", sample_times=[0.0, 158.0, 168.0, 176.0]),
+            SimpleNamespace(reason="climax_transition", sample_times=[150.0, 164.0, 165.0, 166.0]),
+        ],
+    )
+    assert agent._temporal_evidence_errors(res, resampled_ws) == []
