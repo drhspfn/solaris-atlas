@@ -771,6 +771,28 @@ async def expand_bulk(
             after = ids[-1]
 
 
+async def _safe_close_session(session_ctx) -> None:
+    """Close an AsyncSession without letting task cancellation abort asyncpg teardown."""
+    closer = (
+        session_ctx.__aexit__(None, None, None)
+        if hasattr(session_ctx, "__aexit__")
+        else session_ctx.close()
+    )
+    close_task = asyncio.ensure_future(closer)
+
+    def _consume_exception(done_task: asyncio.Task) -> None:
+        if not done_task.cancelled():
+            done_task.exception()
+
+    close_task.add_done_callback(_consume_exception)
+    try:
+        await asyncio.shield(close_task)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.debug("read_projection.session_close_failed", exc_info=True)
+
+
 async def refresh_claim(
     factory, claim, *, builder=None, relation_builder=None, lease_seconds=60, locale_batch_size=20,
     max_rows=None, max_bytes=None,
@@ -803,7 +825,13 @@ async def refresh_claim(
             relations = ()
             deleted = False
             after = 0
-            async with factory() as session:
+            session_ctx = factory()
+            session = (
+                await session_ctx.__aenter__()
+                if hasattr(session_ctx, "__aenter__")
+                else session_ctx
+            )
+            try:
                 while True:
                     statement = select(Locale).where(Locale.id > after).order_by(Locale.id).limit(locale_batch_size)
                     if selected_locales:
@@ -847,6 +875,8 @@ async def refresh_claim(
                             raise ValueError("Source entity exists or its snapshot is unavailable; empty build rejected")
                 if relation_builder is not None and entries:
                     relations = await relation_builder(session, claim.kind, claim.entity_id, claim.snapshot_key)
+            finally:
+                await _safe_close_session(session_ctx)
             if pulse.done():
                 pulse.result()
             accepted = await publish_refresh(

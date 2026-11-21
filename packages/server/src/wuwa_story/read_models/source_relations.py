@@ -1,5 +1,7 @@
 """Exact snapshot source relationships and search filters; no personal inference."""
 
+import json
+
 from sqlalchemy import case, or_, select
 
 from wuwa_story.api.routes.story import (
@@ -51,7 +53,7 @@ async def _dialogue_filters(session, entity_id, release_id):
         return result
     speaker_id, state_id = row
     if speaker_id is not None:
-        crosswalk = _speaker_crosswalk(release_id)
+        crosswalk = speaker_crosswalk(release_id, speaker_ids=[speaker_id])
         characters = await session.execute(
             select(Node.canonical_key, Node.slug, Node.id)
             .select_from(crosswalk)
@@ -92,6 +94,7 @@ async def build_relations(session, kind, entity_id, snapshot_key="current"):
         raise ValueError(
             "A snapshot key must be current or an explicit version")
     grouped = {}
+    grouped_seen = {}
 
     def add(related_kind, related_id, relation_type, fact):
         key = (related_kind, related_id, relation_type)
@@ -104,7 +107,10 @@ async def build_relations(session, kind, entity_id, snapshot_key="current"):
                 "evidence": {"source_facts": []},
             },
         )
-        if fact not in row["evidence"]["source_facts"]:
+        seen = grouped_seen.setdefault(key, set())
+        fingerprint = json.dumps(fact, sort_keys=True, default=str)
+        if fingerprint not in seen:
+            seen.add(fingerprint)
             row["evidence"]["source_facts"].append(fact)
 
     with source_build(), _request_caches(session):
@@ -327,20 +333,41 @@ async def _character_relations(session, node, release_id, add):
                     "dialogue_node_ids": sorted(state_lines[state_id]),
                 },
             )
-        other_crosswalk = _speaker_crosswalk(release_id)
+        raw_crosswalk = _speaker_crosswalk(release_id)
+        other_crosswalk = (
+            select(
+                raw_crosswalk.c.speaker_id,
+                raw_crosswalk.c.character_id,
+                raw_crosswalk.c.edge_id,
+            )
+            .where(raw_crosswalk.c.character_id.not_in(member_ids))
+            .cte("other_character_crosswalk")
+            .prefix_with("MATERIALIZED", dialect="postgresql")
+        )
         shared_facts = {}
         shared_seen = {}
         other_participation = dialogue_participation(
-            release_id, state_ids=state_lines)
+            release_id,
+            speaker_ids=select(other_crosswalk.c.speaker_id),
+            state_ids=state_lines,
+        )
         for character_id, state_id, line_id, source_id, edge_id in await session.execute(
-            select(other_crosswalk.c.character_id, other_participation.c.state_id,
-                   other_participation.c.line_id, other_participation.c.source_record_id,
-                   other_crosswalk.c.edge_id)
-            .join(other_participation,
-                  other_participation.c.speaker_id == other_crosswalk.c.speaker_id)
-            .where(other_crosswalk.c.character_id.not_in(member_ids))
-            .order_by(other_crosswalk.c.character_id, other_participation.c.state_id,
-                      other_participation.c.line_id)
+            select(
+                other_crosswalk.c.character_id,
+                other_participation.c.state_id,
+                other_participation.c.line_id,
+                other_participation.c.source_record_id,
+                other_crosswalk.c.edge_id,
+            )
+            .join(
+                other_participation,
+                other_participation.c.speaker_id == other_crosswalk.c.speaker_id,
+            )
+            .order_by(
+                other_crosswalk.c.character_id,
+                other_participation.c.state_id,
+                other_participation.c.line_id,
+            )
         ):
             key = (character_id, state_id)
             fact = shared_facts.get(key)
@@ -349,7 +376,9 @@ async def _character_relations(session, node, release_id, add):
                     "evidence_type": "co_presence_only",
                     "release_id": release_id,
                     "state_node_id": state_id,
-                    "quest_refs": [{"id": quest_id} for quest_id in sorted(state_quests.get(state_id, ()))],
+                    "quest_refs": [
+                        {"id": quest_id} for quest_id in sorted(state_quests.get(state_id, ()))
+                    ],
                     "owner_dialogue_node_ids": sorted(state_lines[state_id]),
                     "other_dialogue_node_ids": [],
                     "other_source_record_ids": [],

@@ -71,20 +71,36 @@ def quest_states_query(quest_node_id: int, release_id: int | None, *, include_sc
 def _state_quest_links(release_id, state_ids, quest_node_id):
     """Walk inverse ownership paths from a bounded set of transcript endpoints."""
     def parents(relations, children, name):
-        # Fence endpoint selection before relation/evidence joins. An outer WHERE
-        # on the global ownership UNION does not reliably push down in PostgreSQL.
-        endpoints = (select(Edge.id, Edge.from_node_id.label("parent"),
-                            Edge.to_node_id.label("child"), Edge.relation_type_id)
-                     .where(Edge.layer == "source", Edge.to_node_id.in_(children))
-                     .cte(name + "_endpoints").prefix_with("MATERIALIZED"))
-        query = (select(endpoints.c.parent, endpoints.c.child)
-                 .join(RelationType, RelationType.id == endpoints.c.relation_type_id)
-                 .where(RelationType.key.in_(relations)))
+        # Fence endpoint + relation selection via ix_edge_to_relation before evidence joins.
+        # An outer WHERE on the global ownership UNION does not reliably push down in PostgreSQL.
+        relation_filter = (
+            Edge.relation_type_id
+            == select(RelationType.id).where(RelationType.key == relations[0]).scalar_subquery()
+            if len(relations) == 1
+            else Edge.relation_type_id.in_(
+                select(RelationType.id).where(RelationType.key.in_(relations))
+            )
+        )
+        endpoints = (
+            select(
+                Edge.id,
+                Edge.from_node_id.label("parent"),
+                Edge.to_node_id.label("child"),
+            )
+            .where(Edge.layer == "source", Edge.to_node_id.in_(children), relation_filter)
+            .cte(name + "_endpoints")
+            .prefix_with("MATERIALIZED")
+        )
+        query = select(endpoints.c.parent, endpoints.c.child)
         if release_id is not None:
-            query = query.where(select(EdgeEvidence.id).where(
-                EdgeEvidence.edge_id == endpoints.c.id,
-                EdgeEvidence.release_id == release_id,
-            ).exists())
+            query = query.where(
+                select(EdgeEvidence.id)
+                .where(
+                    EdgeEvidence.edge_id == endpoints.c.id,
+                    EdgeEvidence.release_id == release_id,
+                )
+                .exists()
+            )
         return query.cte(name).prefix_with("MATERIALIZED")
 
     references = ("references_flow_state", "references_dungeon_flow_state", "references_scenario_flow_state")

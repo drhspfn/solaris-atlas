@@ -37,6 +37,8 @@ PROJECTION_LOCK_TIMEOUT_MS = 10_000
 CLAIM_TIMEOUT_SECONDS = 10 * 60
 DEFAULT_BATCH_LIMIT = 40
 DEFAULT_BATCH_CONCURRENCY = 8
+BULK_PROJECTION_KINDS = frozenset({"dialogue"})
+BULK_BATCH_LIMIT = 80
 
 
 def create_worker_database(
@@ -101,7 +103,17 @@ async def _run_claim(factory, claim, claim_timeout_seconds):
         _log_failure(claim, error, claim_timeout=deadline.expired())
         if deadline.expired():
             # The build has unwound before the durable timeout is recorded.
-            await fail_claim(factory, claim, error)
+            try:
+                await fail_claim(factory, claim, error)
+            except asyncio.CancelledError:
+                raise
+            except Exception as fail_error:
+                logger.warning(
+                    "read_projection.fail_claim_failed kind=%s entity=%s error=%s",
+                    claim.kind,
+                    claim.entity_id,
+                    type(fail_error).__name__,
+                )
     except Exception as error:
         _log_failure(claim, error)
 
@@ -135,7 +147,10 @@ async def refresh_batch(
 async def watch_refreshes(stop, *, factory=SessionFactory, interval=None, kinds=None, **claim_filters):
     last_storage_warning = 0.0
     selected_kinds = list(dict.fromkeys(kinds if kinds is not None else READ_PROJECTION_KINDS))
-    next_kind = 0
+    priority_kinds = [kind for kind in selected_kinds if kind not in BULK_PROJECTION_KINDS]
+    bulk_kinds = [kind for kind in selected_kinds if kind in BULK_PROJECTION_KINDS]
+    next_priority = 0
+    next_bulk = 0
     busy_cycles = 0
     while not stop.is_set():
         # Compose stores worker and PostgreSQL volumes on the same host disk.
@@ -159,11 +174,11 @@ async def watch_refreshes(stop, *, factory=SessionFactory, interval=None, kinds=
         if batch_concurrency is not None and "concurrency" not in batch_filters:
             batch_filters["concurrency"] = batch_concurrency
         worked = 0
-        for _ in range(len(selected_kinds)):
+        for _ in range(len(priority_kinds)):
             if stop.is_set():
                 break
-            kind = selected_kinds[next_kind]
-            next_kind = (next_kind + 1) % len(selected_kinds)
+            kind = priority_kinds[next_priority]
+            next_priority = (next_priority + 1) % len(priority_kinds)
             try:
                 worked = await refresh_batch(factory, kinds=[kind], **batch_filters)
             except asyncio.CancelledError:
@@ -172,6 +187,23 @@ async def watch_refreshes(stop, *, factory=SessionFactory, interval=None, kinds=
                 logger.warning("read_projection.poll_failed kind=%s error=%s", kind, type(error).__name__)
             if worked:
                 break
+        if not worked and bulk_kinds and not stop.is_set():
+            bulk_filters = dict(batch_filters)
+            if "limit" not in claim_filters and batch_limit is not None:
+                bulk_filters["limit"] = min(100, max(batch_limit, BULK_BATCH_LIMIT))
+            for _ in range(len(bulk_kinds)):
+                if stop.is_set():
+                    break
+                kind = bulk_kinds[next_bulk]
+                next_bulk = (next_bulk + 1) % len(bulk_kinds)
+                try:
+                    worked = await refresh_batch(factory, kinds=[kind], **bulk_filters)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    logger.warning("read_projection.poll_failed kind=%s error=%s", kind, type(error).__name__)
+                if worked:
+                    break
         busy_cycles = busy_cycles + 1 if worked else 0
         if not stop.is_set() and (not worked or busy_cycles >= 20):
             busy_cycles = 0

@@ -16,7 +16,7 @@ from wuwa_story.ingestion.speaker_crosswalk import (
 )
 
 
-def speaker_crosswalk(release_id, character_ids=None):
+def speaker_crosswalk(release_id, character_ids=None, speaker_ids=None):
     """The same evidenced identity contract for profiles and relation indexing.
 
     SpeakerEntityLink is an unversioned convenience projection. Only the exact
@@ -24,77 +24,172 @@ def speaker_crosswalk(release_id, character_ids=None):
     establish membership. Legacy exact_join/card evidence remains archived but
     is not an identity proof.
     """
-    proof = select(EdgeEvidence.source_record_id).join(
-        SourceRecord, SourceRecord.id == EdgeEvidence.source_record_id,
-    ).join(
-        SourceFile, SourceFile.id == SourceRecord.source_file_id,
-    ).where(
-        EdgeEvidence.edge_id == Edge.id, EdgeEvidence.release_id == release_id,
-        SourceRecord.release_id == release_id, SourceFile.release_id == release_id,
-        or_(*(
-            and_(EdgeEvidence.source_file_path == path, SourceFile.logical_source_path == path,
-                 EdgeEvidence.explanation.startswith(basis, autoescape=True))
-            for path, basis in ((SPEAKER_PATH, PERSONAL_PORTRAIT_BASIS),
-                                (PLOT_GUEST_PATH, PLOT_GUEST_BASIS),
-                                (FLOW_PATH, SEQUENCE_ACTOR_BASIS))
-        )),
-    ).correlate(Edge)
-    record = proof.with_only_columns(
-        func.min(EdgeEvidence.source_record_id)).scalar_subquery()
-    query = select(
-        Edge.from_node_id.label(
-            'speaker_id'), Edge.to_node_id.label('character_id'),
-        Edge.id.label('edge_id'), record.label('source_record_id'),
-    ).join(RelationType, RelationType.id == Edge.relation_type_id).where(
-        Edge.layer == 'source', Edge.basis == 'exact_join',
-        RelationType.key == 'references_character',
-        proof.exists(),
+    query = (
+        select(
+            Edge.from_node_id.label("speaker_id"),
+            Edge.to_node_id.label("character_id"),
+            Edge.id.label("edge_id"),
+            func.min(EdgeEvidence.source_record_id).label("source_record_id"),
+        )
+        .join(RelationType, RelationType.id == Edge.relation_type_id)
+        .join(
+            EdgeEvidence,
+            and_(EdgeEvidence.edge_id == Edge.id, EdgeEvidence.release_id == release_id),
+        )
+        .join(
+            SourceRecord,
+            and_(
+                SourceRecord.id == EdgeEvidence.source_record_id,
+                SourceRecord.release_id == release_id,
+            ),
+        )
+        .join(
+            SourceFile,
+            and_(
+                SourceFile.id == SourceRecord.source_file_id,
+                SourceFile.release_id == release_id,
+            ),
+        )
+        .where(
+            Edge.layer == "source",
+            Edge.basis == "exact_join",
+            RelationType.key == "references_character",
+            or_(*(
+                and_(
+                    EdgeEvidence.source_file_path == path,
+                    SourceFile.logical_source_path == path,
+                    EdgeEvidence.explanation.startswith(basis, autoescape=True),
+                )
+                for path, basis in (
+                    (SPEAKER_PATH, PERSONAL_PORTRAIT_BASIS),
+                    (PLOT_GUEST_PATH, PLOT_GUEST_BASIS),
+                    (FLOW_PATH, SEQUENCE_ACTOR_BASIS),
+                )
+            )),
+        )
+        .group_by(Edge.from_node_id, Edge.to_node_id, Edge.id)
     )
     if release_id is None:
         query = query.where(false())
     if character_ids is not None:
         query = query.where(Edge.to_node_id.in_(character_ids))
+    if speaker_ids is not None:
+        query = query.where(Edge.from_node_id.in_(speaker_ids))
     return query.subquery()
 
 
-def dialogue_participation(release_id, *, speaker_ids=None, state_ids=None, line_ids=None):
+def dialogue_participation(
+    release_id,
+    *,
+    speaker_ids=None,
+    state_ids=None,
+    line_ids=None,
+    include_source_record=True,
+):
     """Pinned speaker/action/state membership from source edges, not typed pointers.
 
     Typed dialogue rows are first-import projections and can point to another
     release. All three graph hops and the returned raw record must be evidenced
     in the requested snapshot, including when a line changes speaker or action.
     """
-    spoken, talks, actions = (Edge.__table__.alias(name) for name in (
-        'participation_spoken', 'participation_talks', 'participation_actions'))
-    proof = EdgeEvidence.__table__.alias('participation_proof')
-
-    def source_hop(edge, relation):
-        return and_(
-            edge.c.layer == 'source', edge.c.relation_type_id == select(RelationType.id).where(
-                RelationType.key == relation).scalar_subquery(),
-            select(EdgeEvidence.id).where(
-                EdgeEvidence.edge_id == edge.c.id, EdgeEvidence.release_id == release_id,
-            ).exists(),
-        )
-
-    query = select(
-        spoken.c.from_node_id.label(
-            'line_id'), spoken.c.to_node_id.label('speaker_id'),
-        talks.c.from_node_id.label(
-            'action_id'), actions.c.from_node_id.label('state_id'),
-        func.min(proof.c.source_record_id).label('source_record_id'),
-    ).select_from(spoken).join(
-        DialogueLine, DialogueLine.node_id == spoken.c.from_node_id,
-    ).join(talks, talks.c.to_node_id == spoken.c.from_node_id).join(
-        actions, actions.c.to_node_id == talks.c.from_node_id,
-    ).join(proof, and_(proof.c.edge_id == spoken.c.id, proof.c.release_id == release_id)).join(
-        SourceRecord, SourceRecord.id == proof.c.source_record_id,
-    ).where(
-        source_hop(spoken, 'spoken_by'), source_hop(
-            talks, 'presents_talk_item'),
-        source_hop(
-            actions, 'contains_action'), SourceRecord.release_id == release_id,
+    spoken, talks, actions = (
+        Edge.__table__.alias(name)
+        for name in ("participation_spoken", "participation_talks", "participation_actions")
     )
+
+    def source_hop(edge, relation, *, check_evidence=True):
+        conditions = [
+            edge.c.layer == "source",
+            edge.c.relation_type_id
+            == select(RelationType.id).where(RelationType.key == relation).scalar_subquery(),
+        ]
+        if check_evidence:
+            conditions.append(
+                select(EdgeEvidence.id)
+                .where(EdgeEvidence.edge_id == edge.c.id, EdgeEvidence.release_id == release_id)
+                .exists()
+            )
+        return and_(*conditions)
+
+    base_columns = [
+        spoken.c.from_node_id.label("line_id"),
+        spoken.c.to_node_id.label("speaker_id"),
+        talks.c.from_node_id.label("action_id"),
+        actions.c.from_node_id.label("state_id"),
+    ]
+    if include_source_record:
+        proof = EdgeEvidence.__table__.alias("participation_proof")
+        query = (
+            select(*base_columns, func.min(proof.c.source_record_id).label("source_record_id"))
+            .select_from(spoken)
+            .join(DialogueLine, DialogueLine.node_id == spoken.c.from_node_id)
+            .join(talks, talks.c.to_node_id == spoken.c.from_node_id)
+            .join(actions, actions.c.to_node_id == talks.c.from_node_id)
+            .join(proof, and_(proof.c.edge_id == spoken.c.id, proof.c.release_id == release_id))
+            .join(SourceRecord, SourceRecord.id == proof.c.source_record_id)
+            .where(
+                # proof already enforces EdgeEvidence(edge_id=spoken.id, release_id=release_id).
+                source_hop(spoken, "spoken_by", check_evidence=False),
+                source_hop(talks, "presents_talk_item"),
+                source_hop(actions, "contains_action"),
+                SourceRecord.release_id == release_id,
+            )
+            .group_by(
+                spoken.c.from_node_id,
+                spoken.c.to_node_id,
+                talks.c.from_node_id,
+                actions.c.from_node_id,
+            )
+        )
+    else:
+        use_release_cte = (
+            release_id is not None
+            and state_ids is not None
+            and speaker_ids is None
+            and line_ids is None
+            and len(state_ids) > 200
+        )
+        if use_release_cte:
+            # Large multi-state scans (e.g. Rover across thousands of states) otherwise
+            # trigger hundreds of thousands of random B-tree probes on edge_evidence.
+            rel_ev = (
+                select(EdgeEvidence.edge_id)
+                .where(EdgeEvidence.release_id == release_id)
+                .distinct()
+                .cte("participation_rel_ev")
+                .prefix_with("MATERIALIZED", dialect="postgresql")
+            )
+            ev_spoken = rel_ev.alias("ev_spoken")
+            ev_talks = rel_ev.alias("ev_talks")
+            ev_actions = rel_ev.alias("ev_actions")
+            query = (
+                select(*base_columns)
+                .select_from(actions)
+                .join(ev_actions, ev_actions.c.edge_id == actions.c.id)
+                .join(talks, talks.c.from_node_id == actions.c.to_node_id)
+                .join(ev_talks, ev_talks.c.edge_id == talks.c.id)
+                .join(DialogueLine, DialogueLine.node_id == talks.c.to_node_id)
+                .join(spoken, spoken.c.from_node_id == talks.c.to_node_id)
+                .join(ev_spoken, ev_spoken.c.edge_id == spoken.c.id)
+                .where(
+                    source_hop(actions, "contains_action", check_evidence=False),
+                    source_hop(talks, "presents_talk_item", check_evidence=False),
+                    source_hop(spoken, "spoken_by", check_evidence=False),
+                )
+            )
+        else:
+            query = (
+                select(*base_columns)
+                .select_from(spoken)
+                .join(DialogueLine, DialogueLine.node_id == spoken.c.from_node_id)
+                .join(talks, talks.c.to_node_id == spoken.c.from_node_id)
+                .join(actions, actions.c.to_node_id == talks.c.from_node_id)
+                .where(
+                    source_hop(spoken, "spoken_by"),
+                    source_hop(talks, "presents_talk_item"),
+                    source_hop(actions, "contains_action"),
+                )
+            )
     if release_id is None:
         query = query.where(false())
     if speaker_ids is not None:
@@ -103,8 +198,7 @@ def dialogue_participation(release_id, *, speaker_ids=None, state_ids=None, line
         query = query.where(actions.c.from_node_id.in_(state_ids))
     if line_ids is not None:
         query = query.where(spoken.c.from_node_id.in_(line_ids))
-    return query.group_by(spoken.c.from_node_id, spoken.c.to_node_id,
-                          talks.c.from_node_id, actions.c.from_node_id).subquery()
+    return query.subquery()
 
 
 async def character_family(session, character, node, localize, release_id=None):
