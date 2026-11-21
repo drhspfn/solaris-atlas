@@ -131,6 +131,7 @@ class EdgeEvidence(Base):
             postgresql_nulls_not_distinct=True,
             name="uq_edge_evidence_source",
         ),
+        Index("ix_edge_evidence_edge_release", "edge_id", "release_id"),
         {"schema": "graph"},
     )
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)

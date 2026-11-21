@@ -157,10 +157,16 @@ async def item_profile(
                 },
             }
         )
+    release_filters = (
+        (SourceRecord.release_id == release_id, SourceFile.release_id == release_id)
+        if release_id is not None
+        else ()
+    )
     enrichment_rows = await session.execute(
         select(SourceRecord, SourceFile)
         .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
         .where(
+            *release_filters,
             SourceFile.logical_source_path == "BinData/enrichment/enrichmentareaconfig.json",
             SourceRecord.data["ItemId"].as_integer() == item.game_item_id,
         )
@@ -188,6 +194,7 @@ async def item_profile(
         select(SourceRecord, SourceFile)
         .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
         .where(
+            *release_filters,
             SourceFile.logical_source_path == "BinData/EntityVoxelInfo/entityvoxelinfo.json",
             SourceRecord.data["EntityId"].as_integer().in_(harvest_entity_ids or [-1]),
         )
@@ -229,6 +236,7 @@ async def item_profile(
             select(SourceRecord, SourceFile)
             .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
             .where(
+                *release_filters,
                 SourceFile.logical_source_path == "BinData/map/akimap.json",
                 SourceRecord.data["MapId"].as_integer() == world_map["map_id"],
             )
@@ -250,6 +258,7 @@ async def item_profile(
                 select(SourceRecord, SourceFile)
                 .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
                 .where(
+                    *release_filters,
                     SourceFile.logical_source_path == "BinData/area/area.json",
                     SourceRecord.data.contains(
                         {"DungeonId": world_map["map_id"], "Title": map_title_key}
@@ -561,6 +570,7 @@ async def item_profile(
         select(SourceRecord, SourceFile)
         .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
         .where(
+            *release_filters,
             SourceFile.logical_source_path == "BinData/QuestNodeData/questnodedata.json",
             SourceRecord.data.contains(
                 {
@@ -900,7 +910,9 @@ async def character_profile(
         if not speaker_name:
             speaker_name = (candidate.slug or "").split("-", 1)[-1].replace("-", " ").title() or candidate.canonical_key
 
-        participation = dialogue_participation(release_id, speaker_ids={candidate.id})
+        participation = dialogue_participation(
+            release_id, speaker_ids={candidate.id}, include_source_record=False
+        )
         state_ids = set(await session.scalars(select(participation.c.state_id).distinct())) if hasattr(session, "scalars") else set()
         quests_with_dialogue = []
         if state_ids:
@@ -1114,30 +1126,42 @@ async def character_profile(
             "resolution": "release_evidenced_exact_crosswalk",
             "evidence_source_record_id": record_id,
         })
-    participation = dialogue_participation(release_id, speaker_ids=own_speaker_ids)
+    participation = dialogue_participation(
+        release_id, speaker_ids=own_speaker_ids, include_source_record=False
+    )
     state_ids = set(await session.scalars(
         select(participation.c.state_id).distinct()
     )) if own_speaker_ids else set()
 
     co_present: dict[int, set[int]] = {}
     co_present_speakers: dict[int, set[int]] = {}
+    speaker_entities: dict[int, list[int]] = {}
     if state_ids:
-        shared_participation = dialogue_participation(release_id, state_ids=state_ids)
+        shared_participation = dialogue_participation(
+            release_id, state_ids=state_ids, include_source_record=False
+        )
+        all_speaker_states: dict[int, set[int]] = {}
         speaker_rows = await session.execute(
-            select(shared_participation.c.speaker_id, shared_participation.c.state_id)
-            .where(shared_participation.c.speaker_id.not_in(own_speaker_ids)).distinct()
+            select(shared_participation.c.speaker_id, shared_participation.c.state_id).distinct()
         )
         for speaker_node_id, state_node_id in speaker_rows:
-            co_present_speakers.setdefault(speaker_node_id, set()).add(state_node_id)
-        other_crosswalk = speaker_crosswalk(release_id)
-        co_rows = await session.execute(
-            select(other_crosswalk.c.character_id, shared_participation.c.state_id)
-            .join(shared_participation,
-                  shared_participation.c.speaker_id == other_crosswalk.c.speaker_id)
-            .where(other_crosswalk.c.character_id.not_in(member_ids)).distinct()
-        )
-        for entity_node_id, state_node_id in co_rows:
-            co_present.setdefault(entity_node_id, set()).add(state_node_id)
+            all_speaker_states.setdefault(speaker_node_id, set()).add(state_node_id)
+            if speaker_node_id not in own_speaker_ids:
+                co_present_speakers.setdefault(speaker_node_id, set()).add(state_node_id)
+        if all_speaker_states:
+            other_crosswalk = speaker_crosswalk(
+                release_id, speaker_ids=sorted(all_speaker_states)
+            )
+            for speaker_id, entity_id in await session.execute(
+                select(other_crosswalk.c.speaker_id, other_crosswalk.c.character_id).where(
+                    other_crosswalk.c.character_id.not_in(member_ids)
+                )
+            ):
+                if speaker_id in co_present_speakers:
+                    speaker_entities.setdefault(speaker_id, []).append(entity_id)
+                co_present.setdefault(entity_id, set()).update(
+                    all_speaker_states.get(speaker_id, ())
+                )
     co_present_characters = []
     shared_scene_cache: dict[int, dict[str, Any]] = {}
     # Every card refers to states already found for this character. Load those
@@ -1146,14 +1170,6 @@ async def character_profile(
     states = list(await session.scalars(
         select(QuestState).where(QuestState.node_id.in_(card_state_ids)).order_by(QuestState.state_key)
     )) if card_state_ids else []
-    speaker_entities: dict[int, list[int]] = {}
-    if co_present_speakers:
-        for speaker_id, entity_id in await session.execute(
-            select(other_crosswalk.c.speaker_id, other_crosswalk.c.character_id)
-            .where(other_crosswalk.c.speaker_id.in_(co_present_speakers),
-                   other_crosswalk.c.character_id.not_in(member_ids))
-        ):
-            speaker_entities.setdefault(speaker_id, []).append(entity_id)
     await prefetch_node_labels(session, {
         *co_present, *co_present_speakers,
         *(entity_id for entities in speaker_entities.values() for entity_id in entities),
@@ -1187,50 +1203,103 @@ async def character_profile(
         ):
             quests_by_state.setdefault(state_id, []).append(quest)
             quests_by_id[quest.node_id] = quest
-    for entity_node_id, state_rows in sorted(character_states.items()):
-        shared_scenes = []
-        # Expose source-authored context for the relationship card. A shared
-        # flow state is evidence of co-presence only, so return its transcript
-        # with the state and quest references rather than asserting a relation.
-        for shared_state in state_rows[:8]:
-            if shared_state.node_id not in shared_scene_cache:
-                scene_participation = dialogue_participation(
-                    release_id, state_ids=[shared_state.node_id])
-                dialogue_statement = (
-                    select(DialogueLine, QuestAction, QuestState, Node, SourceRecord, SourceFile)
-                    .options(
-                        defer(QuestAction.params),
-                        defer(QuestAction.metadata_json),
-                        defer(QuestState.metadata_json),
-                        defer(Node.metadata_json),
-                        defer(SourceRecord.data),
-                        defer(SourceFile.metadata_json),
-                        defer(DialogueLine.metadata_json),
+    # Batch-load shared-scene dialogue lines in chunks instead of one SQL roundtrip per state.
+    if shared_state_ids:
+        states_by_id = {state.node_id: state for state in states}
+        sorted_shared_ids = sorted(shared_state_ids)
+        include_raw = not SOURCE_BUILD.get()
+        for start in range(0, len(sorted_shared_ids), 40):
+            chunk = sorted_shared_ids[start : start + 40]
+            scene_participation = dialogue_participation(release_id, state_ids=chunk)
+            dialogue_statement = (
+                select(DialogueLine, QuestAction, QuestState, Node, SourceRecord, SourceFile)
+                .options(
+                    defer(QuestAction.params),
+                    defer(QuestAction.metadata_json),
+                    defer(QuestState.metadata_json),
+                    defer(Node.metadata_json),
+                    defer(SourceRecord.data),
+                    defer(SourceFile.metadata_json),
+                    defer(DialogueLine.metadata_json),
+                )
+                .join(Node, Node.id == DialogueLine.node_id)
+                .join(scene_participation, scene_participation.c.line_id == DialogueLine.node_id)
+                .join(QuestAction, QuestAction.node_id == scene_participation.c.action_id)
+                .join(QuestState, QuestState.node_id == scene_participation.c.state_id)
+                .outerjoin(SourceRecord, SourceRecord.id == scene_participation.c.source_record_id)
+                .outerjoin(SourceFile, SourceFile.id == SourceRecord.source_file_id)
+                .where(QuestState.node_id.in_(chunk))
+                .order_by(
+                    QuestState.node_id,
+                    QuestAction.action_index,
+                    DialogueLine.source_index,
+                    DialogueLine.node_id,
+                )
+                .add_columns(scene_participation.c.speaker_id)
+            )
+            if not include_raw:
+                dialogue_statement = dialogue_statement.add_columns(
+                    or_(QuestAction.params.is_(None), QuestAction.params == JSON.NULL)
+                )
+            chunk_rows = list((await session.execute(dialogue_statement)).all())
+            rows_by_state: dict[int, list[Any]] = {sid: [] for sid in chunk}
+            for row in chunk_rows:
+                sid = row[2].node_id
+                bucket = rows_by_state.get(sid)
+                if bucket is not None and len(bucket) < 80:
+                    bucket.append(row)
+            capped_rows = [row for sid in chunk for row in rows_by_state[sid]]
+            transcript_rows_all = [
+                (
+                    SimpleNamespace(
+                        **{
+                            field: getattr(row[0], field)
+                            for field in (
+                                "node_id",
+                                "localization_key_id",
+                                "inline_text",
+                                "game_talk_item_id",
+                                "game_text_id",
+                                "source_type",
+                                "source_index",
+                            )
+                        },
+                        speaker_node_id=row[6],
+                    ),
+                    *row[1:6],
+                )
+                for row in capped_rows
+            ]
+            if transcript_rows_all:
+                await prefetch_dialogue(
+                    session, transcript_rows_all, locale, release_id, include_raw=include_raw
+                )
+            cursor = 0
+            for sid in chunk:
+                state_rows_chunk = rows_by_state[sid]
+                state_transcript_rows = transcript_rows_all[cursor : cursor + len(state_rows_chunk)]
+                cursor += len(state_rows_chunk)
+                transcript = [
+                    await _dialogue_payload(
+                        session,
+                        trow,
+                        locale_code=locale,
+                        release_id=release_id,
+                        include_raw=include_raw,
                     )
-                    .join(Node, Node.id == DialogueLine.node_id)
-                    .join(scene_participation, scene_participation.c.line_id == DialogueLine.node_id)
-                    .join(QuestAction, QuestAction.node_id == scene_participation.c.action_id)
-                    .join(QuestState, QuestState.node_id == scene_participation.c.state_id)
-                    .outerjoin(SourceRecord, SourceRecord.id == scene_participation.c.source_record_id)
-                    .outerjoin(SourceFile, SourceFile.id == SourceRecord.source_file_id)
-                    .where(QuestState.node_id == shared_state.node_id)
-                    .order_by(QuestAction.action_index, DialogueLine.source_index, DialogueLine.node_id)
-                    .limit(80)
-                )
-                transcript_rows, transcript = await _shared_scene_dialogue(
-                    session, dialogue_statement.add_columns(scene_participation.c.speaker_id),
-                    locale, release_id, snapshot_speakers=True,
-                )
-                quest_rows = quests_by_state.get(shared_state.node_id, [])[:5]
-                state_source = state_sources.get(shared_state.node_id)
-                shared_scene_cache[shared_state.node_id] = {
-                    "flow_state": shared_state.state_key,
-                    "quest_refs": [
-                        await character_quest_info(quest)
-                        for quest in quest_rows
-                    ],
+                    for trow in state_transcript_rows
+                ]
+                if not include_raw:
+                    for line, raw_row in zip(transcript, state_rows_chunk, strict=True):
+                        if line["action"] is not None and not raw_row[-1]:
+                            del line["action"]["params"]
+                quest_rows = quests_by_state.get(sid, [])[:5]
+                state_source = state_sources.get(sid)
+                shared_scene_cache[sid] = {
+                    "flow_state": states_by_id[sid].state_key,
+                    "quest_refs": [await character_quest_info(quest) for quest in quest_rows],
                     "dialogue": transcript,
-                    "dialogue_truncated": len(transcript_rows) == 80,
+                    "dialogue_truncated": len(state_transcript_rows) == 80,
                     "basis": "full authored dialogue rows in the same QuestState; shared state does not imply direct conversation",
                     "source": {
                         "file": state_source[2] if state_source else None,
@@ -1238,7 +1307,8 @@ async def character_profile(
                         "record_id": state_source[0] if state_source else None,
                     },
                 }
-            shared_scenes.append(shared_scene_cache[shared_state.node_id])
+    for entity_node_id, state_rows in sorted(character_states.items()):
+        shared_scenes = [shared_scene_cache[shared_state.node_id] for shared_state in state_rows[:8]]
         co_present_characters.append(
             {
                 "character": await _node_label(session, entity_node_id, locale),
