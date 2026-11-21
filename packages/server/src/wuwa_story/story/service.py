@@ -139,7 +139,7 @@ async def prefetch_dialogue(session, rows, locale_code, release_id, *, include_r
         batch = line_ids[offset : offset + 500]
         for identity in batch:
             cache[identity] = []
-        choices = await repository.dialogue_choices(session, batch)
+        choices = await repository.dialogue_choices(session, batch, release_id=release_id)
         targets = defaultdict(set)
         choice_ids = {choice.node_id for _, choice, _, _, _ in choices}
         if choice_ids:
@@ -415,7 +415,9 @@ async def quest_profile_payload(session, quest, locale="en", game_version=None) 
     hierarchy_rows = await repository.quest_hierarchy_rows(session, qnode_ids)
     states = await repository.quest_states(session, await _quest_page_state_ids(session, quest.node_id, release_id))
     actions_by_state = {}
-    for action, key in await repository.quest_actions(session, [state.node_id for state in states]):
+    for action, key in await repository.quest_actions(
+        session, [state.node_id for state in states], release_id=release_id
+    ):
         actions_by_state.setdefault(action.quest_state_node_id, []).append((action, key))
     state_payloads = []
     for state in states:

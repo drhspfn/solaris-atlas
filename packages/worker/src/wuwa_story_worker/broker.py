@@ -39,6 +39,20 @@ MEDIA_QUEUES = {"release_media", "event_media", "entity_media",
                 "release_images", "entity_images", "cutscene_assembly"}
 
 
+def _db_sqlstate(error: DBAPIError) -> str | None:
+    for candidate in (
+        error.orig,
+        getattr(error.orig, "__cause__", None),
+        getattr(error.orig, "__context__", None),
+    ):
+        if candidate is None:
+            continue
+        code = getattr(candidate, "sqlstate", None) or getattr(candidate, "pgcode", None)
+        if code:
+            return code
+    return None
+
+
 def transient_job_error(error: Exception) -> bool:
     if isinstance(error, MemoryError):
         return True
@@ -52,7 +66,7 @@ def transient_job_error(error: Exception) -> bool:
     if isinstance(error, subprocess.CalledProcessError):
         return error.returncode in {-9, 137}
     if isinstance(error, DBAPIError):
-        code = getattr(error.orig, "sqlstate", None)
+        code = _db_sqlstate(error)
         return (error.connection_invalidated or code in {"40P01", "40001", "55P03", "57014", "53300", "57P01"}
                 or bool(code and code.startswith("08")))
     response = getattr(error, "response", None)

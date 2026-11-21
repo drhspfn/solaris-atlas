@@ -10,11 +10,11 @@ from wuwa_story.storage.animation_previews import spine_bundle
 from wuwa_story.storage.s3 import S3Storage
 
 
-async def illustration_payloads(session, rows):
+async def illustration_payloads(session, rows, release_id=None):
     state_ids = {row[2].node_id for row in rows if row[2]}
     if not state_ids:
         return {}
-    actions = await repository.illustration_actions(session, state_ids)
+    actions = await repository.illustration_actions(session, state_ids, release_id=release_id)
     changes = {}
     paths = set()
     spine_paths = set()

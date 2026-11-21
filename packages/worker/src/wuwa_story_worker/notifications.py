@@ -25,6 +25,11 @@ def alert_text(run, processor, error=None):
     # in the parent release job that only waited for those children.
     if processor == "release_media" and status == "partial" and request.get("kind") in {"images", "character_voices"}:
         return None
+    if processor == "release_media" and status == "partial" and request.get("kind") == "voices":
+        entries = report.get("entries") or []
+        non_found = [entry for entry in entries if entry.get("status") != "found"]
+        if non_found and all(entry.get("status") == "not_in_archives" for entry in non_found):
+            return None
     lines = [f"Solaris Atlas · {processor}", f"Task #{run.id} · {status}"]
     if request.get("game_version"):
         lines.append(f"Game version: {request['game_version']}")

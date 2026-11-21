@@ -2,12 +2,15 @@
 
 import asyncio
 import json
+import logging
+import random
 import re
 import subprocess
 import wave
 from pathlib import Path, PurePosixPath
 
 from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.core import VoiceReference
 from wuwa_story.db.models.storage import FileReference
@@ -23,12 +26,83 @@ from wuwa_story_worker.publication_provenance import (
 )
 from wuwa_story_worker.voice_packages import LANGUAGES
 
+logger = logging.getLogger(__name__)
+_TEMPLATE_PLACEHOLDER_RE = re.compile(r"\{[A-Za-z0-9_]+\}")
+DEADLOCK_MAX_RETRIES = 4
+
+
+def is_voice_template(name: str) -> bool:
+    return bool(_TEMPLATE_PLACEHOLDER_RE.search(name))
+
+
+def voice_template_like_pattern(language: str, name: str, suffix: str = "") -> str:
+    """Build an escaped SQLite LIKE pattern for a PlotAudio template name."""
+    parts = _TEMPLATE_PLACEHOLDER_RE.split(name)
+    escaped = [
+        part.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        for part in parts
+    ]
+    return f"{language}_" + "%".join(escaped) + f"{suffix}.wem"
+
+
+def _compile_template_matchers(names: set[str]) -> list[tuple[str, re.Pattern[str]]]:
+    matchers: list[tuple[str, re.Pattern[str]]] = []
+    for name in sorted(names):
+        if not is_voice_template(name):
+            continue
+        parts = _TEMPLATE_PLACEHOLDER_RE.split(name)
+        pattern = r"([A-Za-z0-9_]+)".join(re.escape(part) for part in parts)
+        matchers.append((name, re.compile(rf"^{pattern}$", re.IGNORECASE)))
+    return matchers
+
+
+def _match_requested_voice(
+    stem: str,
+    requested: dict[str, str],
+    template_matchers: list[tuple[str, re.Pattern[str]]],
+) -> tuple[str, str | None, str | None] | None:
+    """Resolve an archive voice stem to (canonical_name, rover, template_variant)."""
+    if stem.casefold() in requested:
+        return requested[stem.casefold()], None, None
+    if stem[-2:].upper() in {"_F", "_M"} and stem[:-2].casefold() in requested:
+        rover = "female" if stem[-1].upper() == "F" else "male"
+        return requested[stem[:-2].casefold()], rover, None
+    for canonical, regex in template_matchers:
+        match = regex.fullmatch(stem)
+        if match:
+            return canonical, None, "_".join(match.groups())
+        if stem[-2:].upper() in {"_F", "_M"}:
+            match = regex.fullmatch(stem[:-2])
+            if match:
+                rover = "female" if stem[-1].upper() == "F" else "male"
+                return canonical, rover, "_".join(match.groups())
+    return None
+
+
+def _is_deadlock_error(error: Exception) -> bool:
+    if not isinstance(error, DBAPIError):
+        return False
+    for candidate in (
+        error.orig,
+        getattr(error.orig, "__cause__", None),
+        getattr(error.orig, "__context__", None),
+    ):
+        if candidate is None:
+            continue
+        code = getattr(candidate, "sqlstate", None) or getattr(candidate, "pgcode", None)
+        if code == "40P01":
+            return True
+        if "DeadlockDetected" in type(candidate).__name__:
+            return True
+    return "deadlock detected" in str(error).casefold()
+
 
 def voice_path_roster(names: set[str], paths) -> dict[str, list[dict]]:
-    """Resolve the authoritative archive roster using the exporter's exact F/M rules."""
+    """Resolve the authoritative archive roster using the exporter's exact F/M and template rules."""
     requested = {name.casefold(): name for name in names}
     if len(requested) != len(names):
         raise ValueError("Conflicting case-insensitive voice identities")
+    template_matchers = _compile_template_matchers(names)
     roster = {name: [] for name in names}
     seen = set()
     for path in sorted(set(paths)):
@@ -38,21 +112,20 @@ def voice_path_roster(names: set[str], paths) -> dict[str, list[dict]]:
         match = re.fullmatch(r"(en|ja|ko|zh)_(vo_[A-Za-z0-9_]+)\.wem", package.name, re.IGNORECASE)
         if not match:
             continue
-        language, name = match[1].lower(), match[2]
-        rover = None
-        if name.casefold() in requested:
-            name = requested[name.casefold()]
-        elif name[-2:].upper() in {"_F", "_M"} and name[:-2].casefold() in requested:
-            rover = "female" if name[-1].upper() == "F" else "male"
-            name = requested[name[:-2].casefold()]
-        else:
+        language, stem = match[1].lower(), match[2]
+        resolved = _match_requested_voice(stem, requested, template_matchers)
+        if resolved is None:
             continue
-        identity = name, language, rover
+        name, rover, variant = resolved
+        identity = (name, language, rover, variant)
         if identity in seen:
             raise ValueError(f"Duplicate authored voice: {package.name}")
         seen.add(identity)
-        roster[name].append({"source_name": package.name, "path": path,
-                             "language": language, "rover": rover})
+        entry = {"source_name": package.name, "path": path,
+                 "language": language, "rover": rover}
+        if variant is not None:
+            entry["variant"] = variant
+        roster[name].append(entry)
     return roster
 
 
@@ -161,28 +234,29 @@ def voice_identity(filename: str) -> tuple[str, str]:
 
 
 def exported_voices(root: Path, names: set[str] | None = None) -> dict:
-    """Resolve exact authored filenames and explicit F/M variants; no fuzzy matching."""
+    """Resolve exact authored filenames, explicit F/M variants, and template parameters."""
     grouped = {}
     requested = {name.casefold(): name for name in names} if names is not None else None
     if requested is not None and len(requested) != len(names):
         raise ValueError("Conflicting case-insensitive voice identities")
-    for path in root.rglob("*"):
+    template_matchers = _compile_template_matchers(names) if names is not None else []
+    for path in sorted(root.rglob("*")):
         if not path.is_file() or path.suffix.casefold() != ".wem":
             continue
         match = re.fullmatch(r"(en|ja|ko|zh)_(vo_[A-Za-z0-9_]+)\.wem", path.name, re.IGNORECASE)
         if not match:
             continue
-        language, name = match[1].lower(), match[2]
+        language, stem = match[1].lower(), match[2]
         rover = None
+        variant = None
         if requested is not None:
-            if name.casefold() in requested:
-                name = requested[name.casefold()]
-            elif name[-2:].upper() in {"_F", "_M"} and name[:-2].casefold() in requested:
-                rover = "female" if name[-1].upper() == "F" else "male"
-                name = requested[name[:-2].casefold()]
-            else:
+            resolved = _match_requested_voice(stem, requested, template_matchers)
+            if resolved is None:
                 continue
-        key = (language, rover)
+            name, rover, variant = resolved
+        else:
+            name = stem
+        key = (language, rover) if variant is None else (language, rover, variant)
         if key in grouped.setdefault(name, {}):
             raise ValueError(f"Duplicate extracted voice: {path.name}")
         grouped[name][key] = path
@@ -221,8 +295,10 @@ async def import_voice_sample(root: Path, decoder: Path, asset_version: str, *,
     count = 0
     converted = {}
     async with SessionFactory() as session:
-        voices = list(await session.scalars(select(VoiceReference).where(
-            VoiceReference.file_name.in_(grouped))))
+        voices = sorted(
+            await session.scalars(select(VoiceReference).where(VoiceReference.file_name.in_(grouped))),
+            key=lambda voice: voice.node_id,
+        )
         paths = ({track["path"] for tracks in roster.values() for track in tracks} if roster is not None
                  else {voice_package_path(root, path, source_context)
                        for tracks in grouped.values() for path in tracks.values()})
@@ -235,14 +311,21 @@ async def import_voice_sample(root: Path, decoder: Path, asset_version: str, *,
             existing_by_path.setdefault((ref.source_path, ref.source_name), []).append(ref)
         authoritative_missing = set()
         for voice in voices:
+            sorted_items = sorted(
+                grouped[voice.file_name].items(),
+                key=lambda item: (item[0][0], item[0][1] or "", item[0][2] if len(item[0]) > 2 else "", item[1].name),
+            )
             inventory = roster[voice.file_name] if roster is not None else [
                          {"source_name": path.name, "path": voice_package_path(root, path, source_context),
-                          "language": language, "rover": rover}
-                         for (language, rover), path in grouped[voice.file_name].items()]
-            owned = {ref.source_path: ref for ref in existing_by_owner.get(voice.node_id, [])
-                     if ref.metadata_json.get("voice_name") == voice.file_name}
+                          "language": key[0], "rover": key[1],
+                          **({"variant": key[2]} if len(key) > 2 else {})}
+                         for key, path in sorted_items]
+            base_owned = {ref.source_path: ref for ref in existing_by_owner.get(voice.node_id, [])
+                          if ref.metadata_json.get("voice_name") == voice.file_name}
             prepared_tracks = []
-            for (language, rover), path in grouped[voice.file_name].items():
+            for key, path in sorted_items:
+                language, rover = key[0], key[1]
+                variant_name = key[2] if len(key) > 2 else None
                 source_path = (voice_package_path(root, path, source_context) if source
                                else path.relative_to(root).as_posix())
                 if roster is not None and not any(track["path"] == source_path
@@ -276,74 +359,111 @@ async def import_voice_sample(root: Path, decoder: Path, asset_version: str, *,
                     original = await registration.prepare_file(path, mime_type="audio/x-wem")
                     playable = await registration.prepare_file(wav, mime_type="audio/wav")
                     prepared = original, playable, duration
-                prepared_tracks.append((language, rover, path, source_path, provenance, reusable, prepared))
+                prepared_tracks.append((language, rover, variant_name, path, source_path, provenance, reusable, prepared))
 
-            # Only database work remains; keep every track and the roster atomic per owner.
-            await session.execute(text("SELECT pg_advisory_xact_lock(:id)"), {"id": voice.node_id})
-            for language, rover, path, source_path, provenance, reusable, prepared in prepared_tracks:
-                if reusable is not None:
-                    ref = await session.scalar(select(FileReference).where(
-                        FileReference.owner_node_id == voice.node_id,
-                        FileReference.reference_type == "voice_audio",
-                        FileReference.source_name == path.name,
-                        FileReference.metadata_json["asset_version"].astext == asset_version))
-                    if ref is None:
-                        ref = await registration.register_reference(
-                            session, file_id=reusable.file_id, reference_type="voice_audio",
-                            owner_node_id=voice.node_id, source_name=path.name, source_path=source_path)
-                    ref.file_id = reusable.file_id
-                    ref.source_path = source_path
-                    ref.metadata_json = {**reusable.metadata_json, "voice_tracks": inventory,
-                                         "voice_name": voice.file_name, "language": language, "rover": rover,
-                                         "game_source": provenance,
-                                         "voice_inventory_authoritative": roster is not None,
-                                         "voice_inventory_complete": {key[0] for key in grouped[voice.file_name]} == set(LANGUAGES)}
-                    owned[source_path] = ref
-                    count += 1
-                    continue
-                if path not in converted:
-                    original_prepared, playable_prepared, duration = prepared
-                    original = await registration.register_file(
-                        session, path, "audio_wem", mime_type="audio/x-wem", prepared=original_prepared)
-                    playable = await registration.register_file(
-                        session, path.with_suffix(".wav"), "audio_wav", mime_type="audio/wav",
-                        prepared=playable_prepared)
-                    variant = await registration.register_variant(session, original.id, playable.id, "voice_pcm_wav")
-                    if provenance:
-                        variant.metadata_json = {"game_source": provenance}
-                    converted[path] = original.id, playable.id, duration
-                original_id, playable_id, duration = converted[path]
-                ref = await session.scalar(select(FileReference).where(
-                    FileReference.owner_node_id == voice.node_id,
-                    FileReference.reference_type == "voice_audio",
-                    FileReference.source_name == path.name,
-                    FileReference.metadata_json["asset_version"].astext == asset_version))
-                if ref is None:
-                    ref = await registration.register_reference(session, file_id=playable_id,
-                                                                reference_type="voice_audio", owner_node_id=voice.node_id,
-                                                                source_name=path.name, source_path=path.relative_to(root).as_posix())
-                ref.file_id = playable_id
-                ref.source_path = source_path
-                ref.metadata_json = {"language": language, "rover": rover, "asset_version": asset_version,
-                                     "duration_seconds": duration, "original_file_id": original_id,
-                                     "voice_name": voice.file_name, "voice_tracks": inventory,
-                                     "voice_inventory_authoritative": roster is not None,
-                                     "voice_inventory_complete": {key[0] for key in grouped[voice.file_name]} == set(LANGUAGES),
-                                     "publication_file_ids": [original_id, playable_id],
-                                     **({"game_source": provenance} if provenance else {})}
-                owned[source_path] = ref
-                count += 1
-            if roster is not None:
-                complete = ({track["language"] for track in inventory} == set(LANGUAGES)
-                            and all(track["path"] in owned for track in inventory))
-                for ref in owned.values():
-                    ref.metadata_json = {**ref.metadata_json, "voice_tracks": inventory,
-                                         "voice_inventory_complete": complete,
-                                         "voice_inventory_authoritative": True}
-                authoritative_missing.update(track["path"] for track in inventory if track["path"] not in owned)
-                authoritative_missing.update(f"{language}_{voice.file_name}" for language in LANGUAGES
-                                             if not any(track["language"] == language for track in inventory))
-            await session.commit()
+            # Sort tracks deterministically by content digest so concurrent workers
+            # lock shared file_object/file_variant rows in the exact same order.
+            def _track_lock_key(item):
+                _lang, _rover, _var, _path, _src, _prov, _reuse, _prep = item
+                if _prep is not None:
+                    return (0, getattr(_prep[0], "sha256", "") or "", getattr(_prep[1], "sha256", "") or "", _src)
+                return (1, "", "", _src)
+
+            prepared_tracks.sort(key=_track_lock_key)
+
+            # Only database work remains; keep every track and the roster atomic per owner,
+            # retrying transient PostgreSQL deadlocks on shared file_variant rows.
+            for attempt in range(DEADLOCK_MAX_RETRIES + 1):
+                owned = dict(base_owned)
+                voice_count = 0
+                pending_converted = {}
+                try:
+                    await session.execute(text("SELECT pg_advisory_xact_lock(:id)"), {"id": voice.node_id})
+                    for language, rover, variant_name, path, source_path, provenance, reusable, prepared in prepared_tracks:
+                        if reusable is not None:
+                            ref = await session.scalar(select(FileReference).where(
+                                FileReference.owner_node_id == voice.node_id,
+                                FileReference.reference_type == "voice_audio",
+                                FileReference.source_name == path.name,
+                                FileReference.metadata_json["asset_version"].astext == asset_version))
+                            if ref is None:
+                                ref = await registration.register_reference(
+                                    session, file_id=reusable.file_id, reference_type="voice_audio",
+                                    owner_node_id=voice.node_id, source_name=path.name, source_path=source_path)
+                            ref.file_id = reusable.file_id
+                            ref.source_path = source_path
+                            ref.metadata_json = {**reusable.metadata_json, "voice_tracks": inventory,
+                                                 "voice_name": voice.file_name, "language": language, "rover": rover,
+                                                 **({"variant": variant_name} if variant_name is not None else {}),
+                                                 "game_source": provenance,
+                                                 "voice_inventory_authoritative": roster is not None,
+                                                 "voice_inventory_complete": {key[0] for key in grouped[voice.file_name]} == set(LANGUAGES)}
+                            owned[source_path] = ref
+                            voice_count += 1
+                            continue
+                        if path not in converted and path not in pending_converted:
+                            original_prepared, playable_prepared, duration = prepared
+                            original = await registration.register_file(
+                                session, path, "audio_wem", mime_type="audio/x-wem", prepared=original_prepared)
+                            playable = await registration.register_file(
+                                session, path.with_suffix(".wav"), "audio_wav", mime_type="audio/wav",
+                                prepared=playable_prepared)
+                            variant = await registration.register_variant(session, original.id, playable.id, "voice_pcm_wav")
+                            if provenance and (
+                                not isinstance(getattr(variant, "metadata_json", None), dict)
+                                or not variant.metadata_json.get("game_source")
+                            ):
+                                variant.metadata_json = {"game_source": provenance}
+                            pending_converted[path] = original.id, playable.id, duration
+                        original_id, playable_id, duration = converted.get(path) or pending_converted[path]
+                        ref = await session.scalar(select(FileReference).where(
+                            FileReference.owner_node_id == voice.node_id,
+                            FileReference.reference_type == "voice_audio",
+                            FileReference.source_name == path.name,
+                            FileReference.metadata_json["asset_version"].astext == asset_version))
+                        if ref is None:
+                            ref = await registration.register_reference(session, file_id=playable_id,
+                                                                        reference_type="voice_audio", owner_node_id=voice.node_id,
+                                                                        source_name=path.name, source_path=path.relative_to(root).as_posix())
+                        ref.file_id = playable_id
+                        ref.source_path = source_path
+                        ref.metadata_json = {"language": language, "rover": rover, "asset_version": asset_version,
+                                             "duration_seconds": duration, "original_file_id": original_id,
+                                             "voice_name": voice.file_name, "voice_tracks": inventory,
+                                             **({"variant": variant_name} if variant_name is not None else {}),
+                                             "voice_inventory_authoritative": roster is not None,
+                                             "voice_inventory_complete": {key[0] for key in grouped[voice.file_name]} == set(LANGUAGES),
+                                             "publication_file_ids": [original_id, playable_id],
+                                             **({"game_source": provenance} if provenance else {})}
+                        owned[source_path] = ref
+                        voice_count += 1
+                    if roster is not None:
+                        complete = ({track["language"] for track in inventory} == set(LANGUAGES)
+                                    and all(track["path"] in owned for track in inventory))
+                        for ref in owned.values():
+                            ref.metadata_json = {**ref.metadata_json, "voice_tracks": inventory,
+                                                 "voice_inventory_complete": complete,
+                                                 "voice_inventory_authoritative": True}
+                    await session.commit()
+                    converted.update(pending_converted)
+                    count += voice_count
+                    if roster is not None:
+                        authoritative_missing.update(track["path"] for track in inventory if track["path"] not in owned)
+                        authoritative_missing.update(f"{language}_{voice.file_name}" for language in LANGUAGES
+                                                     if not any(track["language"] == language for track in inventory))
+                    break
+                except DBAPIError as error:
+                    if not _is_deadlock_error(error) or attempt >= DEADLOCK_MAX_RETRIES:
+                        raise
+                    await session.rollback()
+                    delay = 0.15 * (2**attempt) + random.uniform(0, 0.1)
+                    logger.warning(
+                        "voice_import.deadlock_retry voice=%s attempt=%s delay=%.2fs",
+                        voice.file_name,
+                        attempt + 1,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
     if roster is not None:
         authoritative_missing.update(track["path"] for name, tracks in roster.items()
                                      if name not in {voice.file_name for voice in voices} for track in tracks)

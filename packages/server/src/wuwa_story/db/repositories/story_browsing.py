@@ -73,10 +73,31 @@ async def named_localization_keys(session, keys):
                                      .where(LocalizationKey.key.in_(keys)))).all()) if keys else {}
 
 
-async def illustration_actions(session, state_ids):
-    return list(await session.execute(select(QuestAction.node_id, QuestAction.quest_state_node_id,
-        QuestAction.params['TalkItems']).where(QuestAction.quest_state_node_id.in_(state_ids),
-        QuestAction.action_name == 'ShowTalk').order_by(QuestAction.quest_state_node_id, QuestAction.action_index)))
+def _revision_exists(node_id_column, release_id):
+    return (
+        select(NodeRevision.id)
+        .where(
+            NodeRevision.node_id == node_id_column,
+            NodeRevision.release_id == release_id,
+        )
+        .exists()
+    )
+
+
+async def illustration_actions(session, state_ids, release_id=None):
+    statement = select(
+        QuestAction.node_id, QuestAction.quest_state_node_id, QuestAction.params["TalkItems"]
+    ).where(
+        QuestAction.quest_state_node_id.in_(state_ids),
+        QuestAction.action_name == "ShowTalk",
+    )
+    if release_id is not None:
+        statement = statement.where(_revision_exists(QuestAction.node_id, release_id))
+    return list(
+        await session.execute(
+            statement.order_by(QuestAction.quest_state_node_id, QuestAction.action_index)
+        )
+    )
 
 
 async def localization_values(session, identities, locale_id):
@@ -141,18 +162,19 @@ async def node_label_rows(session, batch, locale_id):
     return rows, aliases
 
 
-async def dialogue_choices(session, batch):
-    return list(
-        await session.execute(
-            select(Edge.from_node_id, PlayerChoice, Node.canonical_key, SourceRecord, SourceFile)
-            .join(RelationType, RelationType.id == Edge.relation_type_id)
-            .join(PlayerChoice, PlayerChoice.node_id == Edge.to_node_id)
-            .join(Node, Node.id == PlayerChoice.node_id)
-            .outerjoin(SourceRecord, SourceRecord.id == PlayerChoice.source_record_id)
-            .outerjoin(SourceFile, SourceFile.id == SourceRecord.source_file_id)
-            .where(Edge.from_node_id.in_(batch), RelationType.key == "presents_choice")
-        )
+async def dialogue_choices(session, batch, release_id=None):
+    statement = (
+        select(Edge.from_node_id, PlayerChoice, Node.canonical_key, SourceRecord, SourceFile)
+        .join(RelationType, RelationType.id == Edge.relation_type_id)
+        .join(PlayerChoice, PlayerChoice.node_id == Edge.to_node_id)
+        .join(Node, Node.id == PlayerChoice.node_id)
+        .outerjoin(SourceRecord, SourceRecord.id == PlayerChoice.source_record_id)
+        .outerjoin(SourceFile, SourceFile.id == SourceRecord.source_file_id)
+        .where(Edge.from_node_id.in_(batch), RelationType.key == "presents_choice")
     )
+    if release_id is not None:
+        statement = statement.where(_revision_exists(PlayerChoice.node_id, release_id))
+    return list(await session.execute(statement))
 
 
 async def choice_targets(session, choice_ids):
@@ -320,13 +342,15 @@ async def quest_states(session, state_ids):
     return states
 
 
-async def quest_actions(session, state_ids):
-    return await session.execute(
+async def quest_actions(session, state_ids, release_id=None):
+    statement = (
         select(QuestAction, Node.canonical_key)
         .join(Node, Node.id == QuestAction.node_id)
         .where(QuestAction.quest_state_node_id.in_(state_ids))
-        .order_by(QuestAction.action_index, QuestAction.node_id)
     )
+    if release_id is not None:
+        statement = statement.where(_revision_exists(QuestAction.node_id, release_id))
+    return await session.execute(statement.order_by(QuestAction.action_index, QuestAction.node_id))
 
 
 async def quest_scenes(session, quest_node_id):
@@ -415,6 +439,14 @@ async def search_dialogue_rows(
             )
         )
     )
+    if release_id is not None:
+        statement = statement.where(
+            _revision_exists(DialogueLine.node_id, release_id),
+            or_(
+                DialogueLine.action_node_id.is_(None),
+                _revision_exists(QuestAction.node_id, release_id),
+            ),
+        )
     if character_node_id is not None:
         speaker_ids = select(SpeakerEntityLink.speaker_node_id).where(
             SpeakerEntityLink.entity_node_id == character_node_id
@@ -458,6 +490,11 @@ async def quest_transcript_rows(
         .outerjoin(SourceFile, SourceFile.id == SourceRecord.source_file_id)
         .where(QuestAction.quest_state_node_id.in_(states))
     )
+    if release_id is not None:
+        statement = statement.where(
+            _revision_exists(DialogueLine.node_id, release_id),
+            _revision_exists(QuestAction.node_id, release_id),
+        )
     if character_node_id is not None:
         speaker_ids = select(SpeakerEntityLink.speaker_node_id).where(
             SpeakerEntityLink.entity_node_id == character_node_id
@@ -520,3 +557,14 @@ async def media_link_rows(session, from_ids, relations, release_id):
 
 async def voice_references(session, voice_ids):
     return await session.scalars(select(VoiceReference).where(VoiceReference.node_id.in_(voice_ids)))
+
+
+async def voice_references_by_file_names(session, file_names):
+    normalized = sorted({name.casefold() for name in file_names if name})
+    if not normalized:
+        return []
+    return list(
+        await session.scalars(
+            select(VoiceReference).where(func.lower(VoiceReference.file_name).in_(normalized))
+        )
+    )

@@ -107,12 +107,23 @@ async def _links(
 
 
 async def dialogue_media(
-    session: AsyncSession, line_ids: list[int], release_id: int | None
+    session: AsyncSession,
+    line_ids: list[int],
+    release_id: int | None,
+    *,
+    action_ids_by_line: dict[int, int] | None = None,
+    state_ids_by_line: dict[int, int] | None = None,
 ) -> dict[int, dict[str, Any]]:
     """Compatibility entry point for existing media callers."""
     return await story_media.dialogue_media(
-        session, line_ids, release_id, link_loader=_links,
-        settings_factory=get_settings, storage_factory=S3Storage,
+        session,
+        line_ids,
+        release_id,
+        action_ids_by_line=action_ids_by_line,
+        state_ids_by_line=state_ids_by_line,
+        link_loader=_links,
+        settings_factory=get_settings,
+        storage_factory=S3Storage,
     )
 
 

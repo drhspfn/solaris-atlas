@@ -43,6 +43,7 @@ from wuwa_story_worker.archive_index import (
     ensure_archive_index,
     index_voice_paths,
     indexed_audio_paths,
+    indexed_audio_pattern_paths,
     indexed_package_paths,
     voice_filter_batches,
 )
@@ -85,9 +86,11 @@ from wuwa_story_worker.tooling import asset_workspace, tool_path
 from wuwa_story_worker.voice_import import (
     exported_voices,
     import_voice_sample,
+    is_voice_template,
     missing_global_voice_identities,
     missing_global_voice_paths,
     voice_path_roster,
+    voice_template_like_pattern,
 )
 
 logger = logging.getLogger(__name__)
@@ -1126,9 +1129,19 @@ async def voice_packages(parent):
 
 
 def selected_voice_paths(index, names):
-    expected = sorted({f"{language}_{name}{suffix}.wem".casefold() for name in names
-                       for language in ("en", "ja", "ko", "zh") for suffix in ("", "_F", "_M")})
-    return indexed_audio_paths(index, expected)
+    exact_names = [name for name in names if not is_voice_template(name)]
+    template_names = [name for name in names if is_voice_template(name)]
+    paths = set()
+    if exact_names:
+        expected = sorted({f"{language}_{name}{suffix}.wem".casefold() for name in exact_names
+                           for language in ("en", "ja", "ko", "zh") for suffix in ("", "_F", "_M")})
+        paths.update(indexed_audio_paths(index, expected))
+    if template_names:
+        patterns = sorted({voice_template_like_pattern(language, name, suffix)
+                           for name in template_names
+                           for language in ("en", "ja", "ko", "zh") for suffix in ("", "_F", "_M")})
+        paths.update(indexed_audio_pattern_paths(index, patterns))
+    return sorted(paths)
 
 
 async def requested_voice_paths(parent, names):
@@ -1229,20 +1242,36 @@ async def voices(payload, parent):
     context = await source_context(parent, voice=True)
     scoped = parent.get("workspace_id") is not None
     names = set(payload["targets"])
-    reused, missing_paths, absent_languages = set(), set(), []
+    reused, missing_paths, absent_languages, unshipped_voices = set(), set(), [], []
     roster = {}
     if scoped:
         context["voice_paths"] = await requested_voice_paths(parent, names)
         roster = voice_path_roster(names, context["voice_paths"])
         missing_paths = await missing_global_voice_paths(names, context["voice_paths"], source_context=context)
         reused = set(context["voice_paths"]) - missing_paths
-        absent_languages = [f"{language}_{name}" for name, tracks in roster.items()
-                            for language in ("en", "ja", "ko", "zh")
-                            if not any(track["language"] == language for track in tracks)]
+        unshipped_names = {name for name, tracks in roster.items() if not tracks}
+        unshipped_voices = sorted(
+            f"{language}_{name}"
+            for name in unshipped_names
+            for language in ("en", "ja", "ko", "zh")
+        )
+        absent_languages = sorted(
+            f"{language}_{name}"
+            for name, tracks in roster.items()
+            if tracks
+            for language in ("en", "ja", "ko", "zh")
+            if not any(track["language"] == language for track in tracks)
+        )
         if not missing_paths:
             await cleanup_published_output(parent, payload.get("run_id"), "voices")
-            return {**parent, "stage": "voices_reused", "reused": len(reused), "tracks": 0,
-                    "missing_voices": absent_languages}, "partial" if absent_languages else "completed"
+            return {
+                **parent,
+                "stage": "voices_reused",
+                "reused": len(reused),
+                "tracks": 0,
+                "missing_voices": absent_languages,
+                **({"unshipped_voices": unshipped_voices} if unshipped_voices else {}),
+            }, "partial" if absent_languages else "completed"
     else:
         names = await missing_global_voice_identities(names, source_context=context)
     if not names:
@@ -1321,9 +1350,16 @@ async def voices(payload, parent):
                                       source_context=context)
     if scoped:
         # Preserve authored files that extraction failed to produce, even when
-        # another name in the batch was repaired successfully.
-        result["missing_voices"] = sorted(set(result.get("missing_voices", []))
-            | (missing_paths - exported) | set(absent_languages))
+        # another name in the batch was repaired successfully. Verified unshipped
+        # PlotAudio rows (0/4 languages in all mounted official archives) are
+        # recorded separately so they do not fail the batch as broken partial.
+        result["missing_voices"] = sorted(
+            (set(result.get("missing_voices", [])) - set(unshipped_voices))
+            | (missing_paths - exported)
+            | set(absent_languages)
+        )
+        if unshipped_voices:
+            result["unshipped_voices"] = unshipped_voices
         result["reused"] = len(reused)
         await cleanup_published_output(parent, payload["run_id"], "voices")
     return {**result, "media_report": report}, "partial" if result.get("missing_voices") else "completed"

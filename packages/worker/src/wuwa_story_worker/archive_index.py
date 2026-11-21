@@ -84,6 +84,24 @@ def indexed_audio_paths(index: Path, expected) -> list[str]:
     return sorted(paths)
 
 
+def indexed_audio_pattern_paths(index: Path, like_patterns) -> list[str]:
+    """Resolve SQLite LIKE basename patterns (with ESCAPE '\\') for template voice keys."""
+    patterns = sorted({pattern.casefold() for pattern in like_patterns if pattern})
+    if not patterns:
+        return []
+    paths = set()
+    with closing(sqlite3.connect(index.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+        for pattern in patterns:
+            paths.update(
+                row[0]
+                for row in db.execute(
+                    "SELECT path FROM files WHERE name LIKE ? ESCAPE '\\'",
+                    (pattern,),
+                )
+            )
+    return sorted(paths)
+
+
 def indexed_package_paths(index: Path, expected) -> dict[str, str]:
     """Resolve exact authored stems only when both .uasset and .uexp exist.
 

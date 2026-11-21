@@ -838,6 +838,75 @@ async def _insert_typed_entities(
                     "parent_location_node_id",
                     "metadata",
                 ),
+                Quest: (
+                    "name_key_id",
+                    "description_key_id",
+                    "quest_type",
+                    "region_id",
+                    "metadata",
+                ),
+                QuestNode: (
+                    "game_node_id",
+                    "game_quest_id",
+                    "node_type",
+                    "source_record_id",
+                    "metadata",
+                ),
+                QuestState: (
+                    "state_key",
+                    "flow_list_name",
+                    "flow_id",
+                    "state_id",
+                    "source_record_id",
+                    "metadata",
+                ),
+                QuestAction: (
+                    "quest_state_node_id",
+                    "action_id",
+                    "action_guid",
+                    "action_name",
+                    "action_index",
+                    "params",
+                    "source_record_id",
+                    "metadata",
+                ),
+                DialogueLine: (
+                    "action_node_id",
+                    "speaker_node_id",
+                    "localization_key_id",
+                    "game_talk_item_id",
+                    "game_text_id",
+                    "source_type",
+                    "source_index",
+                    "source_record_id",
+                    "metadata",
+                ),
+                PlayerChoice: (
+                    "localization_key_id",
+                    "source_record_id",
+                    "metadata",
+                ),
+                Narration: (
+                    "localization_key_id",
+                    "narration_type",
+                    "source_record_id",
+                    "metadata",
+                ),
+                VoiceReference: (
+                    "plot_audio_id",
+                    "file_name",
+                ),
+                AudioEvent: (
+                    "event_path",
+                    "source_record_id",
+                    "metadata",
+                ),
+                PhoneMessage: (
+                    "speaker_node_id",
+                    "localization_key_id",
+                    "source_record_id",
+                    "metadata",
+                ),
             }
             update_columns = updates_by_model.get(model)
             if update_columns:
@@ -851,7 +920,7 @@ async def _insert_typed_entities(
                     )))
                     if protected - projected:
                         raise ValueError(
-                            f"Cannot import historical {kind}: a newer revision has no typed projection"
+                            f"Cannot import historical {model.__name__}: a newer revision has no typed projection"
                         )
                 updates = {column: getattr(statement.excluded, column) for column in update_columns}
                 if model is Character:

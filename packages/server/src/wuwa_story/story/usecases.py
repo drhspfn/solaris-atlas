@@ -68,7 +68,21 @@ async def search_dialogue(
         offset,
     )
     await prefetch_dialogue(session, rows, locale, release_id, include_raw=True)
-    media_by_line = await dialogue_media(session, [row[0].node_id for row in rows], release_id)
+    media_by_line = await dialogue_media(
+        session,
+        [row[0].node_id for row in rows],
+        release_id,
+        action_ids_by_line={
+            row[0].node_id: action_id
+            for row in rows
+            if (action_id := getattr(row[1], "node_id", None)) is not None
+        },
+        state_ids_by_line={
+            row[0].node_id: state_id
+            for row in rows
+            if (state_id := getattr(row[2], "node_id", None)) is not None
+        },
+    )
     return {
         "query": q,
         "locale": locale,
@@ -129,9 +143,23 @@ async def quest_transcript(
             status_code=404, detail="Cited passage not found in this quest")
     scene_rows = await repository.quest_scenes(session, quest.node_id)
     await prefetch_dialogue(session, rows, locale, release_id, include_raw=include_raw)
-    media_by_line = await dialogue_media(session, [row[0].node_id for row in rows], release_id)
+    media_by_line = await dialogue_media(
+        session,
+        [row[0].node_id for row in rows],
+        release_id,
+        action_ids_by_line={
+            row[0].node_id: action_id
+            for row in rows
+            if (action_id := getattr(row[1], "node_id", None)) is not None
+        },
+        state_ids_by_line={
+            row[0].node_id: state_id
+            for row in rows
+            if (state_id := getattr(row[2], "node_id", None)) is not None
+        },
+    )
     lines = await dialogue_lines(session, rows, locale, release_id, media_by_line, include_raw=include_raw)
-    illustrations = await illustration_payloads(session, rows)
+    illustrations = await illustration_payloads(session, rows, release_id=release_id)
     for row, line in zip(rows, lines, strict=True):
         if row[0].node_id in illustrations:
             line['illustration'] = illustrations[row[0].node_id]
