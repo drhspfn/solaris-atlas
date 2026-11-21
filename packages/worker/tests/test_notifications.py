@@ -64,3 +64,56 @@ async def test_failed_delivery_is_isolated_and_does_not_log_token(monkeypatch, c
     await notifications.notify_job_result(81, "entity_media")
     assert "Telegram alert failed" in caplog.text
     assert token not in caplog.text
+
+
+def test_diagnostic_only_partial_run_suppresses_empty_telegram_alert():
+    run = SimpleNamespace(
+        id=99,
+        status="partial",
+        error=None,
+        metadata_json={"payload": {"request": {"game_version": "3.8.0"}}},
+        raw_output={
+            "media_report": {
+                "found": 2,
+                "missing": 0,
+                "entries": [
+                    {"expected": "story_sequence:1", "language": None, "status": "found"},
+                    {"expected": "story_sequence:2", "language": None, "status": "already_published"},
+                ],
+            },
+            "incomplete_spine_controls": [
+                {
+                    "path": "story_sequence:1",
+                    "missing": [
+                        {"status": "unsupported_control", "expected": "/Game/Aki/Sequence/Foo.1"},
+                        {"status": "not_in_client", "expected": "/Game/NotInFinalPackage/EditorOnly"},
+                    ],
+                }
+            ],
+        },
+    )
+    assert notifications.alert_text(run, "entity_media") is None
+
+
+def test_partial_alert_includes_diagnostic_reason_and_excludes_already_published():
+    run = SimpleNamespace(
+        id=100,
+        status="partial",
+        error=None,
+        metadata_json={"payload": {"request": {"game_version": "3.8.0"}}},
+        raw_output={
+            "media_report": {
+                "found": 2,
+                "missing": 0,
+                "entries": [
+                    {"expected": "spine_background:750005", "language": None, "status": "found"},
+                    {"expected": "spine_background:750006", "language": None, "status": "already_published"},
+                ],
+            },
+            "riglyph_failures": [{"path": "spine_background:750005", "error": "conversion failed"}],
+        },
+    )
+    text = notifications.alert_text(run, "entity_media")
+    assert text is not None
+    assert "Riglyph failures: 1 (spine_background:750005)" in text
+    assert "Missing [" not in text

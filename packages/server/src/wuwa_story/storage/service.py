@@ -124,9 +124,10 @@ class FileRegistrationService:
             raise ValueError(
                 "A physical storage key is already assigned to a different file identity"
             )
-        location.available = True
-        location.verified_at = datetime.now(UTC)
-        location.etag = stored.etag
+        if not location.available or location.verified_at is None or location.etag != stored.etag:
+            location.available = True
+            location.verified_at = datetime.now(UTC)
+            location.etag = stored.etag
         return file_obj
 
     async def register_reference(

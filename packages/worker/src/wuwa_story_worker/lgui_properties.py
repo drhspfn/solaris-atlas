@@ -70,7 +70,7 @@ def property_prefix(data, names, assets, *, depth=0):
             if size != count * 4:
                 raise ValueError('Unsupported LGUI vector precision')
             value = list(struct.unpack('<' + 'f' * count, raw))
-        elif kind == 'StructProperty' and extra == 'Color' and size == 4:
+        elif kind == 'StructProperty' and extra.casefold() == 'color' and size == 4:
             b, g, r, a = raw
             value = [r, g, b, a]
         elif kind in {'FloatProperty', 'IntProperty'} and size == 4:

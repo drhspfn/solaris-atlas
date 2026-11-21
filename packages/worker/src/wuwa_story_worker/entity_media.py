@@ -16,6 +16,7 @@ from pathlib import Path
 
 from PIL import Image
 from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.ops import ProcessingRun
 from wuwa_story.db.models.storage import FileReference
@@ -48,6 +49,23 @@ from wuwa_story_worker.publication_versions import preserve_story_reference
 from wuwa_story_worker.tooling import asset_workspace, tool_path
 
 logger = logging.getLogger(__name__)
+PUBLISH_RETRY_ATTEMPTS = 3
+
+
+def actionable_spine_control_missing(items: list) -> list:
+    """Filter out expected editor-only paths and non-fatal control diagnostics."""
+    result = []
+    for item in items:
+        if not isinstance(item, dict):
+            result.append(item)
+            continue
+        if item.get("status") in {"unsupported_control", "unresolved_audio"}:
+            continue
+        expected = item.get("expected")
+        if isinstance(expected, str) and expected.startswith("/Game/NotInFinalPackage/"):
+            continue
+        result.append(item)
+    return result
 
 
 def event_media(exports: list[dict], *, unresolved: dict[str, str] | None = None) -> dict[str, int]:
@@ -589,21 +607,24 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                     prepared_originals = {original_path: await service.prepare_file(original_path)
                         for original_path in originals
                         if not (target['kind'] == 'spine' and original_path.suffix.lower() == '.mp4')}
-                    stage = 'publish'
-                    await session.execute(text("SELECT pg_advisory_xact_lock(:id)"),
-                                          {"id": target["owner"]})
+                    ordered_originals = sorted(
+                        prepared_originals,
+                        key=lambda original_path: (
+                            getattr(prepared_originals[original_path], 'digest', b''),
+                            original_path.as_posix(),
+                        ),
+                    )
                     spine_source = {}
+                    control_missing = None
                     if target['kind'] == 'spine':
                         with zipfile.ZipFile(path) as archive:
                             controls = json.loads(archive.read('manifest.json')).get(
                                 'control_sources', {})
-                        if controls.get('missing'):
-                            incomplete_spine_controls.append(
-                                {'path': target['path'], 'missing': controls['missing']})
+                        control_missing = controls.get('missing') or None
                         spine_source = {'spine_recipe': target['spine_recipe'],
                                         'sequence_media_schema': target.get('sequence_media_schema'),
                                         'presentation_sha256': target.get('presentation_sha256'),
-                                        'control_sources_complete': not controls.get('missing')}
+                                        'control_sources_complete': not control_missing}
                         if 'sequence_metadata_revision' in target:
                             spine_source['sequence_metadata_revision'] = target['sequence_metadata_revision']
                         if 'soundtrack_context_sha256' in target:
@@ -616,129 +637,172 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                     reference_type = target.get('reference_type') or (
                         "entity_image" if target["kind"] == "image" else "character_voice"
                     )
-                    # Refresh under the owner lock: this session may have cached
-                    # the reference before another publisher committed it.
-                    reference = await session.scalar(
-                        select(FileReference).where(
-                            FileReference.owner_node_id == target["owner"],
-                            FileReference.release_id == target["release_id"],
-                            FileReference.reference_type == reference_type,
-                            FileReference.source_path == target["path"],
-                            FileReference.source_name == target.get(
-                                'source_name', target["language"]),
-                            FileReference.metadata_json["asset_version"].astext
-                            == request.asset_version,
-                        ).execution_options(populate_existing=True)
-                    )
-                    if reference is not None and preserve_story_reference(
-                            reference_type, reference.metadata_json, provenance):
+                    preserved_newer = False
+                    target_riglyph_failure = None
+                    target_unsupported_spine = None
+                    for publish_attempt in range(PUBLISH_RETRY_ATTEMPTS):
+                        try:
+                            stage = 'publish'
+                            preserved_newer = False
+                            target_riglyph_failure = None
+                            target_unsupported_spine = None
+                            await session.execute(text("SELECT pg_advisory_xact_lock(:id)"),
+                                                  {"id": target["owner"]})
+                            # Refresh under the owner lock: this session may have cached
+                            # the reference before another publisher committed it.
+                            reference = await session.scalar(
+                                select(FileReference).where(
+                                    FileReference.owner_node_id == target["owner"],
+                                    FileReference.release_id == target["release_id"],
+                                    FileReference.reference_type == reference_type,
+                                    FileReference.source_path == target["path"],
+                                    FileReference.source_name == target.get(
+                                        'source_name', target["language"]),
+                                    FileReference.metadata_json["asset_version"].astext
+                                    == request.asset_version,
+                                ).execution_options(populate_existing=True)
+                            )
+                            if reference is not None and preserve_story_reference(
+                                    reference_type, reference.metadata_json, provenance):
+                                preserved_newer = True
+                                logger.info('entity_media.preserved_newer_reference run=%s owner=%s reference=%s',
+                                            payload['run_id'], target['owner'], reference.id)
+                                await session.commit()
+                                break
+                            published = await service.register_file(session, path, kind, mime_type=mime, prepared=prepared)
+                            rendered_metadata = {}
+                            if rendered is not None:
+                                from wuwa_story_worker.riglyph_render import publish_animation
+                                rendered_metadata = await publish_animation(
+                                    session, path, published, service, payload['run_id'], artifacts=rendered)
+                            for original_path in ordered_originals:
+                                original = await service.register_file(
+                                    session,
+                                    original_path,
+                                    "audio_wem" if original_path.suffix == ".wem" else "unknown",
+                                    prepared=prepared_originals[original_path],
+                                )
+                                variant = await service.register_variant(
+                                    session, original.id, published.id, "entity_media_decode", payload['run_id'],
+                                )
+                                metadata = variant.metadata_json or {}
+                                sources = list(metadata.get("game_sources", []))
+                                if provenance not in sources:
+                                    sources.append(provenance)
+                                variant.metadata_json = {**metadata, "game_source": provenance,
+                                                         "game_sources": sources}
+                            if reference is None:
+                                reference = await service.register_reference(
+                                    session,
+                                    file_id=published.id,
+                                    reference_type=reference_type,
+                                    owner_node_id=target["owner"],
+                                    release_id=target["release_id"],
+                                    source_path=target["path"],
+                                    source_name=target.get(
+                                        'source_name', target["language"]),
+                                )
+                            reference.file_id = published.id
+                            sequence_media = None
+                            if target['kind'] == 'spine':
+                                from wuwa_story_worker.sequence_fragments import (
+                                    publish_sequence_fragments,
+                                )
+                                stage = 'composition_publication'
+                                sequence_media = await publish_sequence_fragments(
+                                    session, path, target, published, service, payload['run_id'], provenance)
+                                composition = (sequence_media or {}).get('composition')
+                                if composition and composition.get('state') in {'failed', 'unsupported'}:
+                                    codes = [reason.get('code') for reason in composition.get('reasons', [])
+                                             if reason.get('code') in {'renderer_disabled', 'conversion_failed',
+                                                 'plan_failed', 'plan_unsupported', 'render_failed', 'render_unsupported'}]
+                                    logger.warning('composition.unavailable run=%s owner=%s resource=%s state=%s reasons=%s',
+                                                   payload['run_id'], target['owner'], hashlib.sha256(target['path'].encode()).hexdigest()[:16],
+                                                   composition['state'], codes)
+                                from wuwa_story.ingestion.media_provenance import (
+                                    composition_retryable,
+                                )
+                                if composition_retryable({'sequence_media': sequence_media}):
+                                    target_riglyph_failure = {'path': target['path'],
+                                                              'reasons': sequence_media['composition']['reasons']}
+                            playback = None
+                            if target['kind'] == 'spine' and not rendered_metadata and get_settings().story_spine_playback_enabled and (animation or {}).get('display') == 'animated':
+                                from wuwa_story_worker.story_spine import publish_open_playback
+                                playback = await publish_open_playback(session, path, target, published, service,
+                                                                       storage, payload['run_id'], request.asset_version)
+                                if not playback['variants'] or playback['unsupported']:
+                                    target_unsupported_spine = {
+                                        'path': target['path'], 'diagnostics': playback['unsupported']}
+                            reference.metadata_json = {
+                                **({'sequence_media': sequence_media} if sequence_media is not None else {}),
+                                **({'playback': playback} if playback else {}),
+                                **({'animation_import': animation} if animation else {}),
+                                **rendered_metadata,
+                                "asset_version": request.asset_version,
+                                "download_id": request.download_id,
+                                "language": target["language"],
+                                "game_source": provenance,
+                            }
+                            if (reference_type == 'story_spine'
+                                    or (sequence_media is not None and reference_type == 'story_presentation')):
+                                from wuwa_story_worker.sequence_fragments import (
+                                    invalidate_sequence_quests,
+                                )
+                                await invalidate_sequence_quests(session, target)
+                            if reference_type == 'character_voice' and provenance.get('voice_variant'):
+                                from wuwa_story.read_models.refresh import mark_dirty
+                                await mark_dirty(session, 'character', [target['owner']])
+                                await mark_dirty(session, 'character', [target['owner']], request.game_version)
+                            # Keep files, variants and provenance atomic for this target;
+                            # a later target or deployment must not roll back earlier media.
+                            run.raw_output = {"media_report": report,
+                                              "published": published_count + 1}
+                            if target['kind'] == 'spine' and target['path'].startswith('story_sequence:'):
+                                from wuwa_story_worker.sequence_speaker_identity import (
+                                    repair_sequence_bundle_speakers,
+                                )
+                                # All file/reference metadata above is final. Commit it
+                                # with actor identities, so a failed identity write cannot
+                                # leave a published file that makes the retry skip repair.
+                                await repair_sequence_bundle_speakers(session, path, target)
+                            stage = 'commit_publication'
+                            await session.commit()
+                            break
+                        except DBAPIError as error:
+                            await session.rollback()
+                            if not transient_job_error(error) or publish_attempt + 1 >= PUBLISH_RETRY_ATTEMPTS:
+                                raise
+                            logger.warning(
+                                'entity_media.publish_retry run=%s owner=%s stage=%s attempt=%s/%s error_type=%s',
+                                payload['run_id'], target['owner'], stage, publish_attempt + 1,
+                                PUBLISH_RETRY_ATTEMPTS, type(error).__name__,
+                            )
+                            await asyncio.sleep(0.2 * (publish_attempt + 1))
+                            run = await session.get(ProcessingRun, payload["run_id"]) or run
+                    if control_missing:
+                        incomplete_spine_controls.append(
+                            {'path': target['path'], 'missing': control_missing})
+                    if target_riglyph_failure is not None:
+                        riglyph_failures.append(target_riglyph_failure)
+                    if target_unsupported_spine is not None:
+                        unsupported_spine.append(target_unsupported_spine)
+                    if preserved_newer:
                         skipped += 1
                         report['skipped'] = skipped
-                        logger.info('entity_media.preserved_newer_reference run=%s owner=%s reference=%s',
-                                    run.id, target['owner'], reference.id)
-                        await session.commit()
                         current_target = None
                         continue
-                    published = await service.register_file(session, path, kind, mime_type=mime, prepared=prepared)
-                    rendered_metadata = {}
-                    if rendered is not None:
-                        from wuwa_story_worker.riglyph_render import publish_animation
-                        rendered_metadata = await publish_animation(
-                            session, path, published, service, run.id, artifacts=rendered)
-                    for original_path in originals:
-                        if target['kind'] == 'spine' and original_path.suffix.lower() == '.mp4':
-                            # The fragment publisher registers these with their video
-                            # identity and links each file to this source bundle.
-                            continue
-                        original = await service.register_file(
-                            session,
-                            original_path,
-                            "audio_wem" if original_path.suffix == ".wem" else "unknown",
-                            prepared=prepared_originals[original_path],
-                        )
-                        variant = await service.register_variant(
-                            session, original.id, published.id, "entity_media_decode", run.id,
-                        )
-                        metadata = variant.metadata_json or {}
-                        sources = list(metadata.get("game_sources", []))
-                        if provenance not in sources:
-                            sources.append(provenance)
-                        variant.metadata_json = {**metadata, "game_source": provenance,
-                                                 "game_sources": sources}
-                    if reference is None:
-                        reference = await service.register_reference(
-                            session,
-                            file_id=published.id,
-                            reference_type=reference_type,
-                            owner_node_id=target["owner"],
-                            release_id=target["release_id"],
-                            source_path=target["path"],
-                            source_name=target.get(
-                                'source_name', target["language"]),
-                        )
-                    reference.file_id = published.id
-                    sequence_media = None
-                    if target['kind'] == 'spine':
-                        from wuwa_story_worker.sequence_fragments import publish_sequence_fragments
-                        stage = 'composition_publication'
-                        sequence_media = await publish_sequence_fragments(
-                            session, path, target, published, service, run.id, provenance)
-                        composition = (sequence_media or {}).get('composition')
-                        if composition and composition.get('state') in {'failed', 'unsupported'}:
-                            codes = [reason.get('code') for reason in composition.get('reasons', [])
-                                     if reason.get('code') in {'renderer_disabled', 'conversion_failed',
-                                         'plan_failed', 'plan_unsupported', 'render_failed', 'render_unsupported'}]
-                            logger.warning('composition.unavailable run=%s owner=%s resource=%s state=%s reasons=%s',
-                                           run.id, target['owner'], hashlib.sha256(target['path'].encode()).hexdigest()[:16],
-                                           composition['state'], codes)
-                        from wuwa_story.ingestion.media_provenance import composition_retryable
-                        if composition_retryable({'sequence_media': sequence_media}):
-                            riglyph_failures.append({'path': target['path'],
-                                                     'reasons': sequence_media['composition']['reasons']})
-                    playback = None
-                    if target['kind'] == 'spine' and not rendered_metadata and get_settings().story_spine_playback_enabled and (animation or {}).get('display') == 'animated':
-                        from wuwa_story_worker.story_spine import publish_open_playback
-                        playback = await publish_open_playback(session, path, target, published, service,
-                                                               storage, run.id, request.asset_version)
-                        if not playback['variants'] or playback['unsupported']:
-                            unsupported_spine.append(
-                                {'path': target['path'], 'diagnostics': playback['unsupported']})
-                    reference.metadata_json = {
-                        **({'sequence_media': sequence_media} if sequence_media is not None else {}),
-                        **({'playback': playback} if playback else {}),
-                        **({'animation_import': animation} if animation else {}),
-                        **rendered_metadata,
-                        "asset_version": request.asset_version,
-                        "download_id": request.download_id,
-                        "language": target["language"],
-                        "game_source": provenance,
-                    }
-                    if (reference_type == 'story_spine'
-                            or (sequence_media is not None and reference_type == 'story_presentation')):
-                        from wuwa_story_worker.sequence_fragments import invalidate_sequence_quests
-                        await invalidate_sequence_quests(session, target)
-                    if reference_type == 'character_voice' and provenance.get('voice_variant'):
-                        from wuwa_story.read_models.refresh import mark_dirty
-                        await mark_dirty(session, 'character', [target['owner']])
-                        await mark_dirty(session, 'character', [target['owner']], request.game_version)
-                    # Keep files, variants and provenance atomic for this target;
-                    # a later target or deployment must not roll back earlier media.
-                    run.raw_output = {"media_report": report,
-                                      "published": published_count + 1}
-                    if target['kind'] == 'spine' and target['path'].startswith('story_sequence:'):
-                        from wuwa_story_worker.sequence_speaker_identity import (
-                            repair_sequence_bundle_speakers,
-                        )
-                        # All file/reference metadata above is final. Commit it
-                        # with actor identities, so a failed identity write cannot
-                        # leave a published file that makes the retry skip repair.
-                        await repair_sequence_bundle_speakers(session, path, target)
-                    stage = 'commit_publication'
-                    await session.commit()
                     published_count += 1
                     current_target = None
                 stage = 'finalize'
-                run.status = "partial" if missing or unsupported_spine or incomplete_spine_controls or riglyph_failures else "completed"
+                actionable_spine_controls = [
+                    entry for entry in incomplete_spine_controls
+                    if actionable_spine_control_missing(entry.get('missing') or [])
+                ]
+                run.status = (
+                    "partial"
+                    if missing or unsupported_spine or actionable_spine_controls or riglyph_failures
+                    else "completed"
+                )
                 run.raw_output = {
                     "media_report": report,
                     "skipped": skipped,

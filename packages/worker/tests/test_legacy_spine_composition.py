@@ -170,3 +170,64 @@ def test_visual_control_errors_remain_blocking(tmp_path, monkeypatch):
             archive.writestr(name, json.dumps(manifest).encode() if name == 'manifest.json' else data)
     with pytest.raises(ValueError, match='sequence controls'):
         legacy.legacy_plan(path)
+
+
+@pytest.mark.parametrize('start_key', ['start', 'Start'])
+def test_legacy_plan_settles_start_sequence_fade_in_overlay(tmp_path, monkeypatch, start_key):
+    """Mirror UiItem_CX005 (spine_background:750007): container color=[0,0,0,255] + fade-in overlay faded by start seq."""
+    from wuwa_story_worker.lgui_composition import visible_layers as real_visible_layers
+
+    seq_path = '/Game/Aki/UI/UIResources/UiCG/LevelSequence/CG2_2/Ani_CG2_2katixiya_start_2'
+    seq_exports = [
+        {'Type': 'MovieScene', 'Properties': {
+            'TickResolution': {'Numerator': 30, 'Denominator': 1},
+            'PlaybackRange': {'Value': {'UpperBound': {'Value': {'Value': 32}}}},
+            'Possessables': [{'Guid': 'comp-guid', 'ParentGuid': 'actor-guid'}],
+            'ObjectBindings': [{'ObjectGuid': 'comp-guid', 'Tracks': [{'ObjectPath': f'{seq_path}.1'}]}],
+        }},
+        {'Type': 'MovieSceneFloatTrack', 'Properties': {
+            'PropertyBinding': {'PropertyName': 'Alpha'}, 'Sections': [{'ObjectPath': f'{seq_path}.2'}],
+        }},
+        {'Type': 'MovieSceneFloatSection', 'Properties': {'FloatCurve': {
+            'Times': [{'Value': 0}, {'Value': 30}], 'Values': [{'Value': 1.0}, {'Value': 0.0}],
+        }}},
+    ]
+    layout_data = {
+        'root': 100000,
+        'size': [2560, 1440],
+        'assets': [],
+        'sequences': {start_key: seq_path},
+        'bindings': {seq_path: {'actor-guid': 100002}},
+        'actors': {
+            100000: {'id': 100000, 'parent': 0, 'index': -1, 'active': True,
+                     'kind': "Class'UIItem'", 'props': {'color': [0, 0, 0, 255]}, 'components': []},
+            100570: {'id': 100570, 'parent': 100000, 'index': 0, 'active': True,
+                     'kind': "Class'UISpineRenderable'",
+                     'props': {'color': [255, 255, 255, 255],
+                               'CurrSkeletonData': {'ObjectPath': '/Game/Rig'}},
+                     'components': [{'SkeletonData': {'ObjectPath': '/Game/Rig'},
+                                     'Atlas': {'ObjectPath': '/Game/Atlas'}}]},
+            100002: {'id': 100002, 'parent': 100000, 'index': 1, 'active': True,
+                     'kind': "Class'UISprite'",
+                     'props': {'color': [0, 0, 0, 255], 'Alpha': 1.0,
+                               'sprite': {'ObjectPath': '/Game/Aki/UI/UIResources/Common/Atlas/SP_CommonDefault'}},
+                     'components': []},
+            100253: {'id': 100253, 'parent': 100000, 'index': 2, 'active': True,
+                     'kind': "Class'UISprite'",
+                     'props': {'color': [0, 0, 0, 255], 'bIsUIActive': False,
+                               'sprite': {'ObjectPath': '/Game/Aki/UI/UIResources/Common/Atlas/SP_CommonDefault'}},
+                     'components': []},
+        },
+    }
+    path = fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(legacy, 'prefab_layout', lambda _: layout_data)
+    monkeypatch.setattr(legacy, 'visible_layers', real_visible_layers)
+    monkeypatch.setattr(
+        legacy, '_exports',
+        lambda _a, _m, source: seq_exports if source == seq_path else [
+            {'Type': 'PrefabAsset', 'Properties': {'ReferenceFNames': []}}
+        ],
+    )
+    plan = legacy.legacy_plan(path)
+    assert plan['layer']['actor'] == 100570
+    assert plan['background'] is False
