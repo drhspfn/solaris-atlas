@@ -2,7 +2,7 @@
 
 from alembic import op
 
-revision = "0042_projection_performance_indexes"
+revision = "0042_projection_perf_idx"
 down_revision = "0041_app_settings"
 branch_labels = None
 depends_on = None
