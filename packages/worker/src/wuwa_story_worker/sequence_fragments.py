@@ -2,8 +2,11 @@
 
 import asyncio
 import copy
+import hashlib
 import math
+import os
 import re
+import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
@@ -14,6 +17,39 @@ from wuwa_story_worker.archive_index import (
 )
 from wuwa_story_worker.asset_export import export_assets
 from wuwa_story_worker.cutscene_sources import prepare_base_movies
+
+
+def extract_verified_movie(archive, manifest, entry, destination):
+    """Verify and extract a movie with bounded memory before publishing it."""
+    expected = manifest['files'][entry]
+    size = expected['size_bytes']
+    digest = expected['sha256']
+    if (type(size) is not int or size < 0 or size > 2 * 1024 * 1024 * 1024
+            or archive.getinfo(entry).file_size != size
+            or not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest)):
+        raise ValueError('Invalid sequence fragment size or digest')
+    destination.mkdir(parents=True, exist_ok=True)
+    output = destination / digest
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=destination, prefix='.fragment-', delete=False) as out:
+            temporary = Path(out.name)
+            hasher = hashlib.sha256()
+            written = 0
+            with archive.open(entry) as source:
+                while chunk := source.read(1024 * 1024):
+                    written += len(chunk)
+                    if written > size:
+                        raise ValueError('Sequence fragment exceeds its verified archive size')
+                    hasher.update(chunk)
+                    out.write(chunk)
+        if written != size or hasher.hexdigest() != digest:
+            raise ValueError('Sequence fragment does not match its archive manifest')
+        os.replace(temporary, output)
+        return output, expected
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 async def prepare_sequence_fragments(root, media, fmodel):
@@ -182,12 +218,9 @@ async def publish_sequence_fragments(session, bundle, target, published, service
                 raise ValueError(
                     'Expected an exact authored movie fragment archive entry')
             if entry not in files:
-                data, expected = verified(archive, manifest, entry)
+                output, expected = await asyncio.to_thread(
+                    extract_verified_movie, archive, manifest, entry, Path(bundle).parent / 'sequence-playback')
                 digest = bytes.fromhex(expected['sha256'])
-                output = Path(bundle).parent / \
-                    'sequence-playback' / expected['sha256']
-                output.parent.mkdir(parents=True, exist_ok=True)
-                output.write_bytes(data)
                 # Raw movies may already have been registered by the CG pipeline.
                 # Preserve their content identity and existing storage file type.
                 kind = await session.scalar(select(FileType.key).join(
@@ -212,7 +245,7 @@ async def publish_sequence_fragments(session, bundle, target, published, service
                                            'game_source': copy.deepcopy(provenance),
                                            'sections': [part['source'] for part in media['sections'] if part.get('file') == entry]}
                 files[entry] = {'file_id': file.id, 'object_key': content_object_key(file.sha256),
-                                'size_bytes': len(data), 'mime_type': 'video/mp4', 'sha256': file.sha256.hex()}
+                                'size_bytes': expected['size_bytes'], 'mime_type': 'video/mp4', 'sha256': file.sha256.hex()}
                 media['components'].append(files[entry])
             section.update(files[entry])
             section['status'] = 'published'

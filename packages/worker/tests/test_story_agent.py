@@ -10,12 +10,17 @@ from wuwa_story_worker.queues import QUEUES
 @pytest.mark.asyncio
 async def test_worker_validates_message_and_dispatches_persisted_run(monkeypatch):
     execute = AsyncMock()
+    live_settings = object()
     monkeypatch.setattr(story_agent, "execute_job", execute)
+    monkeypatch.setattr(story_agent, "load_effective_agent_settings", AsyncMock(return_value=live_settings))
+    session = AsyncMock()
+    monkeypatch.setattr(story_agent, "AsyncSession", lambda *args, **kwargs: session)
     for value in (None, "123", True, 0, -1):
         with pytest.raises(ValueError):
             await story_agent.process_story_analysis({"run_id": value})
     await story_agent.process_story_analysis({"run_id": 123})
     assert execute.await_args.args[0] == 123
+    assert execute.await_args.args[2] is live_settings
     assert execute.await_count == 1
 
 
