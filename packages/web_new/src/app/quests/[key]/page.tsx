@@ -4,9 +4,6 @@ import { serverApi } from '@/api/serverApi';
 import { decodeRouteKey, publicPath } from '@/lib/routeKey';
 import { canonicalRoute, type RouteQuery } from '@/lib/canonicalRoute';
 import { QuestPageClient } from '@/components/quest/QuestPageClient';
-import { APP_SETTINGS } from '@/config/settings';
-import type { QuestContinuity as QuestContinuityData } from '@/data/story';
-import type { QuestMediaManifest } from '@/components/story/QuestMediaReferences';
 
 type Props = {
   params: Promise<{ key: string }>;
@@ -59,19 +56,8 @@ export default async function QuestTranscriptPage({ params, searchParams }: Prop
   const key = decodeRouteKey((await params).key);
   const initialSelection = questSelection((await searchParams) ?? {});
   const selection = selectionQuery(initialSelection);
-  const transcriptSelection = new URLSearchParams(selection);
-  if (initialSelection.citedLine) transcriptSelection.set('focus_line', initialSelection.citedLine);
-
-  // Server pre-fetch initial quest data for instant SSR
-  const [profile, transcript, continuity, media] = await Promise.all([
-    serverApi<any>(`/quests/${encodeURIComponent(key)}/profile?${selection}&view=reader`),
-    serverApi<any>(
-      `/quests/${encodeURIComponent(key)}/transcript?${transcriptSelection}&limit=${APP_SETTINGS.limits.transcript}&include_raw=false`,
-      { cache: 'no-store' },
-    ),
-    serverApi<QuestContinuityData>(`/quests/${encodeURIComponent(key)}/continuity?${selection}`),
-    serverApi<QuestMediaManifest>(`/quests/${encodeURIComponent(key)}/media?${selection}`, { cache: 'no-store' }),
-  ]);
+  // Render the selected snapshot's profile without waiting for transcript media.
+  const profile = await serverApi<any>(`/quests/${encodeURIComponent(key)}/profile?${selection}&view=reader`);
 
   await canonicalRoute("quests", key, profile?.quest, searchParams);
 
@@ -81,9 +67,6 @@ export default async function QuestTranscriptPage({ params, searchParams }: Prop
       questKey={key}
       initialSelection={initialSelection}
       initialProfile={profile}
-      initialTranscript={transcript}
-      initialContinuity={continuity}
-      initialMedia={media}
     />
   );
 }
