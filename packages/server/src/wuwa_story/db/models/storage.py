@@ -87,7 +87,11 @@ class FileLocation(MetadataMixin, Base):
 
 class FileReference(MetadataMixin, Base):
     __tablename__ = "file_reference"
-    __table_args__ = ({"schema": "storage"},)
+    __table_args__ = (
+        Index("ix_file_reference_source_path_hash", "source_path", postgresql_using="hash"),
+        Index("ix_file_reference_type_owner", "reference_type", "owner_node_id"),
+        {"schema": "storage"},
+    )
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     release_id: Mapped[int | None] = mapped_column(
         ForeignKey("ops.game_release.id", ondelete="SET NULL"), index=True
