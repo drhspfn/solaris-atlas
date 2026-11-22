@@ -18,11 +18,27 @@ async def test_source_transcript_resolves_dialogue_and_choice_terms(monkeypatch)
     monkeypatch.setattr(transcripts, "_release_id", AsyncMock(return_value=38))
     loader = AsyncMock(return_value=terms)
     monkeypatch.setattr(transcripts, "_load_term_explanations", loader)
-    response = await transcripts.quest_transcript("7543301", locale="en", game_version="3.8.0", session=object())
+    response = await transcripts.quest_transcript("7543301", locale="en", game_version="3.8.0",
+                                                  include_media=False, session=object())
     assert response["terms"] == terms
+    assert transcripts.usecases.quest_transcript.await_args.kwargs["include_media"] is False
     loader.assert_awaited_once_with(
         loader.await_args.args[0], 38, "en", [text, '<te href="42">Choice</te>']
     )
+
+
+@pytest.mark.asyncio
+async def test_projection_returns_published_media_without_second_read(monkeypatch):
+    published = {"lines": [{"id": "line:1", "media": {"voice_references": ["voice"]}}]}
+    monkeypatch.setattr(transcripts.read_projections, "should_route_to_projection", lambda *a, **k: True)
+    read = AsyncMock(return_value=published)
+    monkeypatch.setattr(transcripts.read_projections, "transcript_page", read)
+    response = await transcripts.quest_transcript("7543301", game_version="3.3.0", include_media=False,
+                                                  session=object())
+    assert response is published
+    assert response["lines"][0]["media"]["voice_references"] == ["voice"]
+    assert not response.get("media_deferred")
+    read.assert_awaited_once()
 
 
 @pytest.mark.asyncio

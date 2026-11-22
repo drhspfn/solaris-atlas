@@ -164,8 +164,9 @@ async def test_dialogue_hydrates_shared_json_once_across_batches_and_repeated_ro
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("raw_option", [None, False, True])
+@pytest.mark.parametrize("include_media", [False, True])
 async def test_transcript_default_is_raw_and_compact_preserves_authored_choice_branch(
-    monkeypatch, raw_option
+    monkeypatch, raw_option, include_media
 ):
     params = {"TalkItems": [{"Id": 100}, {"Id": 101}], "TalkSequence": [[100, 101]]}
     action = Row(node_id=8, action_id=80, action_name="talk", action_index=0)
@@ -198,8 +199,10 @@ async def test_transcript_default_is_raw_and_compact_preserves_authored_choice_b
     monkeypatch.setattr(usecases, "_quest_page_state_ids", AsyncMock(return_value=[3]))
     monkeypatch.setattr(usecases, "authored_order", AsyncMock(return_value=None))
     monkeypatch.setattr(usecases, "_quest_info", AsyncMock(return_value={"game_quest_id": 70}))
-    monkeypatch.setattr(usecases, "dialogue_media", AsyncMock(return_value={}))
-    monkeypatch.setattr(usecases, "illustration_payloads", AsyncMock(return_value={}))
+    audio = AsyncMock(return_value={})
+    illustrations = AsyncMock(return_value={})
+    monkeypatch.setattr(usecases, "dialogue_media", audio)
+    monkeypatch.setattr(usecases, "illustration_payloads", illustrations)
     monkeypatch.setattr(repository, "quest_transcript_rows", AsyncMock(return_value=([row], 0)))
     monkeypatch.setattr(repository, "quest_scenes", AsyncMock(return_value=[]))
     monkeypatch.setattr(
@@ -221,7 +224,10 @@ async def test_transcript_default_is_raw_and_compact_preserves_authored_choice_b
     monkeypatch.setattr(repository, "load_action_params", actions)
     monkeypatch.setattr(repository, "load_raw_records", records)
     options = {} if raw_option is None else {"include_raw": raw_option}
+    options["include_media"] = include_media
     result = await usecases.quest_transcript(session, "quest:70", **options)
+    assert result["media_deferred"] is not include_media
+    assert audio.await_count == illustrations.await_count == int(include_media)
     payload = result["lines"][0]
     assert payload["player_choices"][0]["branch"] == {
         "line_ids": ["talk_item:flow:1:0:0", "talk_item:flow:1:0:1"],

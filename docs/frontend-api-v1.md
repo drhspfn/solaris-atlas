@@ -56,6 +56,8 @@ GET /nodes/{canonical_key}/related?direction=both&category=character&limit=50
 
 Omit the transcript `character` filter for the full authored conversation. Dialogue search finds text mentions and reports the actual speaker; a name mention does not establish speaker identity. `/related` hides raw source-reference rows by default and includes a grouped `source_evidence` summary; use `include_evidence=true` and `source_file=...` to inspect those records.
 
+For a fast first transcript read, pass `include_media=false`. Source-backed responses then set `media_deferred=true` and omit voice and illustration hydration; request the same selection with the default `include_media=true` to load it. Published projections may already contain media and do not require a second read. Version, locale, focus, filters, and pagination must match when combining the two responses. `include_media` defaults to `true` for existing clients.
+
 ## Current data boundaries
 
 The API returns upstream logical asset paths, not image URLs or media bytes. Search indexes the currently imported snapshot and reports its version; it does not yet select historical search indexes. Exact item acquisition path labels are available for Pecok Flower, but its enrichment entity records currently resolve only to map-level references; the API leaves named harvest locations unresolved instead of guessing.

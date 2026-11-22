@@ -59,6 +59,7 @@ async def quest_transcript(
     offset: int = Query(0, ge=0),
     focus_line: str | None = Query(default=None, max_length=512),
     include_raw: bool = True,
+    include_media: bool = True,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     if read_projections.should_route_to_projection(("quest", "character", "dialogue") if character else "quest", game_version, locale=locale):
@@ -77,6 +78,7 @@ async def quest_transcript(
             offset,
             focus_line,
             include_raw,
+            include_media=include_media,
             node_lookup=get_node,
         )
         texts = []
