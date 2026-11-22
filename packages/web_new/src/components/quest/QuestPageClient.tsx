@@ -122,6 +122,7 @@ export function QuestPageClient({
   const [continuityError, setContinuityError] = useState("");
   const [loading, setLoading] = useState(!initialProfile || !initialTranscript);
   const [error, setError] = useState("");
+  const [mediaError, setMediaError] = useState("");
   const [retry, setRetry] = useState(0);
   const [onlyChoices, setOnlyChoices] = useState(false);
   const [onlyLines, setOnlyLines] = useState(false);
@@ -230,37 +231,49 @@ export function QuestPageClient({
     const controller = new AbortController();
     setLoading(true);
     setError("");
+    setMediaError("");
     const selection = new URLSearchParams({ locale });
     if (gameVersion) selection.set("game_version", gameVersion);
     const transcriptSelection = new URLSearchParams(selection);
     if (citedLine) transcriptSelection.set("focus_line", citedLine);
 
+    const transcriptPath = `/quests/${encodeURIComponent(questKey)}/transcript?${transcriptSelection}&limit=${APP_SETTINGS.limits.transcript}&include_raw=false`;
+    const matchesInitial = locale === initialSelection.locale && gameVersion === initialSelection.gameVersion &&
+      (citedLine || "") === initialSelection.citedLine;
+    setProfile(matchesInitial && retry === 0 ? initialProfile || null : null);
+    setTranscript(null);
+    setContinuity(null);
+    setContinuityError("");
+    setMedia(null);
+    api<QuestContinuityData>(`/quests/${encodeURIComponent(questKey)}/continuity?${selection}`, {
+      signal: controller.signal,
+    }).then((result) => {
+      if (active) { setContinuity(result); setContinuityError(""); }
+    }).catch((reason: Error) => {
+      if (active) { setContinuity(null); setContinuityError(reason.message); }
+    });
+    api<QuestMediaManifest>(`/quests/${encodeURIComponent(questKey)}/media?${selection}`, {
+      signal: controller.signal,
+    }).then((result) => { if (active) setMedia(result); }).catch(() => { if (active) setMedia(null); });
+
     Promise.all([
+      matchesInitial && initialProfile && retry === 0 ? Promise.resolve(initialProfile) :
       api<any>(`/quests/${encodeURIComponent(questKey)}/profile?${selection}&view=reader`, {
         signal: controller.signal,
       }),
-      api<any>(
-        `/quests/${encodeURIComponent(questKey)}/transcript?${transcriptSelection}&limit=${APP_SETTINGS.limits.transcript}&include_raw=false`,
-        { signal: controller.signal },
-      ),
-      api<QuestContinuityData>(
-        `/quests/${encodeURIComponent(questKey)}/continuity?${selection}`,
-        { signal: controller.signal },
-      )
-        .then((result) => ({ result, failure: "" }))
-        .catch((reason: Error) => ({ result: null, failure: reason.message })),
-      api<QuestMediaManifest>(
-        `/quests/${encodeURIComponent(questKey)}/media?${selection}`,
-        { signal: controller.signal },
-      ).catch(() => null),
+      api<any>(`${transcriptPath}&include_media=false`, { signal: controller.signal }),
     ])
-      .then(([p, t, c, m]) => {
+      .then(([p, t]) => {
         if (!active) return;
         setProfile(p);
         setTranscript(t);
-        setContinuity(c.result);
-        setContinuityError(c.failure);
-        setMedia(m);
+        if (t?.media_deferred) {
+          api<any>(transcriptPath, { signal: controller.signal }).then((enriched) => {
+            if (active) setTranscript(enriched);
+          }).catch(() => {
+            if (active) setMediaError("Audio and illustrations could not be loaded. Try again.");
+          });
+        }
       })
       .catch((e) => {
         if (active) setError(e.message);
@@ -286,8 +299,8 @@ export function QuestPageClient({
     retry,
   ]);
 
-  if (loading && (!profile || !transcript)) return <PageLoader />;
-  if (error && (!profile || !transcript))
+  if (loading && !profile) return <PageLoader />;
+  if (error && !profile)
     return (
       <div className="page-container">
         <ErrorPanel
@@ -1140,6 +1153,7 @@ export function QuestPageClient({
         />
       )}
       {loading && <p role="status">Updating quest transcript…</p>}
+      {mediaError && <ErrorPanel message={mediaError} onRetry={() => setRetry((value) => value + 1)} />}
       <Breadcrumbs
         items={[
           { label: "Archive", to: "/" },
@@ -1244,7 +1258,7 @@ export function QuestPageClient({
         version={gameVersion || continuity?.selected_game_version || ""}
         locale={locale}
       />
-      {lines.length === 0 ? (
+      {!transcript ? null : lines.length === 0 ? (
         <section
           className="quest-no-transcript"
           aria-labelledby="quest-no-transcript-title"

@@ -105,6 +105,7 @@ async def quest_transcript(
     offset=0,
     focus_line=None,
     include_raw=True,
+    include_media=True,
     *,
     node_lookup=get_node,
 ) -> dict[str, Any]:
@@ -157,9 +158,9 @@ async def quest_transcript(
             for row in rows
             if (state_id := getattr(row[2], "node_id", None)) is not None
         },
-    )
+    ) if include_media else {}
     lines = await dialogue_lines(session, rows, locale, release_id, media_by_line, include_raw=include_raw)
-    illustrations = await illustration_payloads(session, rows, release_id=release_id)
+    illustrations = await illustration_payloads(session, rows, release_id=release_id) if include_media else {}
     for row, line in zip(rows, lines, strict=True):
         if row[0].node_id in illustrations:
             line['illustration'] = illustrations[row[0].node_id]
@@ -194,4 +195,5 @@ async def quest_transcript(
         "limit": limit,
         "lines_returned": len(rows),
         "lines": lines,
+        "media_deferred": not include_media,
     }

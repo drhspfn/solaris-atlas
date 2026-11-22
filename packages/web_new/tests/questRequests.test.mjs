@@ -29,6 +29,8 @@ function load(relativePath, mocks, globals = {}) {
 function questHarness({
   missingTranscript = false,
   failRequests = false,
+  mediaDeferred = false,
+  failEnrichment = false,
 } = {}) {
   let query = new URLSearchParams(
     "game_version=2.0.0&locale=ru&line=dialogue%3A999",
@@ -145,7 +147,11 @@ function questHarness({
         if (failRequests) throw new Error("Quest unavailable");
         if (path.includes("/profile?"))
           return { quest: { name: { content: path } } };
-        if (path.includes("/transcript?")) return { lines: [] };
+        if (path.includes("/transcript?")) {
+          if (mediaDeferred && path.includes("include_media=false")) return { lines: [], media_deferred: true };
+          if (mediaDeferred && failEnrichment) throw new Error("Media unavailable");
+          return { lines: [], enriched: mediaDeferred };
+        }
         return null;
       },
     },
@@ -235,13 +241,13 @@ test("failed initial quest read retries the same selection instead of remaining 
   const h = questHarness({ missingTranscript: true, failRequests: true });
   await h.render();
   const errorTree = await h.render();
-  const error = errorTree.props.children;
+  const error = errorTree.props.children.props.children[0];
   assert.equal(error.props.message, "Quest unavailable");
   h.recover();
   error.props.onRetry();
   await h.render();
   const recoveredTree = await h.render();
-  assert.equal(h.calls.length, 8);
+  assert.equal(h.calls.length, 7);
   assert.equal(recoveredTree.props.children.props.className, "page-container quest-container");
 });
 
@@ -285,7 +291,7 @@ test("matching version, locale and focus reuse SSR; changed selections fetch and
 test("missing SSR data retries and stored locale changes still fetch", async () => {
   const missing = questHarness({ missingTranscript: true });
   await missing.render();
-  assert.equal(missing.calls.length, 4);
+  assert.equal(missing.calls.length, 3);
   const h = questHarness();
   h.setQuery("game_version=2.0.0&line=dialogue%3A999");
   h.setLocale("ru");
@@ -295,6 +301,27 @@ test("missing SSR data retries and stored locale changes still fetch", async () 
   await h.render();
   assert.equal(h.calls.length, 4);
   assert.ok(h.calls.every((path) => path.includes("locale=zh")));
+});
+
+test("deferred transcript media loads separately and keeps text on failure", async () => {
+  const h = questHarness({ missingTranscript: true, mediaDeferred: true, failEnrichment: true });
+  await h.render();
+  await h.render();
+  assert.equal(h.states[1].media_deferred, true);
+  assert.equal(h.states[7], "Audio and illustrations could not be loaded. Try again.");
+  const transcriptCalls = h.calls.filter((path) => path.includes("/transcript?"));
+  assert.equal(transcriptCalls.length, 2);
+  assert.ok(transcriptCalls[0].includes("include_media=false"));
+  assert.ok(!transcriptCalls[1].includes("include_media=false"));
+});
+
+test("deferred transcript is enriched after the first text response", async () => {
+  const h = questHarness({ missingTranscript: true, mediaDeferred: true });
+  await h.render();
+  await h.render();
+  assert.equal(h.states[1].enriched, true);
+  assert.equal(h.states[7], "");
+  assert.equal(h.calls.filter((path) => path.includes("/transcript?")).length, 2);
 });
 
 test("shared links avoid automatic prefetch and retain explicit opt-in and navigation props", () => {
