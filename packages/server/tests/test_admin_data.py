@@ -15,6 +15,23 @@ from wuwa_story.api.routes.admin_data import (
 )
 from wuwa_story.auth.dependencies import require_admin, require_csrf
 from wuwa_story.ingestion.github_snapshots import RemoteSnapshot
+from wuwa_story.ingestion.snapshot_queue import enqueue_pinned_snapshot
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["queued", "running", "completed", "failed", "waiting_dependency"])
+async def test_automatic_snapshot_reuses_tracked_run_without_replaying(status):
+    db = AsyncMock()
+    db.scalar.side_effect = [1, Mock(id=42, status=status)]
+    publish = AsyncMock()
+
+    result = await enqueue_pinned_snapshot(
+        db, RemoteSnapshot("3.8", "f" * 40), automatic=True, publish=publish,
+    )
+
+    assert result["id"] == 42
+    assert result["status"] == status
+    publish.assert_not_awaited()
 
 
 def test_data_operations_mutations_require_admin_and_csrf():

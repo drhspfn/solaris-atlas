@@ -518,11 +518,19 @@ failures. Missing historical bytes are not recovered by repeating the same build
 
 ### Automatic official client updates
 
-The worker consuming `asset_download` checks installed resource tiers hourly and queues
+The worker consuming `asset_download` checks installed resource tiers at startup and queues
 updates through the same idempotent service as **Check & update client** in Data operations.
-`WUWA_CLIENT_UPDATE_INTERVAL_SECONDS` defaults to `7200` (every 2 hours); set it to `0` to disable polling
-or to at least `60` to change the interval. An empty installation is bootstrapped by a
+`WUWA_CLIENT_UPDATE_INTERVAL_SECONDS` defaults to `43200` in the production configuration
+(about twice per day); set it to `0` to disable polling or to at least `60`
+to change the interval. Existing production variable overrides take precedence. An empty installation is bootstrapped by a
 manual download. `client-update-status.json` records the last check and failures.
+
+The snapshot worker separately checks the upstream branch for the latest downloaded client at startup and every
+`WUWA_SNAPSHOT_UPDATE_INTERVAL_SECONDS` (production default `43200`, `0` disables polling).
+It uses the same tracked import as Data operations. A changed upstream commit gets a new job.
+Inspect failed imports in Data operations and retry them there after fixing the cause.
+The snapshot importer queues media after importing content. Map builds are queued after new
+client downloads by default in production, controlled by `WUWA_ASSET_BUILD_MAPS`.
 
 Each client manifest remains pinned. Verified unchanged archives use hard links across
 client directories on the shared worker volume; changed files are downloaded to temporary

@@ -41,6 +41,8 @@ async def enqueue_maps(plan: dict[str, Any], run_id: int | None = None) -> None:
     if run_id is not None:
         payload["run_id"] = run_id
     await publish_job("asset_extract", payload, plan["id"] + "-maps-v1")
+    logger.info("assets.map_queued download=%s version=%s tier=%s run=%s",
+                plan["id"], plan["version"], plan["tier"], run_id)
 
 
 async def download_client_assets(plan: dict[str, Any]) -> None:
@@ -127,6 +129,9 @@ async def extract_client_assets(payload: dict[str, Any]) -> None:
                 ))
                 logger.info("Published asset filter=%s download=%s", payload["filter"], plan["id"])
     except Exception as error:
+        logger.error("assets.extraction_failed type=%s download=%s version=%s tier=%s filter=%s error_type=%s",
+                     payload["job_type"], payload["download_id"], payload["version"], payload["tier"],
+                     payload.get("filter"), type(error).__name__)
         if run_id is not None:
             try:
                 await update_admin_run(

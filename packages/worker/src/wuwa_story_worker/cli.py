@@ -346,6 +346,9 @@ async def _consume(queues: list[str] | None = None, pool: str | None = None) -> 
                     pool == "coordinator" or "character_model" in selected),
             )
         ))
+        if "snapshot_build" in selected and os.getenv("WUWA_SNAPSHOT_UPDATE_INTERVAL_SECONDS", "0") != "0":
+            from wuwa_story_worker.scheduler import watch_latest_snapshot
+            background.append(asyncio.create_task(watch_latest_snapshot()))
         if "story_agent" in selected or "cutscene_vision" in selected or "asset_download" in selected:
             if "asset_download" in selected:
                 from wuwa_story_worker.client_updates import watch_client_updates

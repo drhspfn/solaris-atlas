@@ -126,7 +126,18 @@ async def build_and_import_snapshot(payload: dict[str, Any]) -> None:
                 logger.exception(
                     "Failed to record snapshot import failure run_id=%s", run_id)
         raise
-    if run_id is not None:
+    media = result.get("media", {})
+    failed = media.get("enqueue_failed", 0) + media.get("npc_catalog", {}).get("enqueue_failed", 0)
+    if failed:
+        logger.warning("snapshot.media_enqueue_incomplete run=%s release=%s failed=%s",
+                       run_id, result.get("release_id"), failed)
+    if run_id is not None and failed:
+        await _update_admin_run(
+            run_id, "partial",
+            error=f"Snapshot imported; broker did not confirm {failed} media job(s)",
+            raw_output=result,
+        )
+    elif run_id is not None:
         await _update_admin_run(run_id, "completed", raw_output=result)
 
 

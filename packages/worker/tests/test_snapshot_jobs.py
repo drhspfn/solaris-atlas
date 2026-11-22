@@ -36,18 +36,22 @@ async def test_snapshot_checkout_downloads_into_empty_workspace(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_snapshot_job_tracks_running_and_completed(monkeypatch):
+@pytest.mark.parametrize("failed, status", [(0, "completed"), (2, "partial")])
+async def test_snapshot_job_reports_media_handoff(monkeypatch, failed, status):
     update = AsyncMock()
-    summary = {"import_run_id": 7, "records_seen": 120, "records_created": 115}
+    summary = {"import_run_id": 7, "records_seen": 120, "records_created": 115,
+               "media": {"enqueue_failed": failed}}
     build = AsyncMock(return_value=summary)
     monkeypatch.setattr(snapshot_jobs, "_update_admin_run", update)
     monkeypatch.setattr(snapshot_jobs, "_build_and_import_snapshot", build)
 
     await snapshot_jobs.build_and_import_snapshot({"run_id": 42})
 
-    assert [call.args for call in update.await_args_list] == [(42, "running"), (42, "completed")]
+    assert [call.args for call in update.await_args_list] == [(42, "running"), (42, status)]
     build.assert_awaited_once_with({"run_id": 42})
     assert update.await_args_list[-1].kwargs["raw_output"] == summary
+    if failed:
+        assert "2 media job(s)" in update.await_args_list[-1].kwargs["error"]
 
 
 @pytest.mark.asyncio

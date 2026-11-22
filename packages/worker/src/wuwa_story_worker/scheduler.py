@@ -4,18 +4,51 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 
+from wuwa_story.db.session import SessionFactory
+from wuwa_story.ingestion.client_assets import inspect_installed_clients
 from wuwa_story.ingestion.github_snapshots import (
     discover_remote_snapshots,
     load_checkpoints,
     save_checkpoint,
 )
+from wuwa_story.ingestion.snapshot_queue import DEFAULT_REPOSITORY, enqueue_pinned_snapshot
 
 from wuwa_story_worker.broker import publish_job
+from wuwa_story_worker.tooling import asset_workspace
 
 logger = logging.getLogger(__name__)
-DEFAULT_REPOSITORY = "https://github.com/Arikatsu/WutheringWaves_Data.git"
+
+
+async def poll_latest_snapshot() -> None:
+    clients = await asyncio.to_thread(inspect_installed_clients, asset_workspace())
+    current = next((client["version"] for client in clients if client["state"] == "downloaded"), None)
+    if current is None:
+        logger.info("snapshot.poll status=waiting_for_client")
+        return
+    # The latest verified download gates publication of a new major/minor patch.
+    branch = ".".join(current.split(".")[:2])
+    snapshot = (await asyncio.to_thread(
+        discover_remote_snapshots, DEFAULT_REPOSITORY, branch, branch,
+    ))[0]
+    async with SessionFactory() as session:
+        result = await enqueue_pinned_snapshot(session, snapshot, automatic=True)
+    logger.info("snapshot.poll branch=%s commit=%s run=%s status=%s",
+                snapshot.branch, snapshot.commit, result["id"], result["status"])
+
+
+async def watch_latest_snapshot() -> None:
+    interval = int(os.getenv("WUWA_SNAPSHOT_UPDATE_INTERVAL_SECONDS", "0"))
+    if interval < 60:
+        raise ValueError("Snapshot poll interval must be at least 60 seconds")
+    while True:
+        try:
+            await poll_latest_snapshot()
+        except Exception:
+            logger.exception("Automatic snapshot check failed; retrying next interval")
+        await asyncio.sleep(interval)
 
 
 async def enqueue_snapshot(version: str, repository: str, commit: str | None = None) -> None:
