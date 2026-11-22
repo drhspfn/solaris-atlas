@@ -13,6 +13,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+os.environ.setdefault("WUWA_WORKER_DB_POOL_SIZE", "4")
+os.environ.setdefault("WUWA_WORKER_DB_MAX_OVERFLOW", "4")
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
@@ -58,9 +61,6 @@ from wuwa_story_worker.story_agent import (
     process_story_analysis,
 )
 from wuwa_story_worker.voice_packages import discover_voice_plan, download_voice_plan
-
-os.environ.setdefault("WUWA_WORKER_DB_POOL_SIZE", "4")
-os.environ.setdefault("WUWA_WORKER_DB_MAX_OVERFLOW", "4")
 
 
 def _parser() -> argparse.ArgumentParser:
