@@ -12,6 +12,22 @@ database Alembic heads to match the image. Pending migrations fail the release
 before API/web replacement. Schema/configuration changes require separate
 explicit maintenance; they are not silently skipped or applied online.
 
+For a separately reviewed online migration, `run-online-migration.py` runs the
+specified API image as a one-off under the same deployment lock, without a shell
+or printing its environment. Stage the script on the host and first run:
+
+```
+python3 run-online-migration.py --sha FULL_IMAGE_SHA --revision 0043_quest_media_indexes
+```
+
+This is a plan only; add `--apply` after reviewing **every pending migration up
+to the specified revision** for online safety and confirming the image is already
+present locally. Alembic may execute earlier pending revisions too. The helper
+does not restart PgBouncer, API or workers; assess cached plans and any other
+required operational steps separately. Errors are intentionally not echoed
+because database exceptions may contain credentials. Inspect the database state
+before retrying an unsuccessful run.
+
 Receipts and CLI logs live in `~/solaris-atlas/.deployments/app-<sha>/`.
 Command intent is durable before execution; children retain the deployment lock.
 An interrupted replacement is verified rather than blindly replayed. API health
