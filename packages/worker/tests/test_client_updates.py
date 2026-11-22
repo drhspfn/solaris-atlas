@@ -1,4 +1,5 @@
 """Client update queue reuse, admin authorization and automatic tier selection."""
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -32,6 +33,22 @@ async def test_periodic_update_checks_each_installed_tier_once(monkeypatch, tmp_
     await worker_updates.poll_client_updates(tmp_path)
     assert [c.args[1] for c in check.await_args_list] == ['hd','uhd']
     assert all(c.kwargs['workspace'] == tmp_path for c in check.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_disabled_update_watcher_stays_alive_without_polling(monkeypatch):
+    monkeypatch.setenv("WUWA_CLIENT_UPDATE_INTERVAL_SECONDS", "0")
+    poll = AsyncMock()
+    monkeypatch.setattr(worker_updates, "poll_client_updates", poll)
+    task = asyncio.create_task(worker_updates.watch_client_updates())
+    try:
+        await asyncio.sleep(0)
+        assert not task.done(), "Worker supervisor stops the consumer when the watcher exits"
+        poll.assert_not_awaited()
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
 
 @pytest.mark.asyncio
 async def test_admin_update_uses_same_shared_updater(monkeypatch):
