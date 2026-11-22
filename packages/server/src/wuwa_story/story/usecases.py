@@ -189,7 +189,9 @@ async def quest_transcript(
         "tree_order_asset_version": tree_order['asset_version'] if tree_order and not related_encounters else None,
         "review_order_source": (tree_order or {}).get('review_source'),
         "scenes": scene_payloads(scene_rows),
-        "story_blocks": await present_blocks(session, tree_order, locale, release_id),
+        "story_blocks": await present_blocks(
+            session, tree_order, locale, release_id, include_media=include_media
+        ),
         "filters": {"character": character, "text": q, "locale": locale},
         "offset": offset,
         "limit": limit,

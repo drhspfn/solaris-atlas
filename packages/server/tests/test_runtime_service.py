@@ -118,18 +118,24 @@ async def test_async_battle_flow_context_retains_condition_and_action_boundaries
 
 
 @pytest.mark.asyncio
-async def test_selected_owner_is_not_attached_to_another_occurrence_without_matching_client(monkeypatch):
+@pytest.mark.parametrize('include_media', [True, False])
+async def test_selected_owner_is_not_attached_to_another_occurrence_without_matching_client(monkeypatch, include_media):
     source = blocks()
     source.append(deepcopy(source[0]))
     del source[1]['encounter']['client']
     monkeypatch.setattr(runtime_service.repository,
                         'named_localization_keys', AsyncMock(return_value={}))
     monkeypatch.setattr(runtime_service, 'prefetch_localizations', AsyncMock())
-    monkeypatch.setattr(runtime_service, 'sequence_playback', AsyncMock(
-        return_value={7: bundle()[3]['sequence_media']}))
-    presented = await runtime_service.present_blocks(AsyncMock(), {'blocks': source}, 'en', 15)
-    assert 'sequence_media' in presented[0]['encounter']['trees'][0]['root']['flow_states'][0]
+    playback = AsyncMock(return_value={7: bundle()[3]['sequence_media']})
+    monkeypatch.setattr(runtime_service, 'sequence_playback', playback)
+    presented = await runtime_service.present_blocks(
+        AsyncMock(), {'blocks': source}, 'en', 15, include_media=include_media
+    )
+    flow = presented[0]['encounter']['trees'][0]['root']['flow_states'][0]
+    assert ('sequence_media' in flow) is include_media
+    assert flow['state_node_id'] == 7
     assert 'sequence_media' not in presented[1]['encounter']['trees'][0]['root']['flow_states'][0]
+    assert playback.await_count == int(include_media)
 
 
 @pytest.mark.asyncio

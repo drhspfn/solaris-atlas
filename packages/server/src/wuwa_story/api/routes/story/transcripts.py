@@ -65,6 +65,7 @@ async def quest_transcript(
     if read_projections.should_route_to_projection(("quest", "character", "dialogue") if character else "quest", game_version, locale=locale):
         return await read_projections.transcript_page(
             session, game_quest_id, character, q, locale, game_version, limit, offset, focus_line, include_raw,
+            include_media=include_media,
         )
     try:
         result = await usecases.quest_transcript(

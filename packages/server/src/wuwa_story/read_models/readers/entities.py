@@ -462,6 +462,18 @@ async def quest_section(session, identity, locale="en", game_version=None, selec
     )
 
 
+def _without_sequence_media(value):
+    if isinstance(value, list):
+        return [_without_sequence_media(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _without_sequence_media(child)
+            for key, child in value.items()
+            if key != "sequence_media"
+        }
+    return value
+
+
 async def transcript_page(
     session,
     identity,
@@ -473,6 +485,8 @@ async def transcript_page(
     offset=0,
     focus_line=None,
     include_raw=True,
+    *,
+    include_media=True,
 ):
     data = await quest_section(session, identity, locale, game_version, "transcript")
     lines = data.get("lines")
@@ -523,6 +537,19 @@ async def transcript_page(
         visible = [
             {key: value for key, value in line.items() if key != "raw_refs"} for line in visible
         ]
+    if not include_media:
+        visible = [
+            {
+                **{key: value for key, value in line.items() if key not in {"media", "illustration"}},
+                "media": {"voice_references": [], "audio_event_paths": []},
+            }
+            for line in visible
+        ]
+        data = {
+            **data,
+            "story_blocks": _without_sequence_media(data.get("story_blocks", [])),
+            "media_deferred": True,
+        }
     return ProjectedPayload(
         {
             **data,

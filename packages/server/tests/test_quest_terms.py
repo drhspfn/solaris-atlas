@@ -28,17 +28,52 @@ async def test_source_transcript_resolves_dialogue_and_choice_terms(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_projection_returns_published_media_without_second_read(monkeypatch):
-    published = {"lines": [{"id": "line:1", "media": {"voice_references": ["voice"]}}]}
+async def test_projection_defers_media_only_when_requested(monkeypatch):
+    from wuwa_story.read_models.readers import entities
+
+    flow = {"state": "flow:1", "sequence_media": {"sections": [{"kind": "movie_fragment"}]}}
+    root = {"title": "Encounter", "children": [{"flow_states": [flow]}]}
+    published = {
+        "lines": [
+            {"id": "line:0", "text": {"content": "Earlier"}},
+            {
+                "id": "line:1",
+                "text": {"content": "Target"},
+                "player_choices": [{"text": {"content": "Choice"}}],
+                "media": {"voice_references": ["voice"], "audio_event_paths": ["audio"]},
+                "illustration": {"id": "frame"},
+                "raw_refs": {"source_record_id": 1},
+            },
+        ],
+        "story_blocks": [{"encounter": {"trees": [{"root": root}]}}],
+        "terms": {"42": {"title": "Term"}},
+    }
     monkeypatch.setattr(transcripts.read_projections, "should_route_to_projection", lambda *a, **k: True)
     read = AsyncMock(return_value=published)
-    monkeypatch.setattr(transcripts.read_projections, "transcript_page", read)
-    response = await transcripts.quest_transcript("7543301", game_version="3.3.0", include_media=False,
-                                                  session=object())
-    assert response is published
-    assert response["lines"][0]["media"]["voice_references"] == ["voice"]
-    assert not response.get("media_deferred")
+    monkeypatch.setattr(entities, "quest_section", read)
+    options = {
+        "q": "target", "focus_line": "line:1", "limit": 1, "include_raw": False, "session": object(),
+    }
+    compact = await transcripts.quest_transcript("7543301", include_media=False, **options)
     read.assert_awaited_once()
+    full = await transcripts.quest_transcript("7543301", **options)
+
+    assert compact["media_deferred"] is True
+    assert "media_deferred" not in full
+    assert compact["offset"] == full["offset"] == 0
+    assert compact["terms"] == full["terms"] == published["terms"]
+    assert compact["lines"] == [{
+        "id": "line:1",
+        "text": {"content": "Target"},
+        "player_choices": [{"text": {"content": "Choice"}}],
+        "media": {"voice_references": [], "audio_event_paths": []},
+    }]
+    assert full["lines"][0]["media"] == published["lines"][1]["media"]
+    assert full["lines"][0]["illustration"] == {"id": "frame"}
+    compact_root = compact["story_blocks"][0]["encounter"]["trees"][0]["root"]
+    assert compact_root == {"title": "Encounter", "children": [{"flow_states": [{"state": "flow:1"}]}]}
+    assert full["story_blocks"][0]["encounter"]["trees"][0]["root"]["children"][0]["flow_states"] == [flow]
+    assert "sequence_media" in flow
 
 
 @pytest.mark.asyncio
