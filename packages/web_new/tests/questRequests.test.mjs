@@ -44,7 +44,7 @@ function questHarness({
   let stateIndex;
   let effectIndex;
   const initialProfile = { quest: { name: { content: "SSR snapshot" } } };
-  const initialTranscript = { lines: [] };
+  const initialTranscript = { lines: [], ...(mediaDeferred && { media_deferred: true }) };
   const props = {
     questKey: "662686-the-sacred-breeze-so-often-breathes",
     initialProfile,
@@ -247,7 +247,7 @@ test("failed initial quest read retries the same selection instead of remaining 
   error.props.onRetry();
   await h.render();
   const recoveredTree = await h.render();
-  assert.equal(h.calls.length, 7);
+  assert.equal(h.calls.length, 5);
   assert.equal(recoveredTree.props.children.props.className, "page-container quest-container");
 });
 
@@ -322,6 +322,15 @@ test("deferred transcript is enriched after the first text response", async () =
   assert.equal(h.states[1].enriched, true);
   assert.equal(h.states[7], "");
   assert.equal(h.calls.filter((path) => path.includes("/transcript?")).length, 2);
+});
+
+test("SSR dialogue loads its media without requesting the text again", async () => {
+  const h = questHarness({ mediaDeferred: true, failEnrichment: true });
+  await h.render();
+  await h.render();
+  assert.equal(h.states[1].media_deferred, true);
+  assert.equal(h.calls.filter((path) => path.includes("/transcript?")).length, 1);
+  assert.ok(!h.calls.some((path) => path.includes("include_media=false") || path.includes("/profile?")));
 });
 
 test("shared links avoid automatic prefetch and retain explicit opt-in and navigation props", () => {

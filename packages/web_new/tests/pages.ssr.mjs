@@ -177,7 +177,7 @@ const backend = createServer(async (request, response) => {
       }),
     );
     if (questRequest.pathname.endsWith('/profile')) response.end(JSON.stringify({ quest }));
-    else if (questRequest.pathname.endsWith('/transcript'))
+    else if (questRequest.pathname.endsWith('/transcript')) {
       response.end(
         JSON.stringify({
           quest,
@@ -269,6 +269,7 @@ const backend = createServer(async (request, response) => {
           story_blocks: [],
         }),
       );
+    }
     else response.end('null');
     return;
   }
@@ -293,7 +294,7 @@ const backend = createServer(async (request, response) => {
               flow_state: state,
               action: { index: 1 },
               text: { content: 'Optional fridge dialogue' },
-              illustration: {
+              illustration: questRequest.searchParams.get('include_media') === 'false' ? undefined : {
                 id: 'image-1',
                 kind: 'image',
                 images: [
@@ -429,7 +430,8 @@ const backend = createServer(async (request, response) => {
     const title = `Selected quest ${questRequest.searchParams.get('locale')} ${questRequest.searchParams.get('game_version')}`;
     const quest = { name: { content: title } };
     if (questRequest.pathname.endsWith('/profile')) response.end(JSON.stringify({ quest }));
-    else if (questRequest.pathname.endsWith('/transcript'))
+    else if (questRequest.pathname.endsWith('/transcript')) {
+      if (questRequest.searchParams.get('focus_line') === 'dialogue:stream') await delay(1000);
       response.end(
         JSON.stringify({
           quest,
@@ -442,7 +444,7 @@ const backend = createServer(async (request, response) => {
           scenes: [],
         }),
       );
-    else response.end('null');
+    } else response.end('null');
   } else if (request.url === '/characters/character%3A1102/model') {
     response.end(JSON.stringify({ status: 'ready', game_version: '3.7.0',
       preview: { url: 'https://cdn.solarisatlas.fun/objects/ssr-model', size_bytes: 1000 },
@@ -720,16 +722,8 @@ for (const [slug, version, locale] of [
     assert.ok(html.includes(`Selected dialogue Selected quest ${locale} ${version}`));
     assert.ok(html.includes('data-dialogue-key="dialogue:999"'));
     const calls = requests.slice(start).filter((path) => path.startsWith(`/quests/${slug}/`));
-    assert.equal(calls.length, 4, 'metadata and SSR must share the profile request');
-    const timings = requestTimes
-      .slice(start)
-      .filter((entry) => entry.path.startsWith(`/quests/${slug}/`));
-    assert.ok(
-      Math.max(...timings.map((entry) => entry.start)) <
-        Math.min(...timings.map((entry) => entry.end)),
-      'all four requests must overlap rather than form an SSR waterfall',
-    );
-    for (const endpoint of ['profile', 'transcript', 'continuity', 'media']) {
+    assert.equal(calls.length, 2, 'SSR shares the profile read and defers media and continuity');
+    for (const endpoint of ['profile', 'transcript']) {
       const call = calls.find((path) => path.startsWith(`/quests/${slug}/${endpoint}?`));
       assert.ok(call, endpoint);
       const query = new URL(call, site).searchParams;
@@ -739,10 +733,37 @@ for (const [slug, version, locale] of [
       if (endpoint === 'transcript') {
         assert.equal(query.get('limit'), '2000');
         assert.equal(query.get('include_raw'), 'false');
+        assert.equal(query.get('include_media'), 'false');
       }
     }
   });
 }
+
+test('quest sends its title while the transcript request is pending', async () => {
+  const response = await fetch(
+    `${site}/quests/662686-the-sacred-breeze-so-often-breathes?game_version=2.0.0&locale=en&line=dialogue%3Astream`,
+  );
+  assert.equal(response.status, 200);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let html = '';
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    html += decoder.decode(chunk.value, { stream: true });
+    if (html.includes('Opening archive record')) break;
+  }
+  assert.match(html, /Selected quest en 2\.0\.0/);
+  assert.match(html, /Opening archive record/);
+  assert.doesNotMatch(html, /data-dialogue-key="dialogue:stream"/);
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    html += decoder.decode(chunk.value, { stream: true });
+  }
+  const markup = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  assert.match(markup, /data-dialogue-key="dialogue:stream"/);
+});
 
 for (const userAgent of ['Mozilla/5.0', 'TelegramBot (like TwitterBot)']) {
   test(`character details and preview are in initial HTML for ${userAgent}`, async () => {
@@ -874,15 +895,15 @@ test('node with unavailable narrative renders its source details without a dialo
   assert.doesNotMatch(html, /Where this line appears|DIALOGUE ENTRY|Opening archive record/);
 });
 
-test('optional interaction contains dialogue, choices, pictures and engine scene exactly once', async () => {
+test('optional interaction keeps dialogue and choices in SSR while engine media is deferred', async () => {
   const response = await fetch(`${site}/quests/119000000`);
   assert.equal(response.status, 200);
   const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
   const interaction = detailsWithSummary(html, 'Inspect the fridge');
   assert.match(interaction, /Optional fridge dialogue/);
   assert.match(interaction, /Leave it here/);
-  assert.match(interaction, /src="https:\/\/cdn.test\/story.png"/);
-  assert.match(interaction, /rendered by the game engine/);
+  assert.doesNotMatch(interaction, /src="https:\/\/cdn.test\/story.png"/);
+  assert.doesNotMatch(interaction, /rendered by the game engine/);
   assert.equal((html.match(/data-dialogue-key="optional-line"/g) || []).length, 1);
   assert.equal((visibleText(interaction).match(/Optional fridge dialogue/g) || []).length, 1);
   assert.match(html, /Mandatory dialogue/);

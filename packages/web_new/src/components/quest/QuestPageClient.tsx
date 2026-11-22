@@ -213,6 +213,7 @@ export function QuestPageClient({
     if (
       initialProfile &&
       initialTranscript &&
+      !initialTranscript.media_deferred &&
       retry === 0 &&
       locale === initialSelection.locale &&
       gameVersion === initialSelection.gameVersion &&
@@ -229,7 +230,6 @@ export function QuestPageClient({
     }
     let active = true;
     const controller = new AbortController();
-    setLoading(true);
     setError("");
     setMediaError("");
     const selection = new URLSearchParams({ locale });
@@ -240,33 +240,40 @@ export function QuestPageClient({
     const transcriptPath = `/quests/${encodeURIComponent(questKey)}/transcript?${transcriptSelection}&limit=${APP_SETTINGS.limits.transcript}&include_raw=false`;
     const matchesInitial = locale === initialSelection.locale && gameVersion === initialSelection.gameVersion &&
       (citedLine || "") === initialSelection.citedLine;
-    setProfile(matchesInitial && retry === 0 ? initialProfile || null : null);
-    setTranscript(null);
+    const serverTranscript = matchesInitial ? initialTranscript : null;
+    const serverProfile = matchesInitial && (retry === 0 || serverTranscript) ? initialProfile : null;
+    setLoading(!serverProfile || !serverTranscript);
+    setProfile(serverProfile || null);
+    setTranscript(serverTranscript || null);
     setContinuity(null);
     setContinuityError("");
     setMedia(null);
-    api<QuestContinuityData>(`/quests/${encodeURIComponent(questKey)}/continuity?${selection}`, {
-      signal: controller.signal,
-    }).then((result) => {
-      if (active) { setContinuity(result); setContinuityError(""); }
-    }).catch((reason: Error) => {
-      if (active) { setContinuity(null); setContinuityError(reason.message); }
-    });
-    api<QuestMediaManifest>(`/quests/${encodeURIComponent(questKey)}/media?${selection}`, {
-      signal: controller.signal,
-    }).then((result) => { if (active) setMedia(result); }).catch(() => { if (active) setMedia(null); });
+    const loadContext = () => {
+      api<QuestContinuityData>(`/quests/${encodeURIComponent(questKey)}/continuity?${selection}`, {
+        signal: controller.signal,
+      }).then((result) => {
+        if (active) { setContinuity(result); setContinuityError(""); }
+      }).catch((reason: Error) => {
+        if (active) { setContinuity(null); setContinuityError(reason.message); }
+      });
+      api<QuestMediaManifest>(`/quests/${encodeURIComponent(questKey)}/media?${selection}`, {
+        signal: controller.signal,
+      }).then((result) => { if (active) setMedia(result); }).catch(() => { if (active) setMedia(null); });
+    };
 
     Promise.all([
-      matchesInitial && initialProfile && retry === 0 ? Promise.resolve(initialProfile) :
+      serverProfile ? Promise.resolve(serverProfile) :
       api<any>(`/quests/${encodeURIComponent(questKey)}/profile?${selection}&view=reader`, {
         signal: controller.signal,
       }),
-      api<any>(`${transcriptPath}&include_media=false`, { signal: controller.signal }),
+      serverTranscript ? Promise.resolve(serverTranscript) :
+        api<any>(`${transcriptPath}&include_media=false`, { signal: controller.signal }),
     ])
       .then(([p, t]) => {
         if (!active) return;
         setProfile(p);
         setTranscript(t);
+        loadContext();
         if (t?.media_deferred) {
           api<any>(transcriptPath, { signal: controller.signal }).then((enriched) => {
             if (active) setTranscript(enriched);

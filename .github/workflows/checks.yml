@@ -54,6 +54,9 @@ jobs:
       - name: Test event calendar and quest requests
         working-directory: packages/web_new
         run: node --experimental-strip-types --test tests/events.test.mjs tests/eventRequests.test.mjs tests/questRequests.test.mjs
+      - name: Test quest pages against the production build
+        working-directory: packages/web_new
+        run: node --test --test-name-pattern='quest SSR|quest sends|quest reader|weapon sources|optional interaction|transcripts over' tests/pages.ssr.mjs
       - name: Test cinematic recordings
         working-directory: packages/web_new
         run: node --test tests/encounterTransitions.test.mjs tests/sequenceVideo.test.mjs tests/sequenceVideoAdmin.test.mjs

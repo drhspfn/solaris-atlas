@@ -8,7 +8,8 @@ from wuwa_story.story import usecases
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('related', [True, False])
-async def test_related_states_are_included_without_claiming_global_transcript_order(monkeypatch, related):
+@pytest.mark.parametrize('include_media', [True, False])
+async def test_related_states_are_included_without_claiming_global_transcript_order(monkeypatch, related, include_media):
     order = {'state_ids': [4648369], 'asset_version': '3.7.1', 'blocks': [],
              'positions': {}, 'mapped_flow_states': []}
     if related:
@@ -25,9 +26,12 @@ async def test_related_states_are_included_without_claiming_global_transcript_or
     rows = AsyncMock(return_value=([], 0))
     monkeypatch.setattr(usecases.repository, 'quest_transcript_rows', rows)
     monkeypatch.setattr(usecases.repository, 'quest_scenes', AsyncMock(return_value=[]))
-    result = await usecases.quest_transcript(SimpleNamespace(), 'quest:114000031')
+    result = await usecases.quest_transcript(
+        SimpleNamespace(), 'quest:114000031', include_media=include_media
+    )
     assert set(rows.await_args.args[1]) == {10, 4648369}
     assert rows.await_args.kwargs['ordered_states'] == (None if related else [4648369])
     assert result['tree_order_asset_version'] == (None if related else '3.7.1')
     assert ('positions in this quest are unknown' in result['ordering_semantics']) is related
     assert result['story_blocks'] == [{'ordering': 'related'}]
+    assert usecases.present_blocks.await_args.kwargs == {'include_media': include_media}

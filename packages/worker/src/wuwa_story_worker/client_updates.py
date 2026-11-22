@@ -29,6 +29,9 @@ async def poll_client_updates(workspace):
 async def watch_client_updates():
     interval = int(os.getenv("WUWA_CLIENT_UPDATE_INTERVAL_SECONDS", "7200"))
     if interval == 0:
+        logger.info("Official client update polling is disabled")
+        # The worker stops when a supervised task exits. Wait for shutdown cancellation.
+        await asyncio.Future()
         return
     if interval < 60:
         raise ValueError("Client update interval must be at least 60 seconds, or 0 to disable")

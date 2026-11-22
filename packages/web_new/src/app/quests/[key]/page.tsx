@@ -1,6 +1,9 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 
 import { serverApi } from '@/api/serverApi';
+import { APP_SETTINGS } from '@/config/settings';
+import { PageLoader } from '@/components/ui/Feedback';
 import { decodeRouteKey, publicPath } from '@/lib/routeKey';
 import { canonicalRoute, type RouteQuery } from '@/lib/canonicalRoute';
 import { QuestPageClient } from '@/components/quest/QuestPageClient';
@@ -62,11 +65,35 @@ export default async function QuestTranscriptPage({ params, searchParams }: Prop
   await canonicalRoute("quests", key, profile?.quest, searchParams);
 
   return (
+    <Suspense key={JSON.stringify([key, initialSelection])} fallback={
+      <div className="page-container">
+        <h1>{profile?.quest?.name?.content || 'Story transcript'}</h1>
+        <PageLoader />
+      </div>
+    }>
+      <QuestReader keyValue={key} selection={initialSelection} profile={profile} />
+    </Suspense>
+  );
+}
+
+async function QuestReader({ keyValue, selection, profile }: {
+  keyValue: string;
+  selection: ReturnType<typeof questSelection>;
+  profile: any;
+}) {
+  const query = selectionQuery(selection);
+  if (selection.citedLine) query.set('focus_line', selection.citedLine);
+  const transcript = await serverApi<any>(
+    `/quests/${encodeURIComponent(keyValue)}/transcript?${query}&limit=${APP_SETTINGS.limits.transcript}&include_raw=false&include_media=false`,
+    // The API owns transcript caching, including responses above Next's cache size limit.
+    { cache: 'no-store' },
+  );
+  return (
     <QuestPageClient
-      key={JSON.stringify([key, initialSelection])}
-      questKey={key}
-      initialSelection={initialSelection}
+      questKey={keyValue}
+      initialSelection={selection}
       initialProfile={profile}
+      initialTranscript={transcript}
     />
   );
 }

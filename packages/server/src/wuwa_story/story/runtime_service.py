@@ -149,7 +149,7 @@ async def sequence_playback(session, blocks, release_id, flow_hashes=None):
     ]} for owner, bundle in selected.items()}
 
 
-async def present_blocks(session, tree_order, locale, release_id):
+async def present_blocks(session, tree_order, locale, release_id, *, include_media=True):
     if not tree_order:
         return []
     blocks = tree_order.get('blocks', [])
@@ -160,7 +160,7 @@ async def present_blocks(session, tree_order, locale, release_id):
                                                               if entry.get('text_key')})
     await prefetch_localizations(session, list(keys.values()), locale, release_id)
     result = []
-    playback = await sequence_playback(session, blocks, release_id)
+    playback = await sequence_playback(session, blocks, release_id) if include_media else {}
 
     async def present(entry):
         key = entry.get('text_key')
