@@ -37,6 +37,6 @@ async def test_search_entities_tool_calls_lexical_search_with_keyword_args(monke
     assert captured == {
         "query": "black-haired woman",
         "locale_id": 1,
-        "categories": ["character"],
+        "categories": ["character", "speaker", "npc"],
         "limit": 10,
     }

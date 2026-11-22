@@ -195,6 +195,7 @@ def test_plan_cutscene_supports_fallback_sources_and_fails_closed_when_absent(tm
 async def test_cutscene_assets_discovers_levela_archive_cutscenes_without_pure_engine_sequences(
     monkeypatch, tmp_path
 ):
+    monkeypatch.setattr(release_media, 'source_context', AsyncMock(return_value={}))
     sources = {
         "Client/Content/Aki/Movies/LevelA_Seq/03_8/M0396_Cam006_012.mp4": b"m0396 mp4",
         "Client/Content/Aki/Movies/LevelA_Seq/03_8/M0397_Nanzhu.mp4": b"m0397 nan",
