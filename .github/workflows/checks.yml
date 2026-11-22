@@ -157,7 +157,8 @@ jobs:
           tests/test_lexical_search_priority.py tests/test_npc_search_names.py
           tests/test_localization_dedup.py tests/test_canonical_edge_batches.py
           tests/test_npc_canonical_import.py tests/test_compiler_importer_deadlock.py
-          tests/test_import_progress.py -q
+          tests/test_import_progress.py tests/test_quest_media_indexes.py
+          tests/test_story_browsing_services.py tests/test_quest_terms.py -q
       - name: Validate logical cutscene analysis and admission locks
         working-directory: packages/server
         env:
