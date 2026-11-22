@@ -95,7 +95,49 @@ def test_requested_inventory_never_scans_shared_client(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_voice_lookup_report_is_saved_before_decoder_failure(tmp_path, monkeypatch):
+@pytest.mark.parametrize("with_reuse", [False, True])
+async def test_scoped_voice_report_when_no_exports_are_needed(monkeypatch, caplog, with_reuse):
+    from wuwa_story_worker import release_media
+
+    names = [f"vo_Unshipped_{i}" for i in range(4)]
+    paths = ["Audio/en_vo_Line_1_M.wem"] if with_reuse else []
+    if with_reuse:
+        names.append("vo_Line_1")
+    monkeypatch.setattr(release_media, "source_context", AsyncMock(return_value={}))
+    monkeypatch.setattr(release_media, "requested_voice_paths", AsyncMock(return_value=paths))
+    monkeypatch.setattr(release_media, "missing_global_voice_paths", AsyncMock(return_value=set()))
+    monkeypatch.setattr(release_media, "cleanup_published_output", AsyncMock())
+    export = AsyncMock(side_effect=AssertionError("Reuse should not export assets"))
+    monkeypatch.setattr(release_media, "export_assets", export)
+
+    with caplog.at_level("INFO", logger=release_media.__name__):
+        result, status = await release_media.voices(
+            {"run_id": 17, "game_version": "3.8", "targets": names},
+            {"asset_version": "3.8.0", "workspace_id": 11, "media_report": {"inventory_file_id": 9}},
+        )
+
+    assert status == ("partial" if with_reuse else "completed")
+    assert len(result["unshipped_voices"]) == 16
+    report = result["media_report"]
+    assert report["inventory_file_id"] == 9
+    assert report["game_version"] == "3.8" and report["asset_version"] == "3.8.0"
+    assert report["requested"] == len(names) * 4
+    assert report["found"] == int(with_reuse)
+    assert report["missing"] == report["requested"] - report["found"]
+    entries = {entry["expected"]: entry for entry in report["entries"]}
+    assert entries["en_vo_Unshipped_0.wem"]["status"] == "not_in_archives"
+    if with_reuse:
+        assert entries["en_vo_Line_1.wem"]["matches"] == paths
+        assert entries["en_vo_Line_1.wem"]["status"] == "found"
+        assert entries["ja_vo_Line_1.wem"]["status"] == "not_in_archives"
+    assert "release_media.voice_lookup run=17" in caplog.text
+    assert f"'not_in_archives': {report['missing']}" in caplog.text
+    assert "vo_Unshipped_3" not in caplog.text
+    export.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_voice_lookup_report_is_saved_before_decoder_failure(tmp_path, monkeypatch, caplog):
     from wuwa_story_worker import release_media
     voice_root = tmp_path / "voices/3.7.0-plan/plot-audio"
     voice_root.mkdir(parents=True)
@@ -114,9 +156,11 @@ async def test_voice_lookup_report_is_saved_before_decoder_failure(tmp_path, mon
         assert saved.await_args.kwargs["raw_output"]["media_report"]["missing"] == 3
         raise ValueError("decoder failed")
     monkeypatch.setattr(release_media, "import_voice_sample", fail)
-    with pytest.raises(ValueError, match="decoder failed"):
+    with caplog.at_level("INFO", logger=release_media.__name__), pytest.raises(ValueError, match="decoder failed"):
         await release_media.voices({"run_id": 5, "game_version": "1.0.0", "targets": ["vo_Line_1"]},
                                    {"asset_version": "3.7.0", "voice_plan_id": "plan", "media_report": {"inventory_file_id": 9}})
+    assert "'not_in_export': 3" in caplog.text
+    assert "ja_vo_Line_1.wem" in caplog.text
 
 
 @pytest.mark.asyncio

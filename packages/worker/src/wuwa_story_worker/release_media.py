@@ -7,6 +7,7 @@ import logging
 import os
 import shutil
 import sqlite3
+from collections import Counter
 from contextlib import closing
 from pathlib import Path
 
@@ -1287,10 +1288,43 @@ async def extract_cutscene_audio(parent, config, name):
     return destination
 
 
+def _reconcile_voice_report(report, roster, exported, reused):
+    available = exported | reused
+    for entry in report["entries"]:
+        language, name = entry["expected"].removesuffix(".wem").split("_", 1)
+        paths = {track["path"] for track in roster[name] if track["language"] == language}
+        entry["matches"] = sorted(paths & available)
+        entry["status"] = ("found" if paths and paths <= available
+                           else "export_missing" if paths else "not_in_archives")
+        if paths & reused:
+            entry["reused"] = True
+    found = sum(entry["status"] == "found" for entry in report["entries"])
+    requested = len(report["entries"])
+    report.update(requested=requested, found=found, missing=requested - found)
+
+
+def _log_voice_lookup(payload, report):
+    counts = Counter()
+    samples = {}
+    for entry in report["entries"]:
+        status = entry["status"]
+        if status == "found":
+            continue
+        counts[status] += 1
+        examples = samples.setdefault(status, [])
+        if len(examples) < 3:
+            examples.append(entry["expected"][:160])
+    logger.info("release_media.voice_lookup run=%s requested=%s found=%s missing=%s asset_version=%s "
+                "missing_by_status=%s expected_samples=%s",
+                payload.get("run_id"), report["requested"], report["found"], report["missing"],
+                report["asset_version"], dict(counts), samples)
+
+
 async def voices(payload, parent):
     context = await source_context(parent, voice=True)
     scoped = parent.get("workspace_id") is not None
     names = set(payload["targets"])
+    versions = {"asset_version": parent.get("asset_version"), "game_version": payload.get("game_version")}
     reused, missing_paths, absent_languages, unshipped_voices = set(), set(), [], []
     roster = {}
     if scoped:
@@ -1312,6 +1346,15 @@ async def voices(payload, parent):
             if not any(track["language"] == language for track in tracks)
         )
         if not missing_paths:
+            report = {
+                "schema_version": 1,
+                **(parent.get("media_report") or {}),
+                **versions,
+                "entries": [{"expected": f"{language}_{name}.wem"}
+                            for name in sorted(names) for language in ("en", "ja", "ko", "zh")],
+            }
+            _reconcile_voice_report(report, roster, set(), reused)
+            _log_voice_lookup(payload, report)
             await cleanup_published_output(parent, payload.get("run_id"), "voices")
             return {
                 **parent,
@@ -1319,6 +1362,7 @@ async def voices(payload, parent):
                 "reused": len(reused),
                 "tracks": 0,
                 "missing_voices": absent_languages,
+                "media_report": report,
                 **({"unshipped_voices": unshipped_voices} if unshipped_voices else {}),
             }, "partial" if absent_languages else "completed"
     else:
@@ -1363,17 +1407,8 @@ async def voices(payload, parent):
     if scoped:
         exported = {path.relative_to(extracted).as_posix()
                     for tracks in grouped.values() for path in tracks.values()}
-        for entry in report["entries"]:
-            language, name = entry["expected"].removesuffix(".wem").split("_", 1)
-            paths = {track["path"] for track in roster[name] if track["language"] == language}
-            entry["matches"] = sorted(paths & (exported | reused))
-            entry["status"] = ("found" if paths and paths <= (exported | reused)
-                               else "export_missing" if paths else "not_in_archives")
-            if paths & reused:
-                entry["reused"] = True
-        report.update(found=sum(entry["status"] == "found" for entry in report["entries"]),
-                      missing=sum(entry["status"] != "found" for entry in report["entries"]))
-    report.update(asset_version=parent["asset_version"], game_version=payload["game_version"])
+        _reconcile_voice_report(report, roster, exported, reused)
+    report.update(versions)
     await update_admin_run(payload["run_id"], "release_media", "running", raw_output={"media_report": report})
     # Repair verified archive hits that a previous export left behind. No fuzzy substitutions.
     missing_exports = [entry for entry in report["entries"] if entry["status"] == "export_missing"]
@@ -1386,11 +1421,9 @@ async def voices(payload, parent):
         grouped = await asyncio.to_thread(exported_voices, extracted, names)
         report = await asyncio.to_thread(voice_report, extracted, names, grouped,
                                          inventory=inventory, config=configs[0] if configs else None)
-    report["asset_version"] = parent["asset_version"]
-    report["game_version"] = payload["game_version"]
-    await update_admin_run(payload["run_id"], "release_media", "running", raw_output={"media_report": report})
-    logger.info("release_media.voice_lookup run=%s requested=%s found=%s missing=%s asset_version=%s",
-                payload["run_id"], report["requested"], report["found"], report["missing"], parent["asset_version"])
+        report.update(versions)
+        await update_admin_run(payload["run_id"], "release_media", "running", raw_output={"media_report": report})
+    _log_voice_lookup(payload, report)
     context["path_map"] = {path.relative_to(extracted).as_posix(): path.relative_to(extracted).as_posix()
                            for tracks in grouped.values() for path in tracks.values()}
     result = await import_voice_sample(extracted, tool_path("WUWA_VGMSTREAM_PATH"),
