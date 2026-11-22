@@ -11,6 +11,43 @@ import pytest
 from wuwa_story_worker import cutscene_sources, sequence_fragments, story_spine
 
 
+def test_large_movie_is_streamed_and_integrity_checked(tmp_path):
+    chunk = b'\0' * (1024 * 1024)
+    count = 257
+    digest = hashlib.sha256()
+    for _ in range(count):
+        digest.update(chunk)
+    expected = {'size_bytes': len(chunk) * count, 'sha256': digest.hexdigest()}
+
+    class Source:
+        remaining = count
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self, size):
+            assert size == len(chunk)
+            if self.remaining == 0:
+                return b''
+            self.remaining -= 1
+            return chunk
+
+    class Archive:
+        def getinfo(self, entry):
+            return SimpleNamespace(file_size=expected['size_bytes'])
+
+        def open(self, entry):
+            return Source()
+
+    output, info = sequence_fragments.extract_verified_movie(
+        Archive(), {'files': {'movie': expected}}, 'movie', tmp_path)
+    assert output.stat().st_size == expected['size_bytes']
+    assert info == expected
+
+
 @pytest.fixture
 def fragment_client(tmp_path, monkeypatch):
     sources = {}
